@@ -1,0 +1,31 @@
+#Secrets and private keys 
+.env
+*.key
+*.pem
+secrets/
+private/
+
+#packet captures
+*.pcap
+*.pcapng 
+
+#logs
+logs/
+*.log
+
+#generated experiment results 
+results/
+
+#python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+
+#OS / editor files 
+
+.DS_Store
+Thumbs.db 
+*.swp
+
