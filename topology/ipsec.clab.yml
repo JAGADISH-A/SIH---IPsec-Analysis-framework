@@ -14,9 +14,10 @@ topology:
       kind: linux
       image: openeuler/strongswan:6.0.3-oe2403sp4
       privileged: true
-      cmd: /bin/sh -c "sleep infinity"
+      cmd: /bin/sh -c "/usr/local/bin/gw-entrypoint.sh"
       binds:
         - ../configs/gw-a/swanctl:/usr/local/etc/swanctl
+        - ../scripts/gw-entrypoint.sh:/usr/local/bin/gw-entrypoint.sh
       exec:
         - ip addr add 10.10.1.1/24 dev eth1
         - ip addr add 192.168.100.1/24 dev eth2
@@ -27,9 +28,10 @@ topology:
       kind: linux
       image: openeuler/strongswan:6.0.3-oe2403sp4
       privileged: true
-      cmd: /bin/sh -c "sleep infinity"
+      cmd: /bin/sh -c "/usr/local/bin/gw-entrypoint.sh"
       binds:
         - ../configs/gw-b/swanctl:/usr/local/etc/swanctl
+        - ../scripts/gw-entrypoint.sh:/usr/local/bin/gw-entrypoint.sh
       exec:
         - ip addr add 192.168.100.2/24 dev eth2
         - ip addr add 10.10.2.1/24 dev eth1
