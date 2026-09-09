@@ -1,0 +1,55 @@
+name: ipsec
+
+topology:
+  nodes:
+
+    host-a:
+      kind: linux
+      image: ipsec-test-host:24.04
+      exec:
+        - ip addr add 10.10.1.10/24 dev eth1
+        - ip route add 10.10.2.0/24 via 10.10.1.1
+
+    gw-a:
+      kind: linux
+      image: openeuler/strongswan:6.0.3-oe2403sp4
+      privileged: true
+      cmd: /bin/sh -c "sleep infinity"
+      binds:
+        - ../configs/gw-a/swanctl:/usr/local/etc/swanctl
+      exec:
+        - ip addr add 10.10.1.1/24 dev eth1
+        - ip addr add 192.168.100.1/24 dev eth2
+        - ip route add 10.10.2.0/24 via 192.168.100.2
+        - sysctl -w net.ipv4.ip_forward=1
+
+    gw-b:
+      kind: linux
+      image: openeuler/strongswan:6.0.3-oe2403sp4
+      privileged: true
+      cmd: /bin/sh -c "sleep infinity"
+      binds:
+        - ../configs/gw-b/swanctl:/usr/local/etc/swanctl
+      exec:
+        - ip addr add 192.168.100.2/24 dev eth2
+        - ip addr add 10.10.2.1/24 dev eth1
+        - ip route add 10.10.1.0/24 via 192.168.100.1
+        - sysctl -w net.ipv4.ip_forward=1
+
+    host-b:
+      kind: linux
+      image: ipsec-test-host:24.04
+      exec:
+        - ip addr add 10.10.2.10/24 dev eth1
+        - ip route add 10.10.1.0/24 via 10.10.2.1
+
+  links:
+
+    # LAN-A
+    - endpoints: ["host-a:eth1", "gw-a:eth1"]
+
+    # WAN
+    - endpoints: ["gw-a:eth2", "gw-b:eth2"]
+
+    # LAN-B
+    - endpoints: ["gw-b:eth1", "host-b:eth1"]
