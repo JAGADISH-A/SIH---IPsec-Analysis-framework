@@ -29,3 +29,6 @@ venv/
 Thumbs.db 
 *.swp
 
+# Containerlab generated files
+topology/clab-*/
+

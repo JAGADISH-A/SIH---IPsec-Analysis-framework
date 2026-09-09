@@ -12,7 +12,7 @@ topology:
 
     gw-a:
       kind: linux
-      image: openeuler/strongswan:6.0.3-oe2403sp4
+      image: ipsec-test-gateway:6.0.3
       privileged: true
       cmd: /bin/sh -c "/usr/local/bin/gw-entrypoint.sh"
       binds:
@@ -26,7 +26,7 @@ topology:
 
     gw-b:
       kind: linux
-      image: openeuler/strongswan:6.0.3-oe2403sp4
+      image: ipsec-test-gateway:6.0.3
       privileged: true
       cmd: /bin/sh -c "/usr/local/bin/gw-entrypoint.sh"
       binds:
