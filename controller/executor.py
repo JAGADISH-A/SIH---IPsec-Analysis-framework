@@ -1,0 +1,337 @@
+import subprocess
+import json
+from pathlib import Path
+
+from config import CONFIG
+from topology import TOPOLOGIES
+from validate import validate_config
+from generator import write_connection
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def run(command):
+    print(f"$ {' '.join(command)}")
+
+    result = subprocess.run(
+        command,
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+    )
+
+    if result.stdout:
+        print(result.stdout)
+
+    if result.returncode != 0:
+        if result.stderr:
+            print(result.stderr)
+
+        raise RuntimeError(
+            f"Command failed with exit code {result.returncode}"
+        )
+
+    return result.stdout
+
+
+def topology_file(mode):
+    path = (
+        PROJECT_ROOT
+        / "topology"
+        / mode
+        / "ipsec.clab.yml"
+    )
+
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Topology not found: {path}"
+        )
+
+    return path
+
+
+
+
+def destroy(mode):
+    topo = topology_file(mode)
+
+    run([
+        "sudo",
+        "containerlab",
+        "destroy",
+        "-t",
+        str(topo),
+        "--cleanup",
+    ])
+
+
+def deploy(mode):
+    topo = topology_file(mode)
+
+    run([
+        "sudo",
+        "containerlab",
+        "deploy",
+        "-t",
+        str(topo),
+    ])
+
+
+def reset_and_deploy(mode):
+    print(f"\n=== Starting {mode} experiment ===\n")
+
+    try:
+        destroy(mode)
+    except RuntimeError:
+        pass
+
+    deploy(mode)
+
+    print(f"\n=== {mode} topology deployed ===\n")
+
+def generate_configs(config):
+    validate_config(config)
+
+    mode = config["mode"]
+    topology = TOPOLOGIES[mode]
+
+    local = topology["local"]
+    remote = topology["remote"]
+
+    output_dir = (
+        PROJECT_ROOT
+        / "controller"
+        / "generated"
+        / mode
+    )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    local_file = output_dir / f"{local['id']}.conf"
+    remote_file = output_dir / f"{remote['id']}.conf"
+
+    write_connection(
+        config,
+        local,
+        remote,
+        local_file,
+    )
+
+    write_connection(
+        config,
+        remote,
+        local,
+        remote_file,
+    )
+
+    print(f"Generated: {local_file}")
+    print(f"Generated: {remote_file}")
+
+    return local_file, remote_file
+
+def load_generated_configs(config):
+    mode = config["mode"]
+
+    topology = TOPOLOGIES[mode]
+
+    local = topology["local"]
+    remote = topology["remote"]
+
+    local_file, remote_file = generate_configs(config)
+
+    local_container = (
+        f"clab-ipsec-transport-{local['node']}"
+        if mode == "transport"
+        else f"clab-ipsec-{local['node']}"
+    )
+
+    remote_container = (
+        f"clab-ipsec-transport-{remote['node']}"
+        if mode == "transport"
+        else f"clab-ipsec-{remote['node']}"
+    )
+
+    local_tmp = f"/tmp/{local['id']}.conf"
+    remote_tmp = f"/tmp/{remote['id']}.conf"
+
+    print("\n=== Loading generated configurations ===\n")
+
+    run([
+        "sudo",
+        "docker",
+        "cp",
+        str(local_file),
+        f"{local_container}:{local_tmp}",
+    ])
+
+    run([
+        "sudo",
+        "docker",
+        "cp",
+        str(remote_file),
+        f"{remote_container}:{remote_tmp}",
+    ])
+
+    run([
+        "sudo",
+        "docker",
+        "exec",
+        local_container,
+        "swanctl",
+        "--load-conns",
+        "--file",
+        local_tmp,
+    ])
+
+    run([
+        "sudo",
+        "docker",
+        "exec",
+        remote_container,
+        "swanctl",
+        "--load-conns",
+        "--file",
+        remote_tmp,
+    ])
+
+    print("\n=== Generated configurations loaded ===\n")
+
+def test_connectivity(mode):
+    topology = TOPOLOGIES[mode]
+
+    if mode == "tunnel":
+        source = "clab-ipsec-host-a"
+        destination = "10.10.2.10"
+
+    elif mode == "transport":
+        source = "clab-ipsec-transport-host-c"
+        destination = "10.20.1.20"
+
+    else:
+        raise ValueError(f"Unsupported mode: {mode}")
+
+    print("\n=== Establishing IPsec ===\n")
+
+    try:
+        run([
+            "sudo",
+            "docker",
+            "exec",
+            source,
+            "ping",
+            "-c",
+            "1",
+            destination,
+        ])
+    except RuntimeError:
+        print(
+            "Initial packet lost while establishing IPsec. "
+            "Continuing..."
+        )
+
+    print("\n=== Testing connectivity ===\n")
+
+    output = run([
+        "sudo",
+        "docker",
+        "exec",
+        source,
+        "ping",
+        "-c",
+        "5",
+        destination,
+    ])
+
+    packet_loss = None
+
+    for line in output.splitlines():
+        if "packet loss" in line:
+            packet_loss = float(
+                line.split("%")[0].split()[-1]
+            )
+            break
+
+    if packet_loss is None:
+        raise RuntimeError("Could not determine packet loss")
+
+    return {
+        "packet_loss": packet_loss,
+        "status": "PASS" if packet_loss == 0 else "FAIL",
+    }
+
+def verify_ipsec(mode):
+    topology = TOPOLOGIES[mode]
+
+    local = topology["local"]
+
+    source = (
+        f"clab-ipsec-transport-{local['node']}"
+        if mode == "transport"
+        else f"clab-ipsec-{local['node']}"
+    )
+
+    print("\n=== Verifying IPsec SA ===\n")
+
+    output = run([
+        "sudo",
+        "docker",
+        "exec",
+        source,
+        "swanctl",
+        "--list-sas",
+    ])
+
+    if "ESTABLISHED" not in output:
+        raise RuntimeError("IKE SA is not established")
+
+    if "INSTALLED" not in output:
+        raise RuntimeError("CHILD SA is not installed")
+
+    expected_mode = mode.upper()
+
+    if expected_mode not in output:
+        raise RuntimeError(
+            f"Expected {expected_mode} IPsec SA not found"
+        )
+
+    print("IPsec SA verification: PASS")
+
+    return {
+      "ike_sa": "ESTABLISHED",
+      "child_sa": "INSTALLED",
+      "mode": expected_mode,
+}
+
+def run_experiment(config):
+    mode = config["mode"]
+
+    validate_config(config)
+
+    reset_and_deploy(mode)
+    load_generated_configs(config)
+
+    connectivity = test_connectivity(mode)
+    ipsec = verify_ipsec(mode)
+
+    result = {
+        "status": (
+            "PASS"
+            if connectivity["status"] == "PASS"
+            else "FAIL"
+        ),
+        "mode": mode,
+        "ike": config["ike"],
+        "esp": config["esp"],
+        "connectivity": connectivity,
+        "ipsec": ipsec,
+    }
+
+    return result
+
+
+if __name__ == "__main__":
+    result = run_experiment(CONFIG)
+
+    print("\n=== Experiment Result ===\n")
+    print(json.dumps(result, indent=2))

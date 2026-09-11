@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#ffffff">
+  <title>IPsec VPN Testbed</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='%232463EB'%3E%3Cpath%20d='M12%202l8%203.5v5.7c0%205-3.3%208.3-8%2010.8-4.7-2.5-8-5.8-8-10.8V5.5L12%202z'/%3E%3Cpath%20d='M9%2016.5l1.5-3M15%2016.5l-1.5-3M12%207v6.5'%20stroke='%23fff'%20stroke-width='1.6'%20stroke-linecap='round'%20fill='none'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3l7 3v5c0 4.6-3 7.6-7 9-4-1.4-7-4.4-7-9V6l7-3z"/>
+            <path d="M9 12l2 2 4-4"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <div class="product-name">IPsec VPN Testbed</div>
+          <div class="product-subtitle">Configurable IPsec Security &amp; Connectivity Experiment</div>
+        </div>
+      </div>
+      <div class="status-pill" id="statusPill">
+        <span class="status-dot" id="statusDot"></span>
+        <span id="statusText">Testbed Ready</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="main">
+
+    <nav class="flow-strip" aria-label="Experiment workflow">
+      <div class="flow-step active" data-step="configure"><span class="dot"></span>Configure</div>
+      <div class="flow-arrow" aria-hidden="true"></div>
+      <div class="flow-step" data-step="run"><span class="dot"></span>Run</div>
+      <div class="flow-arrow" aria-hidden="true"></div>
+      <div class="flow-step" data-step="verify"><span class="dot"></span>Verify</div>
+      <div class="flow-arrow" aria-hidden="true"></div>
+      <div class="flow-step" data-step="result"><span class="dot"></span>Result</div>
+    </nav>
+
+    <div class="cards">
+
+      <section class="card config-card" id="configCard" aria-label="Experiment configuration">
+        <div class="card-heading">
+          <span class="head-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/>
+              <path d="M1 14h6M9 8h6M17 16h6"/>
+            </svg>
+          </span>
+          <h2>Experiment Configuration</h2>
+        </div>
+
+        <div class="card-body">
+
+          <div class="config-section">
+            <div class="section-label">IPsec Mode</div>
+            <div class="segmented" id="modeSegmented" role="radiogroup" aria-label="IPsec mode">
+              <button type="button" class="seg-option active" data-mode="tunnel" role="radio" aria-checked="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="5" cy="12" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="19" cy="19" r="2"/>
+                  <path d="M7 11l10-5M7 13l10 5"/>
+                </svg>
+                Tunnel Mode
+              </button>
+              <button type="button" class="seg-option" data-mode="transport" role="radio" aria-checked="false">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="2" y="6" width="9" height="12" rx="2"/><rect x="13" y="6" width="9" height="12" rx="2"/>
+                  <path d="M6 10h1M16 10h1" fill="currentColor"/>
+                </svg>
+                Transport Mode
+              </button>
+            </div>
+            <div class="mode-hint">
+              <span class="hint-row"><b>Tunnel Mode</b> &mdash; Protects traffic between networks</span>
+              <span class="hint-row"><b>Transport Mode</b> &mdash; Protects host-to-host traffic</span>
+            </div>
+          </div>
+
+          <div class="config-section">
+            <div class="section-label">IKE Configuration</div>
+            <div class="field-row">
+              <div class="field">
+                <label for="ikeVersion">IKE Version</label>
+                <div class="readonly-value" id="ikeVersion">IKEv2</div>
+              </div>
+              <div class="field">
+                <label for="ikeEncryption">Encryption</label>
+                <select id="ikeEncryption"></select>
+              </div>
+              <div class="field">
+                <label for="ikeIntegrity">Integrity</label>
+                <select id="ikeIntegrity"></select>
+              </div>
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label for="ikeDh">DH Group</label>
+                <select id="ikeDh"></select>
+              </div>
+            </div>
+          </div>
+
+          <div class="config-section">
+            <div class="section-label">ESP Configuration</div>
+            <div class="field-row">
+              <div class="field">
+                <label for="espEncryption">Encryption</label>
+                <select id="espEncryption"></select>
+              </div>
+              <div class="field">
+                <label for="espDh">DH Group</label>
+                <select id="espDh"></select>
+              </div>
+            </div>
+            <div class="pfs-row">
+              <div class="pfs-text">
+                <div class="pfs-title">Perfect Forward Secrecy</div>
+                <div class="pfs-sub">Re-negotiates keys for each ESP session</div>
+              </div>
+              <button type="button" class="switch on" id="pfsSwitch" role="switch" aria-checked="true" aria-label="Perfect Forward Secrecy"></button>
+            </div>
+          </div>
+
+          <div class="summary-box">
+            <div class="summary-label">Selected Configuration</div>
+            <div class="summary" id="summaryLines"></div>
+          </div>
+
+          <button type="button" class="run-btn" id="runBtn">
+            <span class="run-icon" aria-hidden="true">
+              <svg class="play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 001.5.87l11-6.5a1 1 0 000-1.74l-11-6.5A1 1 0 008 5.5z"/></svg>
+              <svg class="spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M12 2a10 10 0 010 20" opacity=".9"/></svg>
+            </span>
+            <span class="run-label" id="runLabel">RUN EXPERIMENT</span>
+          </button>
+
+        </div>
+      </section>
+
+      <section class="card result-card" id="resultCard" aria-label="Experiment result">
+        <div class="card-heading">
+          <span class="head-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 2h6M10 2v5L5 17a2 2 0 001.7 3h10.6a2 2 0 001.7-3L14 7V2"/>
+              <path d="M7 16h10"/>
+            </svg>
+          </span>
+          <h2>Experiment Result</h2>
+        </div>
+
+        <div class="card-body result-body">
+          <div class="result-area" id="resultArea">
+
+            <div class="result-empty" id="emptyState">
+              <div class="empty-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="9"/>
+                  <path d="M10 8.5v7l6-3.5-6-3.5z" fill="currentColor" stroke="none"/>
+                </svg>
+              </div>
+              <div class="empty-title">Ready to test</div>
+              <div class="empty-sub">Configure the IPsec parameters and run an experiment.</div>
+            </div>
+
+            <div class="result-progress is-hidden" id="progressWrap">
+              <div class="progress-head" id="progressHead">Deploying testbed&hellip;</div>
+              <div class="progress-list" id="progressList"></div>
+            </div>
+
+            <div class="result-end is-hidden" id="passState">
+              <div class="result-badge pass" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M20 6L9 17l-5-5"/>
+                </svg>
+              </div>
+              <div class="result-title">EXPERIMENT PASSED</div>
+              <div class="result-status-line">
+                <span class="dot green"></span>
+                All checks passed
+              </div>
+              <div class="metrics">
+                <div class="metric">
+                  <span class="metric-label">IKE SA</span>
+                  <span class="metric-value ok" id="mIke">ESTABLISHED</span>
+                </div>
+                <div class="metric">
+                  <span class="metric-label">CHILD SA</span>
+                  <span class="metric-value ok" id="mChild">INSTALLED</span>
+                </div>
+                <div class="metric">
+                  <span class="metric-label">IPsec Mode</span>
+                  <span class="metric-value ok" id="mMode">TUNNEL</span>
+                </div>
+                <div class="metric">
+                  <span class="metric-label">Packet Loss</span>
+                  <span class="metric-value ok" id="mLoss">0%</span>
+                </div>
+              </div>
+              <div class="result-note">IPsec tunnel established successfully and connectivity verified.</div>
+            </div>
+
+            <div class="result-end is-hidden" id="failState">
+              <div class="result-badge fail" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 2a10 10 0 100 20 10 10 0 000-20z"/>
+                  <path d="M12 8v5"/>
+                  <path d="M12 16.5v.5"/>
+                </svg>
+              </div>
+              <div class="result-title">EXPERIMENT FAILED</div>
+              <div class="fail-stage" id="failStage">Failed at <b>Deployment</b></div>
+              <div class="fail-card">
+                <div class="fail-message" id="failMessage">The testbed could not be prepared for the experiment.</div>
+                <div class="fail-hint">Review the configuration and run the experiment again.</div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </section>
+
+    </div>
+
+    <section class="card flow-card" aria-label="Testbed flow">
+      <div class="card-heading flow-head">
+        <span class="head-col">
+          <span class="head-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="5" cy="12" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="19" cy="19" r="2"/>
+              <path d="M7 11l10-5M7 13l10 5"/>
+            </svg>
+          </span>
+          <h2>Testbed Flow</h2>
+        </span>
+        <span class="card-sub" id="flowSub">Tunnel mode &mdash; network-to-network</span>
+      </div>
+      <div class="card-body flow-body">
+        <div class="flow" id="flowDiagram"></div>
+      </div>
+    </section>
+
+    <section class="card details-card" aria-label="Experiment details">
+      <div class="card-heading">
+        <span class="head-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z"/>
+            <path d="M14 2v6h6M9 13l2 2 4-4"/>
+          </svg>
+        </span>
+        <h2>Experiment Details</h2>
+      </div>
+      <div class="details-grid">
+        <div class="detail">
+          <div class="detail-label">Mode</div>
+          <div class="detail-value" id="dtMode">&mdash;</div>
+        </div>
+        <div class="detail">
+          <div class="detail-label">IKE Proposal</div>
+          <div class="detail-value" id="dtIke">&mdash;</div>
+        </div>
+        <div class="detail">
+          <div class="detail-label">ESP Proposal</div>
+          <div class="detail-value" id="dtEsp">&mdash;</div>
+        </div>
+        <div class="detail">
+          <div class="detail-label">PFS</div>
+          <div class="detail-value" id="dtPfs">&mdash;</div>
+        </div>
+        <div class="detail">
+          <div class="detail-label">Connectivity</div>
+          <div class="detail-value" id="dtConn">&mdash;</div>
+        </div>
+        <div class="detail">
+          <div class="detail-label">Result</div>
+          <div class="detail-value" id="dtResult">&mdash;</div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="site-footer">IPsec VPN Testbed &middot; Configurable IPsec Security &amp; Connectivity Experiment</footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

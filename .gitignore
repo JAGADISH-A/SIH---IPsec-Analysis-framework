@@ -30,5 +30,8 @@ Thumbs.db
 *.swp
 
 # Containerlab generated files
-topology/clab-*/
+topology/**/clab-*/
+
+# Generated controller configurations
+controller/generated/
 
