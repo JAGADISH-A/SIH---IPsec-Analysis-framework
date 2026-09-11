@@ -1,5 +1,6 @@
 CONFIG = {
-    "mode": "transport",
+    "mode": "tunnel",
+    "address_family": "ipv4",
 
     "ike": {
         "version": 2,
@@ -9,8 +10,9 @@ CONFIG = {
     },
 
     "esp": {
-        "encryption": "aes128gcm16",
+        "encryption": "aes256cbc",
+        "integrity": "sha256",
         "dh_group": "modp2048",
-        "pfs": False,
+        "pfs": True,
     },
 }

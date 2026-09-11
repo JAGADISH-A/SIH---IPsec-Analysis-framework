@@ -319,10 +319,12 @@
 
   async function runExperiment() {
     if (state.running) return;
+
     state.running = true;
 
     const runBtn = $("#runBtn");
     const runLabel = $("#runLabel");
+
     runBtn.disabled = true;
     runBtn.classList.add("is-running");
     runLabel.textContent = "Running\u2026";
@@ -332,9 +334,11 @@
     hide($("#passState"));
     hide($("#failState"));
     show($("#progressWrap"));
-    paintFlow(["run", "verify"], ["configure"]);
+
+    paintFlow(["run"], ["configure"]);
 
     state.lastPayload = getPayload();
+
     showProgress();
 
     try {
@@ -344,53 +348,97 @@
         body: JSON.stringify(state.lastPayload),
       });
 
-      let result;
       if (!res.ok) {
         let detail = "";
+
         try {
           const j = await res.json();
           detail = j.detail || "";
         } catch (_) {}
+
         const c = classifyError(res.status, detail);
-        result = { status: "FAIL", _error: true, stage: c.stage, message: c.message };
-      } else {
-        result = await res.json();
+
+        finishProgress();
+        renderFail(c.stage, c.message);
+        updateDetails({
+          status: "FAIL",
+          mode: state.lastPayload.mode,
+          ike: state.lastPayload.ike,
+          esp: state.lastPayload.esp,
+        });
+
+        return;
       }
 
-      finishProgress();
+      const startData = await res.json();
+      const jobId = startData.job_id;
 
-      if (result.status === "PASS") {
-        renderPass(result);
-      } else {
-        if (result._error) {
-          renderFail(result.stage, result.message);
-        } else {
-          renderFail(
-            "Connectivity",
-            "Connectivity check failed: " +
-              Math.round((result.connectivity || {}).packet_loss || 0) +
-              "% packet loss detected."
+      let finished = false;
+
+      while (!finished) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        const statusRes = await fetch(
+          EXPERIMENTS_URL + "/" + encodeURIComponent(jobId)
+        );
+
+        if (!statusRes.ok) {
+          throw new Error("Unable to retrieve experiment status.");
+        }
+
+        const job = await statusRes.json();
+
+        if (job.status === "COMPLETED") {
+          finished = true;
+
+          finishProgress();
+
+          const result = job.result;
+
+          if (result && result.status === "PASS") {
+            renderPass(result);
+          } else {
+            renderFail(
+              "Connectivity",
+              "Connectivity verification failed."
+            );
+          }
+
+          updateDetails(result);
+        }
+
+        if (job.status === "FAILED") {
+          finished = true;
+
+          finishProgress();
+
+          const c = classifyError(
+            500,
+            job.error || "The experiment could not be completed."
           );
+
+          renderFail(c.stage, c.message);
+
+          updateDetails({
+            status: "FAIL",
+            mode: state.lastPayload.mode,
+            ike: state.lastPayload.ike,
+            esp: state.lastPayload.esp,
+          });
         }
       }
-
-      updateDetails(result);
     } catch (err) {
       finishProgress();
 
-      let stage, message;
-      if (err.name === "TypeError") {
-        stage = "Configuration";
-        message = "Unable to reach the testbed controller. Please verify that the backend is running.";
-      } else {
-        stage = "Deployment";
-        message = err.message || "The experiment could not be completed.";
-      }
+      renderFail(
+        "Controller",
+        err.message || "Unable to communicate with the testbed controller."
+      );
 
-      renderFail(stage, message);
       updateDetails(null);
     } finally {
       state.running = false;
+
       runBtn.disabled = false;
       runBtn.classList.remove("is-running");
       runLabel.textContent = "RUN EXPERIMENT";

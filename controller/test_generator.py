@@ -1,10 +1,10 @@
-from config import CONFIG
-from topology import TOPOLOGIES
-from generator import generate_swanctl_config
+from .config import CONFIG
+from .topology import TOPOLOGIES
+from .generator import generate_swanctl_config
 
 
 if __name__ == "__main__":
-    topology = TOPOLOGIES[CONFIG["mode"]]
+    topology = TOPOLOGIES[CONFIG["mode"]][CONFIG["address_family"]]
 
     local = topology["local"]
     remote = topology["remote"]

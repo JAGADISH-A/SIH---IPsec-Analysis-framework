@@ -8,7 +8,9 @@ topology:
       image: ipsec-test-host:24.04
       exec:
         - ip addr add 10.10.1.10/24 dev eth1
+        - ip addr add 2001:db8:1::10/64 dev eth1
         - ip route add 10.10.2.0/24 via 10.10.1.1
+        - ip -6 route add 2001:db8:2::/64 via 2001:db8:1::1
 
     gw-a:
       kind: linux
@@ -20,9 +22,11 @@ topology:
         - /home/jagan/ipsec-testbed/configs/gw-a/swanctl:/usr/local/etc/swanctl
       exec:
         - ip addr add 10.10.1.1/24 dev eth1
+        - ip addr add 2001:db8:1::1/64 dev eth1
         - ip addr add 192.168.100.1/24 dev eth2
         - ip route add 10.10.2.0/24 via 192.168.100.2
         - sysctl -w net.ipv4.ip_forward=1
+        - sysctl -w net.ipv6.conf.all.forwarding=1
 
     gw-b:
       kind: linux
@@ -35,15 +39,19 @@ topology:
       exec:
         - ip addr add 192.168.100.2/24 dev eth2
         - ip addr add 10.10.2.1/24 dev eth1
+        - ip addr add 2001:db8:2::1/64 dev eth1
         - ip route add 10.10.1.0/24 via 192.168.100.1
         - sysctl -w net.ipv4.ip_forward=1
+        - sysctl -w net.ipv6.conf.all.forwarding=1
 
     host-b:
       kind: linux
       image: ipsec-test-host:24.04
       exec:
         - ip addr add 10.10.2.10/24 dev eth1
+        - ip addr add 2001:db8:2::10/64 dev eth1
         - ip route add 10.10.1.0/24 via 10.10.2.1
+        - ip -6 route add 2001:db8:1::/64 via 2001:db8:2::1
 
   links:
 

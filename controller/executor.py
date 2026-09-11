@@ -2,10 +2,10 @@ import subprocess
 import json
 from pathlib import Path
 
-from config import CONFIG
-from topology import TOPOLOGIES
-from validate import validate_config
-from generator import write_connection
+from .config import CONFIG
+from .topology import TOPOLOGIES
+from .validate import validate_config
+from .generator import write_connection
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -49,9 +49,6 @@ def topology_file(mode):
         )
 
     return path
-
-
-
 
 def destroy(mode):
     topo = topology_file(mode)
@@ -197,38 +194,44 @@ def load_generated_configs(config):
 
     print("\n=== Generated configurations loaded ===\n")
 
+def initiate_ipsec(mode):
+    topology = TOPOLOGIES[mode]
+    local = topology["local"]
+
+    if mode == "tunnel":
+        container = f"clab-ipsec-{local['node']}"
+    elif mode == "transport":
+        container = f"clab-ipsec-transport-{local['node']}"
+    else:
+        raise ValueError(f"Unsupported mode: {mode}")
+
+    connection_name = f"{local['id']}-to-{topology['remote']['id']}"
+
+    print("\n=== Initiating IPsec ===\n")
+
+    run([
+        "sudo",
+        "docker",
+        "exec",
+        container,
+        "swanctl",
+        "--initiate",
+        "--child",
+        connection_name,
+    ])
+
+
 def test_connectivity(mode):
     topology = TOPOLOGIES[mode]
 
     if mode == "tunnel":
         source = "clab-ipsec-host-a"
         destination = "10.10.2.10"
-
     elif mode == "transport":
         source = "clab-ipsec-transport-host-c"
         destination = "10.20.1.20"
-
     else:
         raise ValueError(f"Unsupported mode: {mode}")
-
-    print("\n=== Establishing IPsec ===\n")
-
-    try:
-        run([
-            "sudo",
-            "docker",
-            "exec",
-            source,
-            "ping",
-            "-c",
-            "1",
-            destination,
-        ])
-    except RuntimeError:
-        print(
-            "Initial packet lost while establishing IPsec. "
-            "Continuing..."
-        )
 
     print("\n=== Testing connectivity ===\n")
 
@@ -239,7 +242,11 @@ def test_connectivity(mode):
         source,
         "ping",
         "-c",
-        "5",
+        "3",
+        "-i",
+        "0.2",
+        "-W",
+        "1",
         destination,
     ])
 
@@ -247,9 +254,7 @@ def test_connectivity(mode):
 
     for line in output.splitlines():
         if "packet loss" in line:
-            packet_loss = float(
-                line.split("%")[0].split()[-1]
-            )
+            packet_loss = float(line.split("%")[0].split()[-1])
             break
 
     if packet_loss is None:
@@ -259,7 +264,6 @@ def test_connectivity(mode):
         "packet_loss": packet_loss,
         "status": "PASS" if packet_loss == 0 else "FAIL",
     }
-
 def verify_ipsec(mode):
     topology = TOPOLOGIES[mode]
 
@@ -310,9 +314,10 @@ def run_experiment(config):
 
     reset_and_deploy(mode)
     load_generated_configs(config)
-
-    connectivity = test_connectivity(mode)
+    initiate_ipsec(mode)
     ipsec = verify_ipsec(mode)
+    connectivity = test_connectivity(mode)
+    
 
     result = {
         "status": (

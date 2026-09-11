@@ -1,5 +1,5 @@
-from config import CONFIG
-from validate import validate_config
+from .config import CONFIG
+from .validate import validate_config
 
 
 if __name__ == "__main__":

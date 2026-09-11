@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 PSK = "test-ipsec-psk-2026"
 
 
@@ -10,14 +9,21 @@ def generate_swanctl_config(config, local, remote):
 
     connection_name = f"{local['id']}-to-{remote['id']}"
 
+    # IKE proposal
     ike_proposal = (
         f"{ike['encryption']}-"
         f"{ike['integrity']}-"
         f"{ike['dh_group']}"
     )
 
-    esp_proposal = esp["encryption"]
+    # ESP proposal
+    if esp["encryption"] in {"aes128cbc", "aes256cbc"}:
+        esp_cipher = esp["encryption"].replace("cbc", "")
+        esp_proposal = f"{esp_cipher}-{esp['integrity']}"
+    else:
+        esp_proposal = esp["encryption"]
 
+    # Add DH group to ESP proposal when PFS is enabled
     if esp["pfs"]:
         esp_proposal += f"-{esp['dh_group']}"
 
@@ -32,7 +38,6 @@ def generate_swanctl_config(config, local, remote):
 connections {{
     {connection_name} {{
         version = {ike['version']}
-
         local_addrs = {local['ip']}
         remote_addrs = {remote['ip']}
 
@@ -51,9 +56,7 @@ connections {{
                 mode = {config['mode']}
                 local_ts = {local['ts']}
                 remote_ts = {remote['ts']}
-
                 esp_proposals = {esp_proposal}
-
                 start_action = trap
             }}
         }}
@@ -65,10 +68,5 @@ connections {{
 
 
 def write_connection(config, local, remote, output_file):
-    content = generate_swanctl_config(
-        config,
-        local,
-        remote,
-    )
-
+    content = generate_swanctl_config(config, local, remote)
     Path(output_file).write_text(content)
