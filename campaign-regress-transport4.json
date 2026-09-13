@@ -1,0 +1,12 @@
+{
+  "run_id": "regress-tr4",
+  "experiments": [
+    {
+      "mode": "transport",
+      "address_family": "ipv4",
+      "ike": {"version": 2, "encryption": "aes256", "integrity": "sha256", "dh_group": "modp2048"},
+      "esp": {"encryption": "aes256gcm16", "integrity": null, "dh_group": "modp2048", "pfs": true},
+      "traffic": {"profile": "icmp", "duration": 20, "port": 20000, "capture_filter": "esp"}
+    }
+  ]
+}

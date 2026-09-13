@@ -45,5 +45,19 @@ TOPOLOGIES = {
                 "node": "host-d",
             },
         },
+        "ipv6": {
+            "local": {
+                "id": "host-c",
+                "ip": "2001:db8:20::10",
+                "ts": "2001:db8:20::10/128",
+                "node": "host-c",
+            },
+            "remote": {
+                "id": "host-d",
+                "ip": "2001:db8:20::20",
+                "ts": "2001:db8:20::20/128",
+                "node": "host-d",
+            },
+        },
     },
 }

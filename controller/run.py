@@ -74,7 +74,7 @@ def main():
     parser.add_argument(
         "--esp-integrity",
         choices=["sha256", "sha384", "sha512"],
-        default=CONFIG["esp"].get("integrity"),
+        default=None,
     )
 
     parser.add_argument(
@@ -84,6 +84,12 @@ def main():
     )
 
     args = parser.parse_args()
+
+    if args.esp_integrity is None:
+        if args.esp_encryption.endswith("gcm16"):
+            args.esp_integrity = None
+        else:
+            args.esp_integrity = CONFIG["esp"].get("integrity")
 
     config = {
         "mode": args.mode,

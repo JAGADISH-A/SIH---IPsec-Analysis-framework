@@ -6,6 +6,8 @@ RUN apt-get update && \
         iputils-ping \
         strongswan-swanctl \
         strongswan-charon \
+        python3 \
+        tcpdump \
     && rm -rf /var/lib/apt/lists/*
 
 CMD ["sleep", "infinity"]

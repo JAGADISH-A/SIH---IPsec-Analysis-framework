@@ -4,40 +4,48 @@
   const CONFIGS_URL = "/experiments/configurations";
   const EXPERIMENTS_URL = "/experiments";
   const HEALTH_URL = "/health";
+  const POLL_INTERVAL = 800;
 
   const ENCRYPTION_LABELS = {
     aes128: "AES-128",
     aes256: "AES-256",
     aes128gcm16: "AES-128-GCM",
     aes256gcm16: "AES-256-GCM",
+    aes128cbc: "AES-128-CBC",
+    aes256cbc: "AES-256-CBC",
   };
   const INTEGRITY_LABELS = { sha256: "SHA-256", sha384: "SHA-384", sha512: "SHA-512" };
-  const DH_LABELS = { modp2048: "MODP-2048", modp3072: "MODP-3072", modp4096: "MODP-4096" };
-  const MODE_LABELS = { tunnel: "Tunnel Mode", transport: "Transport Mode" };
+  const DH_LABELS = { modp2048: "MODP2048", modp3072: "MODP3072", modp4096: "MODP4096" };
+  const MODE_LABELS = { tunnel: "Tunnel", transport: "Transport" };
+  const FAMILY_LABELS = { ipv4: "IPv4", ipv6: "IPv6" };
+  const IKE_VERSION_LABELS = { 1: "IKEv1", 2: "IKEv2" };
 
-  const PROGRESS_STEPS = [
-    "Deploying testbed\u2026",
-    "Applying IPsec configuration\u2026",
-    "Establishing security association\u2026",
-    "Testing connectivity\u2026",
-    "Verifying IPsec\u2026",
-  ];
+  const GCM_CIPHERS = ["aes128gcm16", "aes256gcm16"];
 
   const FALLBACK = {
     modes: ["tunnel", "transport"],
-    ike: { encryption: ["aes128", "aes256"], integrity: ["sha256", "sha384", "sha512"], dh_groups: ["modp2048", "modp3072", "modp4096"] },
-    esp: { encryption: ["aes128gcm16", "aes256gcm16"], dh_groups: ["modp2048", "modp3072", "modp4096"] },
+    address_families: ["ipv4", "ipv6"],
+    ike: {
+      versions: ["1", "2"],
+      encryption: ["aes128", "aes256"],
+      integrity: ["sha256", "sha384", "sha512"],
+      dh_groups: ["modp2048", "modp3072", "modp4096"],
+    },
+    esp: {
+      encryption: ["aes128gcm16", "aes256gcm16", "aes128cbc", "aes256cbc"],
+      integrity: ["sha256", "sha384", "sha512"],
+      dh_groups: ["modp2048", "modp3072", "modp4096"],
+    },
   };
 
   let state = {
     mode: "tunnel",
+    family: "ipv4",
     pfs: true,
     running: false,
     lastPayload: null,
   };
 
-  let progressEls = [];
-  let progressTimer = null;
   let healthTimer = null;
 
   const $ = (sel) => document.querySelector(sel);
@@ -46,11 +54,30 @@
   function show(el) { el.classList.remove("is-hidden"); }
   function hide(el) { el.classList.add("is-hidden"); }
 
-  /* ---------- SVG icons ---------- */
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  function checkSvg() {
-    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>';
+  function isGcm(cipher) {
+    return GCM_CIPHERS.indexOf(cipher) !== -1;
   }
+
+  function label(key) {
+    return ENCRYPTION_LABELS[key] || INTEGRITY_LABELS[key] || DH_LABELS[key] || key;
+  }
+
+  function fillSelect(sel, options, labelMap, defaultVal) {
+    sel.innerHTML = "";
+    for (const v of options) {
+      const opt = document.createElement("option");
+      opt.value = String(v);
+      opt.textContent = (labelMap && labelMap[String(v)]) || String(v);
+      sel.appendChild(opt);
+    }
+    if (defaultVal != null && options.indexOf(defaultVal) !== -1) {
+      sel.value = String(defaultVal);
+    }
+  }
+
+  /* ---------- SVG icons ---------- */
 
   function serverSvg() {
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="7" rx="2"/><rect x="2" y="14" width="20" height="7" rx="2"/><path d="M6 7h.01M6 18h.01"/></svg>';
@@ -68,45 +95,75 @@
     return '<svg class="' + cls + '" viewBox="0 0 24 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M0 6h20M15 1l5 5-5 5"/></svg>';
   }
 
-  function doubleArrowSvg() {
-    return '<svg class="arrow double" viewBox="0 0 24 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 1L23 6l-5 5M6 1L1 6l5 5"/><path d="M1 6h22"/></svg>';
-  }
-
-  /* ---------- Helpers ---------- */
-
-  function val(key) {
-    const map = Object.assign({}, ENCRYPTION_LABELS, INTEGRITY_LABELS, DH_LABELS);
-    return map[key] || key;
-  }
-
-  function fillSelect(sel, options, labelMap, defaultVal) {
-    sel.innerHTML = "";
-    for (const v of options) {
-      const opt = document.createElement("option");
-      opt.value = v;
-      opt.textContent = labelMap[v] || v;
-      sel.appendChild(opt);
-    }
-    if (defaultVal && options.includes(defaultVal)) {
-      sel.value = defaultVal;
-    }
-  }
+  /* ---------- Payload & configuration ---------- */
 
   function getPayload() {
+    const espEnc = $("#espEncryption").value;
+    const gcm = isGcm(espEnc);
+
     return {
       mode: state.mode,
+      address_family: state.family,
       ike: {
-        version: 2,
+        version: Number($("#ikeVersion").value),
         encryption: $("#ikeEncryption").value,
         integrity: $("#ikeIntegrity").value,
         dh_group: $("#ikeDh").value,
       },
       esp: {
-        encryption: $("#espEncryption").value,
+        encryption: espEnc,
+        integrity: gcm ? null : $("#espIntegrity").value,
         dh_group: $("#espDh").value,
         pfs: state.pfs,
       },
     };
+  }
+
+  function applyEspIntegrityState() {
+    const gcm = isGcm($("#espEncryption").value);
+    const sel = $("#espIntegrity");
+    const note = $("#espIntegrityNote");
+
+    sel.disabled = gcm;
+    $("#espIntegrityField").classList.toggle("is-muted", gcm);
+    note.classList.toggle("is-hidden", !gcm);
+
+    if (!sel.value) {
+      sel.value = "sha256";
+    }
+  }
+
+  /* ---------- Key/value rows ---------- */
+
+  function keysValues(p) {
+    return [
+      ["Mode", MODE_LABELS[p.mode] || p.mode, false],
+      ["Address Family", FAMILY_LABELS[p.address_family] || p.address_family, false],
+      ["IKE Version", "IKEv" + p.ike.version, false],
+      ["IKE Encryption", label(p.ike.encryption), false],
+      ["IKE Integrity", label(p.ike.integrity), false],
+      ["DH Group", label(p.ike.dh_group), false],
+      ["ESP Encryption", label(p.esp.encryption), false],
+      ["ESP Integrity", p.esp.integrity ? label(p.esp.integrity) : "Not applicable", !p.esp.integrity],
+      ["PFS", p.esp.pfs ? "Enabled" : "Disabled", false],
+    ];
+  }
+
+  function keyValueRowsHtml(p, base) {
+    return keysValues(p)
+      .map(function (kv) {
+        return (
+          '<div class="' + base + '-row">' +
+            '<span class="' + base + '-key">' + kv[0] + "</span>" +
+            '<span class="' + base + "-val" + (kv[2] ? " na" : "") + '">' + kv[1] + "</span>" +
+          "</div>"
+        );
+      })
+      .join("");
+  }
+
+  function updateSummary() {
+    $("#summaryLines").innerHTML = keyValueRowsHtml(getPayload(), "summary");
   }
 
   /* ---------- Flow painting ---------- */
@@ -114,26 +171,10 @@
   function paintFlow(activeKeys, doneKeys) {
     $$(".flow-step").forEach((el) => {
       const k = el.dataset.step;
-      el.classList.toggle("active", activeKeys.includes(k));
-      el.classList.toggle("done", doneKeys.includes(k));
+      el.classList.toggle("active", activeKeys.indexOf(k) !== -1);
+      el.classList.toggle("done", doneKeys.indexOf(k) !== -1);
     });
   }
-
-  /* ---------- Summary ---------- */
-
-  function updateSummary() {
-    const p = getPayload();
-    const ike = [val(p.ike.encryption), val(p.ike.integrity), val(p.ike.dh_group)].join(" \u00b7 ");
-    const esp = [val(p.esp.encryption), p.esp.pfs ? "PFS Enabled" : "PFS Disabled"].join(" \u00b7 ");
-    const lines = [
-      "IKEv2 \u2022 " + ike,
-      "ESP \u2022 " + esp,
-      MODE_LABELS[p.mode],
-    ];
-    $("#summaryLines").innerHTML = lines.map((l) => '<div class="summary-line">' + l + "</div>").join("");
-  }
-
-  /* ---------- Flow diagram ---------- */
 
   function buildFlow() {
     const mode = state.mode;
@@ -191,55 +232,99 @@
     }
   }
 
-  /* ---------- Progress ---------- */
+  /* ---------- Progress (job lifecycle) ---------- */
 
-  function showProgress() {
-    $("#progressList").innerHTML = "";
-    progressEls = [];
-
-    PROGRESS_STEPS.forEach((label) => {
-      const el = document.createElement("div");
-      el.className = "progress-step";
-      el.innerHTML = '<span class="step-ico">' + checkSvg() + '</span><span>' + label + "</span>";
-      $("#progressList").appendChild(el);
-      progressEls.push(el);
-    });
-
-    progressEls[0].classList.add("active");
-    $("#progressHead").textContent = PROGRESS_STEPS[0];
-
-    let idx = 0;
-    progressTimer = setInterval(() => {
-      progressEls[idx].classList.remove("active");
-      progressEls[idx].classList.add("done");
-      idx++;
-      if (idx < progressEls.length) {
-        progressEls[idx].classList.add("active");
-        $("#progressHead").textContent = PROGRESS_STEPS[idx];
-      } else {
-        clearInterval(progressTimer);
-        progressTimer = null;
-      }
-    }, 2500);
+  function setJobState(status) {
+    const labels = {
+      QUEUED: "Queued",
+      RUNNING: "Running\u2026",
+      COMPLETED: "Completed",
+      FAILED: "Failed",
+    };
+    const el = $("#jobStateLabel");
+    el.className = "job-state st-" + String(status || "").toLowerCase();
+    el.textContent = labels[status] || String(status || "");
   }
 
-  function finishProgress() {
-    if (progressTimer) {
-      clearInterval(progressTimer);
-      progressTimer = null;
+  function setChip(chip, mode) {
+    chip.classList.remove("active", "done", "fail");
+    if (mode) {
+      chip.classList.add(mode);
     }
-    progressEls.forEach((el) => {
-      el.classList.remove("active");
-      el.classList.add("done");
-    });
-    if (progressEls.length) {
-      $("#progressHead").textContent = "Analysis complete";
+  }
+
+  function stageLabel(stage) {
+    const map = {
+      QUEUED: "Queued",
+      RUNNING: "Running",
+      CONFIGURATION: "Configuration",
+      EXPERIMENT: "Experiment run",
+      COMPLETED: "Completed",
+    };
+    return map[stage] || stage || "";
+  }
+
+  function paintProgress(status, stage) {
+    const chQ = $("#chQueued");
+    const chR = $("#chRunning");
+    const chC = $("#chCompleted");
+    const chF = $("#chFailed");
+
+    switch (status) {
+      case "QUEUED":
+        setChip(chQ, "active");
+        setChip(chR, "");
+        setChip(chC, "");
+        setChip(chF, "");
+        $("#stageCaption").textContent = "Waiting for the testbed slot to become available.";
+        break;
+      case "RUNNING":
+        setChip(chQ, "done");
+        setChip(chR, "active");
+        setChip(chC, "");
+        setChip(chF, "");
+        $("#stageCaption").textContent = "The controller is applying the selected configuration to the testbed.";
+        break;
+      case "COMPLETED":
+        setChip(chQ, "done");
+        setChip(chR, "done");
+        setChip(chC, "done");
+        setChip(chF, "");
+        $("#stageCaption").textContent = "The controller has finished the experiment.";
+        break;
+      case "FAILED": {
+        const st = stageLabel(stage);
+        setChip(chQ, "done");
+        setChip(chR, "done");
+        setChip(chC, "");
+        setChip(chF, "fail");
+        $("#stageCaption").textContent = st
+          ? "Failed during " + st.toLowerCase() + "."
+          : "The controller stopped the experiment.";
+        break;
+      }
+      default:
+        setChip(chQ, "active");
+        setChip(chR, "");
+        setChip(chC, "");
+        setChip(chF, "");
+        $("#stageCaption").textContent = "";
     }
   }
 
   /* ---------- Results ---------- */
 
+  function resetResultStates() {
+    hide($("#emptyState"));
+    hide($("#passState"));
+    hide($("#failState"));
+    hide($("#rejectState"));
+    show($("#progressWrap"));
+  }
+
   function renderPass(result) {
+    hide($("#progressWrap"));
+
     const ip = result.ipsec || {};
     const con = result.connectivity || {};
 
@@ -248,201 +333,204 @@
     $("#mMode").textContent = ip.mode || "\u2014";
     $("#mLoss").textContent = con.packet_loss != null ? Math.round(con.packet_loss) + "%" : "\u2014";
 
+    $("#passConfig").innerHTML = state.lastPayload ? keyValueRowsHtml(state.lastPayload, "conf") : "";
+
     show($("#passState"));
     paintFlow(["result"], ["configure", "run", "verify"]);
   }
 
-  function renderFail(stage, message) {
-    const stg = stage || "Deployment";
-    const msg = message || "The experiment could not be completed.";
+  function finalizeFail(stage, message) {
+    hide($("#progressWrap"));
 
+    const stg = stage || "the controller";
     $("#failStage").innerHTML = "Failed at <b>" + stg + "</b>";
-    $("#failMessage").textContent = msg;
+    $("#failMessage").textContent = message || "The experiment could not be completed.";
+
+    $("#failConfig").innerHTML = state.lastPayload ? keyValueRowsHtml(state.lastPayload, "conf") : "";
 
     show($("#failState"));
     paintFlow(["result"], ["configure", "run", "verify"]);
   }
 
-  function updateDetails(result) {
-    const p = state.lastPayload || {};
-    const ike = (result && result.ike) || p.ike || {};
-    const esp = (result && result.esp) || p.esp || {};
-    const con = (result && result.connectivity) || {};
-    const mode = (result && result.mode) || p.mode || "";
+  function finalizeReject(message) {
+    hide($("#progressWrap"));
 
-    $("#dtMode").textContent = MODE_LABELS[mode] || "\u2014";
-    $("#dtIke").textContent =
-      ike.encryption ? [val(ike.encryption), val(ike.integrity), val(ike.dh_group)].join(" \u00b7 ") : "\u2014";
-    $("#dtEsp").textContent =
-      esp.encryption ? [val(esp.encryption), val(esp.dh_group)].join(" \u00b7 ") : "\u2014";
-    $("#dtPfs").textContent = esp.pfs != null ? (esp.pfs ? "Enabled" : "Disabled") : "\u2014";
+    $("#rejectMessage").textContent = message || "The experiment could not be started.";
 
-    if (con.packet_loss != null) {
-      $("#dtConn").textContent = Math.round(con.packet_loss) + "% packet loss";
-    } else {
-      $("#dtConn").textContent = "\u2014";
-    }
-
-    if (result && result.status) {
-      $("#dtResult").textContent = result.status;
-      $("#dtResult").className = "detail-value " + (result.status === "PASS" ? "pass" : "fail");
-    } else {
-      $("#dtResult").textContent = "\u2014";
-      $("#dtResult").className = "detail-value";
-    }
+    show($("#rejectState"));
+    paintFlow(["configure"], []);
   }
 
-  /* ---------- Error classification ---------- */
+  /* ---------- Error classification (HTTP 4xx/5xx during submission) ---------- */
 
   function classifyError(status, detail) {
     const d = String(detail || "").toLowerCase();
 
-    if (status === 400 || /(unsupported|invalid|not a valid|config)/.test(d)) {
+    if (status === 400) {
       return { stage: "Configuration", message: detail || "The selected configuration is not supported by the testbed." };
     }
-    if (/child|installed/.test(d)) {
-      return { stage: "CHILD SA", message: detail || "The CHILD security association could not be installed." };
+    if (/config/.test(d)) {
+      return { stage: "Configuration", message: detail };
+    }
+    if (/deploy|topology|container|docker|clab/.test(d)) {
+      return { stage: "Deployment", message: detail };
     }
     if (/ike|established|firewall|keying|auth/.test(d)) {
-      return { stage: "IKE", message: detail || "The IKE security association could not be established." };
+      return { stage: "IKE", message: detail };
     }
-    if (/ping|packet loss|connect|destination|no route|unreachable/.test(d)) {
-      return { stage: "Connectivity", message: detail || "Traffic did not pass across the testbed." };
+    if (/child|installed/.test(d)) {
+      return { stage: "CHILD SA", message: detail };
     }
-    if (/deploy|topology|container|swanctl|docker|clab|image|permission|sudo/.test(d)) {
-      return { stage: "Deployment", message: detail || "The testbed could not be deployed or configured." };
+    if (/ping|packet loss|connect/.test(d)) {
+      return { stage: "Connectivity", message: detail };
     }
-    return { stage: "Deployment", message: detail || "The experiment could not be completed." };
+    return { stage: "Controller", message: detail || "The experiment could not be run." };
+  }
+
+  async function readDetail(res) {
+    try {
+      const j = await res.json();
+      if (j && typeof j.detail === "string") {
+        return j.detail;
+      }
+      if (j && Array.isArray(j.detail)) {
+        return j.detail
+          .map(function (d) {
+            const loc = d.loc && d.loc.length ? " (" + d.loc.join(".") + ")" : "";
+            return (d.msg || "Invalid value") + loc;
+          })
+          .join("; ");
+      }
+      return "";
+    } catch (_) {
+      return "";
+    }
   }
 
   /* ---------- Run experiment ---------- */
+
+  function setRunningUI(on) {
+    const runBtn = $("#runBtn");
+    const runLabel = $("#runLabel");
+    runBtn.disabled = on;
+    runBtn.classList.toggle("is-running", on);
+    runLabel.textContent = on ? "Running\u2026" : "Run Experiment";
+    $("#configCard").classList.toggle("is-disabled", on);
+  }
 
   async function runExperiment() {
     if (state.running) return;
 
     state.running = true;
+    setRunningUI(true);
 
-    const runBtn = $("#runBtn");
-    const runLabel = $("#runLabel");
-
-    runBtn.disabled = true;
-    runBtn.classList.add("is-running");
-    runLabel.textContent = "Running\u2026";
-    $("#configCard").classList.add("is-disabled");
-
-    hide($("#emptyState"));
-    hide($("#passState"));
-    hide($("#failState"));
-    show($("#progressWrap"));
-
+    resetResultStates();
     paintFlow(["run"], ["configure"]);
-
     state.lastPayload = getPayload();
 
-    showProgress();
+    paintProgress("QUEUED", "");
+    setJobState("QUEUED");
 
     try {
-      const res = await fetch(EXPERIMENTS_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(state.lastPayload),
-      });
+      let res;
+      try {
+        res = await fetch(EXPERIMENTS_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(state.lastPayload),
+        });
+      } catch (_) {
+        throw { network: true };
+      }
 
       if (!res.ok) {
-        let detail = "";
+        const detail = await readDetail(res);
 
-        try {
-          const j = await res.json();
-          detail = j.detail || "";
-        } catch (_) {}
+        if (res.status === 409) {
+          finalizeReject(detail || "Another experiment is already running.");
+          return;
+        }
+        if (res.status === 422) {
+          finalizeFail("Configuration", detail || "The controller rejected the selected configuration.");
+          return;
+        }
 
         const c = classifyError(res.status, detail);
-
-        finishProgress();
-        renderFail(c.stage, c.message);
-        updateDetails({
-          status: "FAIL",
-          mode: state.lastPayload.mode,
-          ike: state.lastPayload.ike,
-          esp: state.lastPayload.esp,
-        });
-
+        finalizeFail(c.stage, c.message);
         return;
       }
 
-      const startData = await res.json();
-      const jobId = startData.job_id;
+      let jobId = null;
+      try {
+        const startData = await res.json();
+        jobId = startData && startData.job_id;
+      } catch (_) {
+        finalizeReject("The controller returned an invalid response.");
+        return;
+      }
 
-      let finished = false;
+      if (!jobId) {
+        finalizeReject("The controller did not return a job identifier.");
+        return;
+      }
 
-      while (!finished) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
+      while (true) {
+        await sleep(POLL_INTERVAL);
 
-        const statusRes = await fetch(
-          EXPERIMENTS_URL + "/" + encodeURIComponent(jobId)
-        );
+        let statusRes;
+        try {
+          statusRes = await fetch(EXPERIMENTS_URL + "/" + encodeURIComponent(jobId));
+        } catch (_) {
+          throw { network: true };
+        }
 
+        if (statusRes.status === 404) {
+          finalizeReject("The experiment job no longer exists on the controller.");
+          return;
+        }
         if (!statusRes.ok) {
-          throw new Error("Unable to retrieve experiment status.");
+          finalizeReject("The controller could not be reached while monitoring the experiment.");
+          return;
         }
 
         const job = await statusRes.json();
 
+        paintProgress(job.status, job.stage);
+        setJobState(job.status);
+
         if (job.status === "COMPLETED") {
-          finished = true;
-
-          finishProgress();
-
           const result = job.result;
 
           if (result && result.status === "PASS") {
             renderPass(result);
           } else {
-            renderFail(
-              "Connectivity",
-              "Connectivity verification failed."
-            );
+            const con = (result && result.connectivity) || {};
+            const loss = con.packet_loss;
+            const msg = loss != null
+              ? "Connectivity verification failed: " + Math.round(loss) + "% packet loss."
+              : "The experiment completed but did not report a PASS result.";
+            finalizeFail("Connectivity", msg);
           }
-
-          updateDetails(result);
+          return;
         }
 
         if (job.status === "FAILED") {
-          finished = true;
-
-          finishProgress();
-
-          const c = classifyError(
-            500,
-            job.error || "The experiment could not be completed."
-          );
-
-          renderFail(c.stage, c.message);
-
-          updateDetails({
-            status: "FAIL",
-            mode: state.lastPayload.mode,
-            ike: state.lastPayload.ike,
-            esp: state.lastPayload.esp,
-          });
+          const stage =
+            job.stage === "CONFIGURATION" ? "Configuration" :
+            job.stage === "EXPERIMENT" ? "Experiment" : "";
+          finalizeFail(stage, job.error || "The experiment could not be completed.");
+          return;
         }
       }
     } catch (err) {
-      finishProgress();
-
-      renderFail(
-        "Controller",
-        err.message || "Unable to communicate with the testbed controller."
-      );
-
-      updateDetails(null);
+      if (err && err.network) {
+        finalizeReject("Unable to connect to the IPsec testbed controller.");
+      } else {
+        finalizeReject("An unexpected error occurred while running the experiment.");
+      }
     } finally {
+      setRunningUI(false);
       state.running = false;
-
-      runBtn.disabled = false;
-      runBtn.classList.remove("is-running");
-      runLabel.textContent = "RUN EXPERIMENT";
-      $("#configCard").classList.remove("is-disabled");
     }
   }
 
@@ -452,7 +540,7 @@
     try {
       const res = await fetch(HEALTH_URL);
       const data = await res.json();
-      const ok = data.status === "ok";
+      const ok = data && data.status === "ok";
       $("#statusPill").classList.toggle("is-offline", !ok);
       $("#statusText").textContent = ok ? "Testbed Ready" : "Testbed Unavailable";
     } catch (_) {
@@ -461,64 +549,103 @@
     }
   }
 
-  /* ---------- Init ---------- */
+  /* ---------- Option loading ---------- */
 
-  async function loadConfigurations() {
-    let data;
-    try {
-      const res = await fetch(CONFIGS_URL);
-      data = await res.json();
-    } catch (_) {
-      data = FALLBACK;
-    }
-
-    const ike = data.ike || FALLBACK.ike;
-    const esp = data.esp || FALLBACK.esp;
-
-    fillSelect($("#ikeEncryption"), ike.encryption, ENCRYPTION_LABELS, "aes256");
-    fillSelect($("#ikeIntegrity"), ike.integrity, INTEGRITY_LABELS, "sha256");
-    fillSelect($("#ikeDh"), ike.dh_groups, DH_LABELS, "modp2048");
-    fillSelect($("#espEncryption"), esp.encryption, ENCRYPTION_LABELS, "aes256gcm16");
-    fillSelect($("#espDh"), esp.dh_groups, DH_LABELS, "modp2048");
+  function seedConfigOptions() {
+    fillSelect($("#ikeVersion"), FALLBACK.ike.versions, IKE_VERSION_LABELS, "2");
+    fillSelect($("#ikeEncryption"), FALLBACK.ike.encryption, ENCRYPTION_LABELS, "aes256");
+    fillSelect($("#ikeIntegrity"), FALLBACK.ike.integrity, INTEGRITY_LABELS, "sha256");
+    fillSelect($("#ikeDh"), FALLBACK.ike.dh_groups, DH_LABELS, "modp2048");
+    fillSelect($("#espEncryption"), FALLBACK.esp.encryption, ENCRYPTION_LABELS, "aes256gcm16");
+    fillSelect($("#espIntegrity"), FALLBACK.esp.integrity, INTEGRITY_LABELS, "sha256");
+    fillSelect($("#espDh"), FALLBACK.esp.dh_groups, DH_LABELS, "modp2048");
+    applyEspIntegrityState();
   }
 
-  function bindEvents() {
-    $$(".seg-option").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        $$(".seg-option").forEach((b) => {
+  async function loadConfigurations() {
+    let data = null;
+    try {
+      const res = await fetch(CONFIGS_URL);
+      if (res.ok) {
+        data = await res.json();
+      }
+    } catch (_) {}
+
+    const cfg = data || FALLBACK;
+    const ike = cfg.ike || FALLBACK.ike;
+    const esp = cfg.esp || FALLBACK.esp;
+
+    const versions = ike.versions && ike.versions.length ? ike.versions : FALLBACK.ike.versions;
+
+    fillSelect($("#ikeVersion"), versions, IKE_VERSION_LABELS, "2");
+    fillSelect($("#ikeEncryption"), ike.encryption || FALLBACK.ike.encryption, ENCRYPTION_LABELS, "aes256");
+    fillSelect($("#ikeIntegrity"), ike.integrity || FALLBACK.ike.integrity, INTEGRITY_LABELS, "sha256");
+    fillSelect($("#ikeDh"), ike.dh_groups || FALLBACK.ike.dh_groups, DH_LABELS, "modp2048");
+    fillSelect($("#espEncryption"), esp.encryption || FALLBACK.esp.encryption, ENCRYPTION_LABELS, "aes256gcm16");
+    fillSelect($("#espIntegrity"), esp.integrity || FALLBACK.esp.integrity, INTEGRITY_LABELS, "sha256");
+    fillSelect($("#espDh"), esp.dh_groups || FALLBACK.esp.dh_groups, DH_LABELS, "modp2048");
+
+    applyEspIntegrityState();
+    updateSummary();
+  }
+
+  /* ---------- Events ---------- */
+
+  function bindSegmented(containerSel, attr, refresh) {
+    $$(containerSel + " .seg-option").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (state.running) return;
+        $$(containerSel + " .seg-option").forEach(function (b) {
           b.classList.remove("active");
           b.setAttribute("aria-checked", "false");
         });
         btn.classList.add("active");
         btn.setAttribute("aria-checked", "true");
-        state.mode = btn.dataset.mode;
-        updateSummary();
-        buildFlow();
+        if (attr === "mode") {
+          state.mode = btn.dataset.mode;
+          buildFlow();
+        } else {
+          state.family = btn.dataset.family;
+        }
+        refresh();
       });
     });
+  }
 
-    $("#pfsSwitch").addEventListener("click", () => {
+  function bindEvents() {
+    bindSegmented("#modeSegmented", "mode", updateSummary);
+    bindSegmented("#familySegmented", "family", updateSummary);
+
+    $("#pfsSwitch").addEventListener("click", function () {
+      if (state.running) return;
       state.pfs = !state.pfs;
       $("#pfsSwitch").classList.toggle("on", state.pfs);
       $("#pfsSwitch").setAttribute("aria-checked", String(state.pfs));
       updateSummary();
     });
 
-    const watcher = () => updateSummary();
-    ["#ikeEncryption", "#ikeIntegrity", "#ikeDh", "#espEncryption", "#espDh"].forEach((sel) => {
-      $(sel).addEventListener("change", watcher);
+    $("#espEncryption").addEventListener("change", function () {
+      applyEspIntegrityState();
+      updateSummary();
+    });
+
+    ["#ikeVersion", "#ikeEncryption", "#ikeIntegrity", "#ikeDh", "#espDh"].forEach(function (sel) {
+      $(sel).addEventListener("change", updateSummary);
     });
 
     $("#runBtn").addEventListener("click", runExperiment);
   }
 
+  /* ---------- Init ---------- */
+
   function init() {
-    loadConfigurations();
+    seedConfigOptions();
     updateSummary();
     buildFlow();
     bindEvents();
     checkHealth();
     healthTimer = setInterval(checkHealth, 15000);
+    loadConfigurations();
   }
 
   if (document.readyState === "loading") {

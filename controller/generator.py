@@ -27,6 +27,32 @@ def generate_swanctl_config(config, local, remote):
     if esp["pfs"]:
         esp_proposal += f"-{esp['dh_group']}"
 
+    # In transport mode the traffic selectors are the tunnel endpoint
+    # addresses themselves, so a trap policy would also match the IKE
+    # (UDP 500/4500) traffic sent to the peer, deadlocking negotiation.
+    # Defer the install to the explicit swanctl --initiate and bypass IKE.
+    transport = config["mode"] == "transport"
+    start_action = "none" if transport else "trap"
+
+    bypass = ""
+    if transport:
+        bypass = f"""
+    {connection_name}-ike-bypass {{
+        version = {ike['version']}
+        local_addrs = {local['ip']}
+        remote_addrs = {remote['ip']}
+
+        children {{
+            {connection_name}-ike-bypass {{
+                mode = pass
+                local_ts = dynamic[udp/500]
+                remote_ts = dynamic[udp/500]
+                start_action = trap
+            }}
+        }}
+    }}
+"""
+
     return f"""secrets {{
     ike-psk {{
         id-1 = {local['id']}
@@ -57,12 +83,13 @@ connections {{
                 local_ts = {local['ts']}
                 remote_ts = {remote['ts']}
                 esp_proposals = {esp_proposal}
-                start_action = trap
+                start_action = {start_action}
             }}
         }}
 
         proposals = {ike_proposal}
     }}
+    {bypass}
 }}
 """
 

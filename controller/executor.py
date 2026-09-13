@@ -11,6 +11,22 @@ from .generator import write_connection
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
+def get_topology(mode, address_family):
+    if mode not in TOPOLOGIES:
+        raise ValueError(
+            f"Unsupported mode: {mode}"
+        )
+
+    topology = TOPOLOGIES[mode]
+
+    if address_family not in topology:
+        raise ValueError(
+            f"Unsupported address family '{address_family}' for {mode}"
+        )
+
+    return topology[address_family]
+
+
 def run(command):
     print(f"$ {' '.join(command)}")
 
@@ -91,7 +107,7 @@ def generate_configs(config):
     validate_config(config)
 
     mode = config["mode"]
-    topology = TOPOLOGIES[mode]
+    topology = get_topology(mode, config["address_family"])
 
     local = topology["local"]
     remote = topology["remote"]
@@ -130,7 +146,7 @@ def generate_configs(config):
 def load_generated_configs(config):
     mode = config["mode"]
 
-    topology = TOPOLOGIES[mode]
+    topology = get_topology(mode, config["address_family"])
 
     local = topology["local"]
     remote = topology["remote"]
@@ -194,8 +210,8 @@ def load_generated_configs(config):
 
     print("\n=== Generated configurations loaded ===\n")
 
-def initiate_ipsec(mode):
-    topology = TOPOLOGIES[mode]
+def initiate_ipsec(mode, address_family):
+    topology = get_topology(mode, address_family)
     local = topology["local"]
 
     if mode == "tunnel":
@@ -221,34 +237,79 @@ def initiate_ipsec(mode):
     ])
 
 
-def test_connectivity(mode):
-    topology = TOPOLOGIES[mode]
-
+def test_connectivity(mode, address_family):
     if mode == "tunnel":
         source = "clab-ipsec-host-a"
-        destination = "10.10.2.10"
+
+        if address_family == "ipv4":
+            destination = "10.10.2.10"
+            ping_command = [
+                "ping",
+                "-c",
+                "3",
+                "-i",
+                "0.2",
+                "-W",
+                "1",
+                destination,
+            ]
+        elif address_family == "ipv6":
+            destination = "2001:db8:2::10"
+            ping_command = [
+                "ping",
+                "-6",
+                "-c",
+                "3",
+                "-i",
+                "0.2",
+                "-W",
+                "1",
+                destination,
+            ]
+        else:
+            raise ValueError(
+                f"Unsupported address family: {address_family}"
+            )
     elif mode == "transport":
         source = "clab-ipsec-transport-host-c"
-        destination = "10.20.1.20"
+
+        if address_family == "ipv4":
+            destination = "10.20.1.20"
+            ping_command = [
+                "ping",
+                "-c",
+                "3",
+                "-i",
+                "0.2",
+                "-W",
+                "1",
+                destination,
+            ]
+        elif address_family == "ipv6":
+            destination = "2001:db8:20::20"
+            ping_command = [
+                "ping",
+                "-6",
+                "-c",
+                "3",
+                "-i",
+                "0.2",
+                "-W",
+                "1",
+                destination,
+            ]
+        else:
+            raise ValueError(
+                f"Unsupported address family: {address_family}"
+            )
     else:
         raise ValueError(f"Unsupported mode: {mode}")
 
     print("\n=== Testing connectivity ===\n")
 
-    output = run([
-        "sudo",
-        "docker",
-        "exec",
-        source,
-        "ping",
-        "-c",
-        "3",
-        "-i",
-        "0.2",
-        "-W",
-        "1",
-        destination,
-    ])
+    output = run(
+        ["sudo", "docker", "exec", source] + ping_command
+    )
 
     packet_loss = None
 
@@ -264,8 +325,8 @@ def test_connectivity(mode):
         "packet_loss": packet_loss,
         "status": "PASS" if packet_loss == 0 else "FAIL",
     }
-def verify_ipsec(mode):
-    topology = TOPOLOGIES[mode]
+def verify_ipsec(mode, address_family):
+    topology = get_topology(mode, address_family)
 
     local = topology["local"]
 
@@ -309,15 +370,16 @@ def verify_ipsec(mode):
 
 def run_experiment(config):
     mode = config["mode"]
+    address_family = config["address_family"]
 
     validate_config(config)
 
     reset_and_deploy(mode)
     load_generated_configs(config)
-    initiate_ipsec(mode)
-    ipsec = verify_ipsec(mode)
-    connectivity = test_connectivity(mode)
-    
+    initiate_ipsec(mode, address_family)
+    ipsec = verify_ipsec(mode, address_family)
+    connectivity = test_connectivity(mode, address_family)
+
 
     result = {
         "status": (
@@ -326,6 +388,7 @@ def run_experiment(config):
             else "FAIL"
         ),
         "mode": mode,
+        "address_family": address_family,
         "ike": config["ike"],
         "esp": config["esp"],
         "connectivity": connectivity,
