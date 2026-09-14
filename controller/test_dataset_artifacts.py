@@ -28,6 +28,7 @@ import pyarrow.parquet as pq
 
 from controller.dataset_artifacts import (
     CAPTURES_SUBDIR,
+    EXPORT_ARTIFACT_FILENAMES,
     FEATURES_PARQUET_FILENAME,
     FEATURE_COLUMNS,
     FEATURE_KEYS,
@@ -38,8 +39,10 @@ from controller.dataset_artifacts import (
     SCHEMA_VERSION,
     STAGING_SUBDIR,
     SUCCESSFUL_SAMPLES_FILENAME,
+    build_dataset_zip,
     build_successful_record,
     collect_successful_sample,
+    export_artifact_paths,
     finalize_dataset,
     normalize_feature_record,
     read_staging,
@@ -863,6 +866,133 @@ class TestArtifactFailure(unittest.TestCase):
             finalize_dataset(tmp, run.id)
             table = pq.read_table(run.directory / FEATURES_PARQUET_FILENAME)
             self.assertEqual(table.num_rows, 3)
+
+
+# ---------------------------------------------------------------------------
+# Dataset download / export bundle
+# ---------------------------------------------------------------------------
+
+class TestDatasetExport(unittest.TestCase):
+    def _finalized_run(self, target=2):
+        tmp = tempfile.TemporaryDirectory()
+        try:
+            run, _ = make_run_and_plan(tmp.name, target=target)
+            run_with_collector(tmp.name, run)
+            finalize_dataset(tmp.name, run.id)
+            return tmp, run
+        except Exception:
+            tmp.cleanup()
+            raise
+
+    def test_export_artifact_paths_are_the_four_final_files(self):
+        tmp, run = self._finalized_run()
+        try:
+            paths = export_artifact_paths(run)
+            self.assertEqual(
+                [p.name for p in paths],
+                [*EXPORT_ARTIFACT_FILENAMES],
+            )
+            for path in paths:
+                self.assertTrue(path.is_file())
+                self.assertTrue(path.is_relative_to(run.directory.resolve()))
+        finally:
+            tmp.cleanup()
+
+    def test_zip_contains_exactly_the_final_artifacts(self):
+        tmp, run = self._finalized_run()
+        import io
+        import zipfile
+        try:
+            destination = Path(tmp.name) / "bundle.zip"
+            build_dataset_zip(run, destination)
+            with zipfile.ZipFile(destination) as zf:
+                names = zf.namelist()
+                self.assertEqual(sorted(names), sorted(EXPORT_ARTIFACT_FILENAMES))
+                for name in names:
+                    self.assertNotIn("/", name)  # archive-root basenames only
+                    self.assertNotIn("..", name)
+            # Evidence / provenance directories never enter the bundle.
+            for forbidden in ("captures", "experiments", "failures",
+                              "staging", "logs", "tmp", "state.json",
+                              "finalization.json"):
+                for name in names:
+                    self.assertNotIn(forbidden, name)
+        finally:
+            tmp.cleanup()
+
+    def test_zip_members_match_source_bytes_and_sources_unchanged(self):
+        tmp, run = self._finalized_run()
+        import io
+        import zipfile
+        try:
+            before = {
+                name: (run.directory / name).read_bytes()
+                for name in EXPORT_ARTIFACT_FILENAMES
+            }
+            destination = Path(tmp.name) / "bundle.zip"
+            build_dataset_zip(run, destination)
+            with zipfile.ZipFile(destination) as zf:
+                for name, payload in before.items():
+                    self.assertEqual(zf.read(name), payload)
+            after = {
+                name: (run.directory / name).read_bytes()
+                for name in EXPORT_ARTIFACT_FILENAMES
+            }
+            self.assertEqual(after, before)
+        finally:
+            tmp.cleanup()
+
+    def test_build_dataset_zip_returns_member_paths(self):
+        tmp, run = self._finalized_run()
+        import io
+        import zipfile
+        try:
+            destination = Path(tmp.name) / "bundle.zip"
+            members = build_dataset_zip(run, destination)
+            self.assertEqual([p.name for p in members],
+                             list(EXPORT_ARTIFACT_FILENAMES))
+            with zipfile.ZipFile(destination) as zf:
+                self.assertEqual(sorted(zf.namelist()),
+                                 sorted(EXPORT_ARTIFACT_FILENAMES))
+        finally:
+            tmp.cleanup()
+
+    def test_missing_artifact_is_rejected(self):
+        tmp, run = self._finalized_run()
+        try:
+            (run.directory / RUN_README_FILENAME).unlink()
+            with self.assertRaisesRegex(ValueError, "READM"):
+                export_artifact_paths(run)
+            with self.assertRaisesRegex(ValueError, "READM"):
+                build_dataset_zip(run, Path(tmp.name) / "bundle.zip")
+        finally:
+            tmp.cleanup()
+
+    def test_path_traversal_artifact_is_rejected(self):
+        tmp, run = self._finalized_run()
+        try:
+            outside = Path(tmp.name) / "outside-secret.txt"
+            outside.write_text("secret\n", encoding="utf-8")
+            readme = run.directory / RUN_README_FILENAME
+            readme.unlink()
+            readme.symlink_to(outside)
+            with self.assertRaisesRegex(ValueError, "escapes"):
+                export_artifact_paths(run)
+            with self.assertRaisesRegex(ValueError, "escapes"):
+                build_dataset_zip(run, Path(tmp.name) / "bundle.zip")
+        finally:
+            tmp.cleanup()
+
+    def test_directory_in_place_of_artifact_is_rejected(self):
+        tmp, run = self._finalized_run()
+        try:
+            metadata = run.directory / METADATA_FILENAME
+            metadata.unlink()
+            metadata.mkdir()
+            with self.assertRaisesRegex(ValueError, "missing"):
+                export_artifact_paths(run)
+        finally:
+            tmp.cleanup()
 
 
 if __name__ == "__main__":

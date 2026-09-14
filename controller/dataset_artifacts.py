@@ -56,6 +56,7 @@ import json
 import math
 import os
 import shutil
+import zipfile
 from collections import Counter
 from pathlib import Path
 
@@ -84,6 +85,16 @@ FINALIZATION_FILENAME = "finalization.json"
 RUN_README_FILENAME = "README.txt"
 CAPTURES_SUBDIR = "captures"
 STAGING_SUBDIR = "staging"
+
+# The final downloadable dataset artifact: the materialized run directory.
+# Per-sample evidence directories (captures/, experiments/, failures/) are
+# provenance, not part of the final artifact, so they are never exported.
+EXPORT_ARTIFACT_FILENAMES = (
+    FEATURES_PARQUET_FILENAME,      # Module 5 materialized feature table
+    METADATA_FILENAME,              # Module 5 materialized metadata records
+    dataset_run_mod.MANIFEST_FILENAME,   # Module 1 derived run summary
+    RUN_README_FILENAME,            # Module 5 run-level documentation
+)
 
 # ---------------------------------------------------------------------------
 # Feature schema (v1) -- the 54 columns produced by controller/features.py.
@@ -826,3 +837,56 @@ def finalize_dataset(results_root, dataset_run_id, log=None, write_artifacts=Tru
             finalization_state(dataset_run_id, "FAILED", error=exc),
         )
         raise
+
+
+# ---------------------------------------------------------------------------
+# Dataset download / export (final artifact bundle)
+# ---------------------------------------------------------------------------
+
+def export_artifact_paths(run):
+    """Resolve the final downloadable artifacts of a dataset run.
+
+    Returns the four files that constitute the final dataset: ``features.
+    parquet``, ``metadata.jsonl``, the Module-1 ``manifest.json`` summary and
+    the run ``README.txt``.  Per-sample evidence directories (``captures/``,
+    ``experiments/``, ``failures/``) are provenance, not part of the final
+    downloadable artifact, so they are intentionally not exported.
+
+    Guards against both missing artifacts and path traversal: a missing file
+    raises ``ValueError``, and any artifact whose resolved path escapes the
+    run directory raises ``ValueError``.  Source files are only read here;
+    they are never modified or removed.
+    """
+    base = run.directory.resolve()
+    paths = []
+    for name in EXPORT_ARTIFACT_FILENAMES:
+        path = base / name
+        if not path.is_file():
+            raise ValueError(
+                f"final dataset artifact is missing: {run.id}/{name}"
+            )
+        resolved = path.resolve()
+        if not resolved.is_relative_to(base):
+            raise ValueError(
+                f"artifact path escapes the run directory: {path}"
+            )
+        paths.append(resolved)
+    return paths
+
+
+def build_dataset_zip(run, destination, log=None):
+    """Write the final dataset archive (ZIP) for a COMPLETED run.
+
+    Members are exactly ``export_artifact_paths(run)``, stored at the archive
+    root under their original filename (no paths, so no traversal can reach
+    outside the run directory).  The source artifacts are opened read-only and
+    are never modified or deleted.  ``destination`` may be a filesystem path
+    or an open binary file object.  Returns the resolved member paths.
+    """
+    log = log or (lambda msg: None)
+    members = export_artifact_paths(run)
+    with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED) as archive:
+        for path in members:
+            archive.write(path, arcname=path.name)
+            log(f"[export] {run.id}: {path.name}")
+    return list(members)

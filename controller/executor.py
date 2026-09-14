@@ -253,6 +253,10 @@ def terminate_sas(mode, address_family):
     by ``initiate_ipsec``/``verify_ipsec``/``load_generated_configs``.  A
     termination error is not fatal: an already-terminated or nonexistent SA
     must not make a valid reuse path fail (best-effort teardown).
+
+    Only the explicit per-connection CHILD/IKE terminations are used; the
+    unsupported ``swanctl --terminate --all`` form is deliberately never
+    invoked.
     """
     topology = get_topology(mode, address_family)
     local = topology["local"]
@@ -280,7 +284,6 @@ def terminate_sas(mode, address_family):
         for command in (
             ["--terminate", "--child", connection_name],
             ["--terminate", "--ike", connection_name],
-            ["--terminate", "--all"],
         ):
             try:
                 run([

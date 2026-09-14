@@ -969,12 +969,17 @@
     let extras = "";
 
     if (statusName === "COMPLETED") {
+      const finalized = !!(st.finalization && st.finalization.status === "COMPLETED");
       banner =
         '<div class="ds-banner ds-banner-ok">' +
           '<span class="ds-banner-check" aria-hidden="true">&#10003;</span>' +
           "<div><b>Dataset completed</b> &mdash; " + successful + " / " + target +
           " successful samples generated.</div>" +
         "</div>";
+      if (finalized) {
+        extras =
+          '<button type="button" class="run-btn ds-download-btn" id="datasetDownloadBtn">Download Dataset</button>';
+      }
     } else if (statusName === "PAUSED") {
       banner =
         '<div class="ds-banner ds-banner-warn">' +
@@ -1401,6 +1406,21 @@
     renderDataset();
   }
 
+  function downloadDataset() {
+    const d = D();
+    if (!d.activeRunId) return;
+    const url =
+      DATASETS_URL + "/" + encodeURIComponent(d.activeRunId) + "/download";
+    // Same-origin anchor navigation: the server answers with attachment
+    // Content-Disposition, so the browser saves the ZIP instead of navigating.
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
   /* ---------- Dataset events ---------- */
 
   function bindDatasetEvents() {
@@ -1408,6 +1428,8 @@
     $("#datasetStatus").addEventListener("click", function (event) {
       if (event.target && event.target.id === "datasetResumeBtn") {
         resumeDatasetRun();
+      } else if (event.target && event.target.id === "datasetDownloadBtn") {
+        downloadDataset();
       }
     });
   }

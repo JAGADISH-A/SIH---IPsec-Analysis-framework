@@ -770,5 +770,205 @@ class TestResults(unittest.TestCase):
             )
 
 
+# ---------------------------------------------------------------------------
+# Dataset download / export
+# ---------------------------------------------------------------------------
+
+DOWNLOAD_ARTIFACTS = (
+    "features.parquet",
+    "metadata.jsonl",
+    "manifest.json",
+    "README.txt",
+)
+
+
+class TestDatasetDownload(unittest.TestCase):
+    def _completed(self, target=4):
+        tmp = tempfile.TemporaryDirectory()
+        client = client_for(tmp.name)
+        run_id = post_target(client, target).json()["dataset_run_id"]
+        wait_finalized(client, run_id)
+        return tmp, client, run_id
+
+    def _zip(self, client, run_id):
+        import io
+        import zipfile
+        resp = client.get(f"/dataset-runs/{run_id}/download")
+        self.assertEqual(resp.status_code, 200)
+        return resp, zipfile.ZipFile(io.BytesIO(resp.content))
+
+    def test_completed_run_downloads_a_zip_archive(self):
+        tmp, client, run_id = self._completed(4)
+        try:
+            resp = client.get(f"/dataset-runs/{run_id}/download")
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(
+                resp.headers["content-type"].split(";")[0].strip(),
+                "application/zip",
+            )
+            disposition = resp.headers["content-disposition"]
+            self.assertIn("attachment", disposition)
+            self.assertIn(f"{run_id}.zip", disposition)
+            self.assertGreater(len(resp.content), 0)
+        finally:
+            tmp.cleanup()
+
+    def test_zip_contains_exactly_the_required_final_artifacts(self):
+        tmp, client, run_id = self._completed(4)
+        try:
+            resp, zf = self._zip(client, run_id)
+            try:
+                self.assertEqual(
+                    sorted(zf.namelist()), sorted(DOWNLOAD_ARTIFACTS)
+                )
+                # Evidence/provenance directories are not part of the final
+                # downloadable artifact and must never leak into the archive.
+                for name in zf.namelist():
+                    self.assertNotIn("/", name)
+                    self.assertNotIn("captures", name)
+                    self.assertNotIn("experiments", name)
+                    self.assertNotIn("failures", name)
+            finally:
+                zf.close()
+        finally:
+            tmp.cleanup()
+
+    def test_zip_contents_match_source_and_sources_unchanged(self):
+        tmp, client, run_id = self._completed(3)
+        directory = Path(tmp.name) / "datasets" / run_id
+        try:
+            before = {
+                name: (directory / name).read_bytes() for name in DOWNLOAD_ARTIFACTS
+            }
+            resp, zf = self._zip(client, run_id)
+            try:
+                for name, payload in before.items():
+                    self.assertEqual(zf.read(name), payload)
+            finally:
+                zf.close()
+            after = {
+                name: (directory / name).read_bytes() for name in DOWNLOAD_ARTIFACTS
+            }
+            self.assertEqual(after, before)
+        finally:
+            tmp.cleanup()
+
+    def test_downloaded_parquet_rows_match_successful_sample_count(self):
+        target = 5
+        tmp, client, run_id = self._completed(target)
+        try:
+            import io
+            import pyarrow.parquet as pq
+            resp, zf = self._zip(client, run_id)
+            try:
+                table = pq.read_table(io.BytesIO(zf.read("features.parquet")))
+                self.assertEqual(table.num_rows, target)
+            finally:
+                zf.close()
+        finally:
+            tmp.cleanup()
+
+    def test_unknown_dataset_run_is_404(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client = client_for(tmp)
+            resp = client.get("/dataset-runs/does-not-exist/download")
+            self.assertEqual(resp.status_code, 404)
+
+    def test_path_traversal_run_id_is_404(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client = client_for(tmp)
+            resp = client.get(
+                "/dataset-runs/..%2F..%2Fcontroller%2Fapi%2Fdownload"
+            )
+            self.assertEqual(resp.status_code, 404)
+
+    def test_running_dataset_is_rejected(self):
+        gate = HoldGate((1, 1))
+        with tempfile.TemporaryDirectory() as tmp:
+            client = client_for(tmp, runner=ScriptedRunner(gate=gate))
+            run_id = post_target(client, 3).json()["dataset_run_id"]
+            wait_status(client, run_id, "RUNNING")
+            resp = client.get(f"/dataset-runs/{run_id}/download")
+            self.assertEqual(resp.status_code, 409)
+            self.assertIn("not a completed dataset", resp.json()["detail"])
+            gate.event.set()
+            wait_finalized(client, run_id)
+
+    def test_paused_dataset_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client = client_for(
+                tmp, runner=ScriptedRunner(results={(1, 1): OUTCOME_PAUSE})
+            )
+            run_id = post_target(client, 1).json()["dataset_run_id"]
+            wait_status(client, run_id, "PAUSED")
+            resp = client.get(f"/dataset-runs/{run_id}/download")
+            self.assertEqual(resp.status_code, 409)
+            self.assertIn("not a completed dataset", resp.json()["detail"])
+
+    def test_failed_dataset_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client = client_for(
+                tmp, runner=ScriptedRunner(default=OUTCOME_FAILED)
+            )
+            run_id = post_target(client, 1).json()["dataset_run_id"]
+            wait_status(client, run_id, "FAILED")
+            resp = client.get(f"/dataset-runs/{run_id}/download")
+            self.assertEqual(resp.status_code, 409)
+            self.assertIn("not a completed dataset", resp.json()["detail"])
+
+    def test_completed_but_not_finalized_is_rejected(self):
+        # Status flips to COMPLETED before finalization.json is written;
+        # without finalization the artifacts are not safe to download.  Hold
+        # the finalizer on a gate so the window is deterministic.
+        from controller import dataset_artifacts as artifacts_mod
+        real_finalize = artifacts_mod.finalize_dataset
+        proceed = threading.Event()
+
+        def blocked_finalize(results_root, dataset_run_id, log=None,
+                             write_artifacts=True):
+            proceed.wait(timeout=60)
+            return real_finalize(
+                results_root, dataset_run_id,
+                log=log, write_artifacts=write_artifacts,
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(
+                artifacts_mod, "finalize_dataset", side_effect=blocked_finalize
+            ):
+                client = client_for(tmp)
+                run_id = post_target(client, 1).json()["dataset_run_id"]
+                wait_status(client, run_id, "COMPLETED")
+                resp = client.get(f"/dataset-runs/{run_id}/download")
+                self.assertEqual(resp.status_code, 409)
+                self.assertIn("not finalized", resp.json()["detail"])
+                proceed.set()
+                wait_finalized(client, run_id)
+            # With finalization done the same run is downloadable.
+            final = client.get(f"/dataset-runs/{run_id}/download")
+            self.assertEqual(final.status_code, 200)
+
+    def test_missing_artifact_is_422(self):
+        tmp, client, run_id = self._completed(2)
+        try:
+            (Path(tmp.name) / "datasets" / run_id / "features.parquet").unlink()
+            resp = client.get(f"/dataset-runs/{run_id}/download")
+            self.assertEqual(resp.status_code, 422)
+            self.assertIn("missing", resp.json()["detail"])
+        finally:
+            tmp.cleanup()
+
+    def test_corrupt_artifact_is_422(self):
+        tmp, client, run_id = self._completed(2)
+        try:
+            parquet = Path(tmp.name) / "datasets" / run_id / "features.parquet"
+            parquet.unlink()
+            parquet.mkdir()  # no longer a regular file -> unreadable artifact
+            resp = client.get(f"/dataset-runs/{run_id}/download")
+            self.assertEqual(resp.status_code, 422)
+        finally:
+            tmp.cleanup()
+
+
 if __name__ == "__main__":
     unittest.main()

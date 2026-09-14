@@ -42,11 +42,13 @@ lookup so tests can instrument them without changing behaviour.
 
 import json
 import os
+import tempfile
 import time
 from collections import Counter
 from threading import Lock, Thread
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from . import dataset_artifacts as artifacts_mod
@@ -592,5 +594,95 @@ def create_dataset_router(
         finalization = _read_finalization(run)
         plan = _load_plan_or_none(results_root, dataset_run_id)
         return results_payload(run, plan, finalization)
+
+    @router.get("/dataset-runs/{dataset_run_id}/download",
+                summary="Download a completed dataset run as a ZIP archive",
+                responses={
+                    404: {"description": "Dataset run not found"},
+                    409: {"description": "Dataset run is not a finalized, "
+                                        "completed dataset (running, paused, "
+                                        "failed, or not yet finalized)"},
+                    422: {"description": "A final dataset artifact is missing "
+                                        "or unreadable"},
+                })
+    def download_dataset_run(dataset_run_id: str):
+        """Return the final dataset archive for a COMPLETED run.
+
+        Only a run whose engine status and artifact finalization are both
+        COMPLETED can be downloaded.  The archive is built from the four final
+        artifacts on disk (features.parquet, metadata.jsonl, manifest.json,
+        README.txt) into a temporary file and streamed back in chunks so the
+        full ZIP is never held in memory; the temporary file is removed after
+        streaming.  Source artifacts are never modified or deleted.
+        """
+        run = _load_run(results_root, dataset_run_id)
+        finalization = _read_finalization(run)
+
+        if run.status != STATUS_COMPLETED:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"dataset run {dataset_run_id} is not a completed dataset "
+                    f"(status {run.status}); only finalized COMPLETED runs "
+                    f"can be downloaded"
+                ),
+            )
+        if finalization is None or finalization.get("status") != "COMPLETED":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"dataset run {dataset_run_id} is not finalized yet; "
+                    f"artifacts are not ready for download"
+                ),
+            )
+
+        # Every included file is validated to exist and stay inside this run's
+        # directory before any archive is built (path-traversal guard).
+        try:
+            artifacts_mod.export_artifact_paths(run)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+
+        zip_path = None
+        try:
+            fd, zip_path = tempfile.mkstemp(
+                prefix=f"{dataset_run_id}-", suffix=".zip"
+            )
+            os.close(fd)
+            artifacts_mod.build_dataset_zip(run, zip_path)
+        except Exception as exc:
+            if zip_path is not None:
+                try:
+                    os.remove(zip_path)
+                except OSError:
+                    pass
+            raise HTTPException(
+                status_code=422,
+                detail=f"final dataset artifacts could not be bundled: {exc}",
+            )
+
+        def _stream_archive():
+            try:
+                with open(zip_path, "rb") as fh:
+                    while True:
+                        chunk = fh.read(64 * 1024)
+                        if not chunk:
+                            return
+                        yield chunk
+            finally:
+                try:
+                    os.remove(zip_path)
+                except OSError:
+                    pass
+
+        return StreamingResponse(
+            _stream_archive(),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="{dataset_run_id}.zip"'
+                )
+            },
+        )
 
     return router
