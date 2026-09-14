@@ -8,7 +8,17 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from .dataset_api import (
+    DEFAULT_MAX_TARGET_SAMPLES,
+    create_dataset_router,
+)
 from .executor import run_experiment
+from .testbed_lock import EXPERIMENT, TESTBED_LOCK
+from .traffic import (
+    PROFILES,
+    DEFAULT_DURATION,
+    DURATION_RANGE,
+)
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
@@ -27,6 +37,17 @@ app.add_middleware(
 
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
+# Dataset Run API (Module 6): user-controlled sample count on the SAME
+# FastAPI app.  It shares the single testbed reservation registry with the
+# manual experiment endpoints so the two can never run concurrently.
+app.include_router(
+    create_dataset_router(
+        results_root="results",
+        max_target_samples=DEFAULT_MAX_TARGET_SAMPLES,
+        lock=TESTBED_LOCK,
+    )
+)
+
 
 class IKEConfig(BaseModel):
     version: int = 2
@@ -42,11 +63,17 @@ class ESPConfig(BaseModel):
     pfs: bool
 
 
+class TrafficConfig(BaseModel):
+    profile: str
+    duration: int = DEFAULT_DURATION
+
+
 class ExperimentConfig(BaseModel):
     mode: str
     address_family: str = "ipv4"
     ike: IKEConfig
     esp: ESPConfig
+    traffic: TrafficConfig | None = None
 
 
 jobs = {}
@@ -68,6 +95,7 @@ def health():
 def get_configurations():
     return {
         "modes": ["tunnel", "transport"],
+        "address_families": ["ipv4", "ipv6"],
         "ike": {
             "version": 2,
             "encryption": ["aes128", "aes256"],
@@ -75,25 +103,23 @@ def get_configurations():
             "dh_groups": ["modp2048", "modp3072", "modp4096"],
         },
        "esp": {
-    "encryption": [
-        "aes128gcm16",
-        "aes256gcm16",
-        "aes128cbc",
-        "aes256cbc",
-    ],
-    "integrity": [
-        "sha256",
-        "sha384",
-        "sha512",
-    ],
-    "dh_groups": [
-        "modp2048",
-        "modp3072",
-        "modp4096",
-    ],
-    "pfs": [True, False],
-},
+            "encryption": ["aes128gcm16", "aes256gcm16", "aes128cbc", "aes256cbc"],
+            "integrity": ["sha256", "sha384", "sha512"],
+            "dh_groups": ["modp2048", "modp3072", "modp4096"],
+            "pfs": [True, False],
+        },
+        "traffic": {
+            "profiles": sorted(PROFILES),
+            "duration": {
+                "min": DURATION_RANGE[0],
+                "max": DURATION_RANGE[1],
+                "default": DEFAULT_DURATION,
+            },
+        },
     }
+
+
+PIPELINE_STAGES = ("DEPLOY", "IPSEC", "CONNECTIVITY", "TRAFFIC")
 
 
 def execute_job(job_id, config):
@@ -103,8 +129,12 @@ def execute_job(job_id, config):
         jobs[job_id]["status"] = "RUNNING"
         jobs[job_id]["stage"] = "RUNNING"
 
+    def report_stage(stage):
+        with jobs_lock:
+            jobs[job_id]["stage"] = stage
+
     try:
-        result = run_experiment(config)
+        result = run_experiment(config, on_stage=report_stage)
 
         with jobs_lock:
             jobs[job_id]["status"] = "COMPLETED"
@@ -119,13 +149,17 @@ def execute_job(job_id, config):
 
     except Exception as e:
         with jobs_lock:
+            failed_stage = jobs[job_id]["stage"]
+            if failed_stage not in PIPELINE_STAGES:
+                failed_stage = "EXPERIMENT"
             jobs[job_id]["status"] = "FAILED"
-            jobs[job_id]["stage"] = "EXPERIMENT"
+            jobs[job_id]["stage"] = failed_stage
             jobs[job_id]["error"] = str(e)
 
     finally:
         with jobs_lock:
             active_job_id = None
+        TESTBED_LOCK.release(EXPERIMENT, job_id)
 
 
 @app.post("/experiments")
@@ -147,6 +181,19 @@ def create_experiment(config: ExperimentConfig):
             active_job_id = None
 
         job_id = str(uuid4())
+
+        # Shared testbed: a dataset run and a manual experiment can never use
+        # the testbed at the same time.
+        reserved, owner = TESTBED_LOCK.try_reserve(EXPERIMENT, job_id)
+        if not reserved:
+            kind, owner_id = owner
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"The shared testbed is in use by {kind} '{owner_id}'; "
+                    "a manual experiment cannot start now."
+                ),
+            )
 
         jobs[job_id] = {
             "status": "QUEUED",

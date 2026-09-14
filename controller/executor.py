@@ -6,6 +6,7 @@ from .config import CONFIG
 from .topology import TOPOLOGIES
 from .validate import validate_config
 from .generator import write_connection
+from . import traffic as traffic_mod
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -94,10 +95,13 @@ def deploy(mode):
 def reset_and_deploy(mode):
     print(f"\n=== Starting {mode} experiment ===\n")
 
-    try:
-        destroy(mode)
-    except RuntimeError:
-        pass
+    # Destroy EVERY containerlab topology before deploying.  The run may have
+    # kept a different-mode topology alive for reuse, or resumed over one.
+    for m in ("tunnel", "transport"):
+        try:
+            destroy(m)
+        except RuntimeError:
+            pass
 
     deploy(mode)
 
@@ -237,6 +241,62 @@ def initiate_ipsec(mode, address_family):
     ])
 
 
+def terminate_sas(mode, address_family):
+    """Terminate the current IKE/CHILD SAs on both gateway containers.
+
+    Used by the Module-10 reuse path BEFORE reloading a new StrongSwan
+    configuration: dropping the existing IKE/CHILD SAs guarantees that a
+    stale negotiated proposal cannot survive a config-only reload (see the
+    Module-9 design §4/§13 ordering).
+
+    Container and connection naming follow the exact conventions already used
+    by ``initiate_ipsec``/``verify_ipsec``/``load_generated_configs``.  A
+    termination error is not fatal: an already-terminated or nonexistent SA
+    must not make a valid reuse path fail (best-effort teardown).
+    """
+    topology = get_topology(mode, address_family)
+    local = topology["local"]
+    remote = topology["remote"]
+
+    local_container = (
+        f"clab-ipsec-transport-{local['node']}"
+        if mode == "transport"
+        else f"clab-ipsec-{local['node']}"
+    )
+
+    remote_container = (
+        f"clab-ipsec-transport-{remote['node']}"
+        if mode == "transport"
+        else f"clab-ipsec-{remote['node']}"
+    )
+
+    connection_name = f"{local['id']}-to-{topology['remote']['id']}"
+
+    containers = [local_container, remote_container]
+
+    print("\n=== Terminating existing IPsec SAs ===\n")
+
+    for container in containers:
+        for command in (
+            ["--terminate", "--child", connection_name],
+            ["--terminate", "--ike", connection_name],
+            ["--terminate", "--all"],
+        ):
+            try:
+                run([
+                    "sudo",
+                    "docker",
+                    "exec",
+                    container,
+                    "swanctl",
+                    *command,
+                ])
+            except RuntimeError:
+                pass
+
+    print("\n=== Existing IPsec SAs terminated ===\n")
+
+
 def test_connectivity(mode, address_family):
     if mode == "tunnel":
         source = "clab-ipsec-host-a"
@@ -368,18 +428,114 @@ def verify_ipsec(mode, address_family):
       "mode": expected_mode,
 }
 
-def run_experiment(config):
+def validate_traffic(traffic):
+    profile = traffic["profile"]
+    duration = traffic.get("duration", traffic_mod.DEFAULT_DURATION)
+
+    if profile not in traffic_mod.PROFILES:
+        raise ValueError(
+            f"Unsupported traffic profile: {profile}"
+        )
+
+    if not isinstance(duration, (int, float)) or isinstance(duration, bool):
+        raise ValueError("Traffic duration must be a number")
+
+    lo, hi = traffic_mod.DURATION_RANGE
+    if duration < lo or duration > hi:
+        raise ValueError(
+            f"Traffic duration must be between {lo} and {hi} seconds"
+        )
+
+    return profile, int(duration)
+
+
+def run_traffic(config):
+    mode = config["mode"]
+    address_family = config["address_family"]
+    profile, duration = validate_traffic(config["traffic"])
+
+    runtime_ctx = traffic_mod.runtime(mode, address_family)
+
+    print(f"\n=== Running traffic profile: {profile} ({duration}s) ===\n")
+
+    source = runtime_ctx["source_container"]
+    destination = runtime_ctx["destination_container"]
+    dest_ip = runtime_ctx["destination_ip"]
+    port = traffic_mod.DEFAULT_PORT
+
+    traffic_mod.copy_trafficgen(source)
+    traffic_mod.copy_trafficgen(destination)
+
+    traffic_mod.start_receiver(
+        destination, dest_ip, port=port, duration=duration + 10,
+    )
+    traffic_mod.wait_receiver(source, dest_ip, port=port)
+    print("traffic listener ready")
+
+    log, status = traffic_mod.run_sender(
+        source, profile, dest_ip, port=port, duration=duration,
+    )
+    traffic_mod.stop_receiver(destination)
+
+    stats = {"packets": None, "bytes": None, "seconds": None, "bitrate_bps": None}
+
+    for line in log.splitlines():
+        if line.startswith("STATS"):
+            parts = dict(
+                chunk.split("=", 1)
+                for chunk in line.split()
+                if "=" in chunk
+            )
+            stats = {
+                "packets": int(parts["packets"]),
+                "bytes": int(parts["bytes"]),
+                "seconds": float(parts["seconds"]),
+                "bitrate_bps": float(parts["bitrate"].rstrip("_bps")),
+            }
+            break
+
+    packets_per_second = (
+        round(stats["packets"] / stats["seconds"], 2)
+        if stats["seconds"]
+        else None
+    )
+
+    print(f"traffic status: {status} (packets={stats['packets']}, "
+          f"bitrate={stats['bitrate_bps']}bps)")
+
+    return {
+        "status": status,
+        "profile": profile,
+        "duration": duration,
+        "port": port,
+        **stats,
+        "packets_per_second": packets_per_second,
+    }
+
+
+def run_experiment(config, on_stage=None):
     mode = config["mode"]
     address_family = config["address_family"]
 
     validate_config(config)
 
+    if "traffic" in config and config["traffic"] is not None:
+        profile, duration = validate_traffic(config["traffic"])
+    else:
+        profile, duration = None, None
+
+    def stage(stage):
+        if on_stage is not None:
+            on_stage(stage)
+
+    stage("DEPLOY")
     reset_and_deploy(mode)
+    stage("IPSEC")
     load_generated_configs(config)
     initiate_ipsec(mode, address_family)
     ipsec = verify_ipsec(mode, address_family)
+    stage("CONNECTIVITY")
     connectivity = test_connectivity(mode, address_family)
-
 
     result = {
         "status": (
@@ -394,6 +550,14 @@ def run_experiment(config):
         "connectivity": connectivity,
         "ipsec": ipsec,
     }
+
+    if profile is not None:
+        stage("TRAFFIC")
+        traffic = run_traffic(config)
+        result["traffic"] = traffic
+
+        if traffic["status"] != "PASS":
+            result["status"] = "FAIL"
 
     return result
 

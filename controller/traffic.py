@@ -13,6 +13,19 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TRAFFIC_GEN = PROJECT_ROOT / "scripts" / "trafficgen.py"
 DEFAULT_PORT = 20000
 
+PROFILES = ("voip", "video", "messaging", "email", "web", "icmp")
+DEFAULT_DURATION = 30
+DURATION_RANGE = (10, 120)
+
+PROFILE_LABELS = {
+    "icmp": "ICMP",
+    "voip": "VoIP-like",
+    "messaging": "Messaging-like",
+    "email": "Email-like",
+    "web": "Web-like",
+    "video": "Video-like",
+}
+
 
 def runtime(mode, address_family):
     """Map mode + address family to the concrete sender/receiver endpoints.

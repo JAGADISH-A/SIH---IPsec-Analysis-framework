@@ -12,6 +12,12 @@ Pipeline per experiment:
 
 A failure in any step marks the experiment as failed, saves failure
 metadata, cleans up and moves on to the next trial.
+
+``execute_trial_pipeline`` exposes the exact same pipeline as a reusable
+operation for the dataset executor (Module 3): it returns the artifacts
+without saving them so the caller decides where they belong, and it raises on
+any failure so the caller controls retry/commit.  ``cleanup_experiment`` is
+the single shared best-effort teardown used by both runners.
 """
 
 import argparse
@@ -25,14 +31,18 @@ from .executor import (
     reset_and_deploy,
     load_generated_configs,
     initiate_ipsec,
+    terminate_sas,
     verify_ipsec,
     test_connectivity,
     validate_config,
+    destroy,
 )
 from . import traffic as traffic_mod
 from . import capture as capture_mod
 from . import features as features_mod
 from . import dataset as dataset_mod
+from . import timing as timing_mod
+from . import reuse as reuse_mod
 
 DEFAULT_CAMPAIGN = "campaign.json"
 DEFAULT_CAPTURE_FILTER = "esp"
@@ -52,6 +62,193 @@ def load_campaign(path):
     return campaign
 
 
+def cleanup_experiment(runtime_ctx, mode, tmp_dir=None, skip_destroy=False):
+    """Best-effort, idempotent teardown of one attempt's testbed resources.
+
+    Shared by the campaign runner and the dataset executor so that no second,
+    independent cleanup implementation exists.  Never raises.
+
+    ``skip_destroy=True`` keeps the containerlab topology alive (used by the
+    dataset executor when the next sample can reuse it); the temp dir and
+    traffic receivers are still cleaned up.
+    """
+    containers = (
+        (runtime_ctx.get("source_container"), runtime_ctx.get("destination_container"))
+        if isinstance(runtime_ctx, dict)
+        else (None, None)
+    )
+    for container in containers:
+        if container:
+            try:
+                traffic_mod.stop_receiver(container)
+            except Exception:
+                pass
+    if not skip_destroy:
+        try:
+            destroy(mode)
+        except Exception:
+            pass
+    if tmp_dir is not None:
+        try:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+
+def execute_trial_pipeline(experiment_id, config, traffic_cfg, tmp_dir,
+                           run_id=None, log=None, recorder=None, reuse=None):
+    """Run one complete sample pipeline and return its artifacts.
+
+    Additive Module-10 seam: ``reuse`` is an optional
+    ``reuse_mod.TopologyReuseManager``.  When ``None`` (the default) this
+    function is byte-for-byte behaviourally identical to an uninstrumented
+    run: every sample performs a full ``reset_and_deploy(mode)``.  When
+    provided, consecutive dataset samples sharing the SAME containerlab
+    topology identity (``mode``) are served by an in-place StrongSwan
+    reset+reinitiate instead of a fresh destroy+deploy.  The reuse manager
+    never widens PASS criteria and falls back to a full fresh deployment on
+    any verification failure (see controller/reuse.py).
+
+    ``recorder`` is an optional, purely additive ``timing_mod.TimingRecorder``
+    (default ``None``).  When ``None`` every ``timing_mod.stage`` block below
+    is a ``nullcontext`` and this function is byte-for-byte behaviourally
+    identical to an uninstrumented run.  When provided it only *records*
+    monotonic per-stage durations; nothing downstream reads them and the
+    recorder never influences the pipeline's control flow or a failure path.
+
+    Exact success criteria (all must hold):
+
+      * topology is deployed and the generated configs are loaded,
+      * IPsec verification passes (IKE ESTABLISHED, CHILD INSTALLED, right
+        mode), ``verify_ipsec`` raises otherwise,
+      * connectivity probe is PASS,
+      * the traffic sender returns PASS,
+      * the capture contains at least one ESP packet.
+
+    Returns a dict with ``status == "PASS"`` plus the experiment metadata,
+    extracted features, traffic log, local pcap path and the IPsec /
+    connectivity verification results.  Raises on any failure; the caller
+    (``run_trial`` or the dataset executor) is responsible for cleanup.
+    Nothing is written to the global dataset or any persistent store here.
+    """
+    log = log or (lambda msg: None)
+    profile = traffic_cfg["profile"]
+    duration = float(traffic_cfg.get("duration", 30.0))
+    port = int(traffic_cfg.get("port", DEFAULT_PORT))
+    capture_filter = traffic_cfg.get("capture_filter", DEFAULT_CAPTURE_FILTER)
+    mode = config["mode"]
+    address_family = config["address_family"]
+
+    tmp_dir = Path(tmp_dir)
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    remote_pcap = f"/tmp/{experiment_id}.pcap"
+
+    runtime_ctx = traffic_mod.runtime(mode, address_family)
+    cap_container, cap_wan_ip = capture_mod.capture_facing(mode, address_family)
+    runtime_ctx["capture_container"] = cap_container
+    runtime_ctx["capture_interface"] = None
+
+    result = reuse_mod.reset_and_deploy_or_reuse(
+        mode,
+        address_family,
+        reuse_manager=reuse,
+        fresh_fn=reset_and_deploy,
+        terminate_fn=lambda: terminate_sas(mode, address_family),
+        load_fn=lambda: load_generated_configs(config),
+        initiate_fn=lambda: initiate_ipsec(mode, address_family),
+        verify_fn=lambda: verify_ipsec(mode, address_family),
+        recorder=recorder,
+        log=log,
+    )
+    if result.get("reused"):
+        ipsec = result["ipsec"]
+    else:
+        load_generated_configs(config)
+        initiate_ipsec(mode, address_family)
+        ipsec = verify_ipsec(mode, address_family)
+    log("IPsec status IKE=ESTABLISHED CHILD=INSTALLED")
+
+    connectivity = test_connectivity(mode, address_family)
+    if connectivity["status"] != "PASS":
+        raise RuntimeError(f"connectivity verification failed: {connectivity}")
+    log("connectivity verified PASS")
+
+    traffic_mod.copy_trafficgen(runtime_ctx["source_container"])
+    traffic_mod.copy_trafficgen(runtime_ctx["destination_container"])
+
+    cap_iface = capture_mod.detect_capture_interface(cap_container, cap_wan_ip)
+    runtime_ctx["capture_interface"] = cap_iface
+    log(f"capture interface {cap_container}:{cap_iface} verified (WAN {cap_wan_ip})")
+
+    capture_mod.start_capture(
+        cap_container, cap_iface, remote_pcap,
+        seconds=duration + 5, filter_expr=capture_filter,
+    )
+    log(f"capture started on {cap_container}:{cap_iface} ({capture_filter})")
+
+    traffic_mod.start_receiver(
+        runtime_ctx["destination_container"],
+        runtime_ctx["destination_ip"],
+        port=port,
+        duration=duration + 10,
+    )
+    log("traffic listener started")
+    traffic_mod.wait_receiver(
+        runtime_ctx["source_container"],
+        runtime_ctx["destination_ip"],
+        port=port,
+    )
+    log("traffic listener ready")
+
+    log(f"traffic started ({profile}: {duration:.0f}s)")
+    traffic_log, sender_status = traffic_mod.run_sender(
+        runtime_ctx["source_container"], profile,
+        runtime_ctx["destination_ip"], port=port, duration=duration,
+    )
+    log("traffic stopped")
+    if sender_status != "PASS":
+        raise RuntimeError("traffic generation failed")
+
+    traffic_mod.stop_receiver(runtime_ctx["destination_container"])
+    capture_mod.stop_capture(cap_container, remote_pcap)
+    pcap_path = tmp_dir / "capture.pcap"
+    capture_mod.copy_capture(cap_container, remote_pcap, pcap_path)
+    log("capture stopped")
+
+    fs_extract = features_mod.extract_features(
+        pcap_path, capture_ip=cap_wan_ip, nominal_duration=duration,
+    )
+    log(f"features extracted packet_count={fs_extract['packet_count']}")
+
+    if fs_extract["packet_count"] == 0:
+        raise RuntimeError("capture contains no ESP packets")
+
+    traffic = {
+        "profile": profile,
+        "duration": duration,
+        "port": port,
+        "capture_filter": capture_filter,
+    }
+    metadata = dataset_mod.build_metadata(
+        experiment_id, config, traffic, runtime_ctx,
+        run_id=run_id, ipsec=ipsec, connectivity=connectivity,
+        status="PASS",
+    )
+
+    return {
+        "status": "PASS",
+        "experiment_id": experiment_id,
+        "metadata": metadata,
+        "features": fs_extract,
+        "traffic_log": traffic_log,
+        "pcap_path": pcap_path,
+        "ipsec": ipsec,
+        "connectivity": connectivity,
+        "runtime_ctx": runtime_ctx,
+        "capture_wan_ip": cap_wan_ip,
+    }
+
+
 def run_trial(seq, campaign_cfg, results_root):
     cfg = campaign_cfg["experiments"][seq - 1]
     run_id = campaign_cfg.get("run_id") or time.strftime("%Y%m%d-%H%M%S")
@@ -59,12 +256,12 @@ def run_trial(seq, campaign_cfg, results_root):
     experiment_id = f"{run_id}-exp-{seq:04d}"
 
     traffic_cfg = cfg["traffic"]
-    profile = traffic_cfg["profile"]
-    duration = float(traffic_cfg.get("duration", 30.0))
-    port = int(traffic_cfg.get("port", DEFAULT_PORT))
-    capture_filter = traffic_cfg.get("capture_filter", DEFAULT_CAPTURE_FILTER)
     mode = cfg["mode"]
     address_family = cfg["address_family"]
+
+    results_root = Path(results_root)
+    tmp_dir = results_root / ".tmp" / experiment_id
+    runtime_ctx = {"source_container": None, "destination_container": None}
 
     def log(msg):
         print(f"[{tag}] {msg}", flush=True)
@@ -73,89 +270,18 @@ def run_trial(seq, campaign_cfg, results_root):
         f"ike={cfg['ike']['encryption']}-{cfg['ike']['integrity']}-{cfg['ike']['dh_group']} "
         f"esp={cfg['esp']['encryption']}-{cfg['esp']['integrity']}-{cfg['esp']['dh_group']} "
         f"pfs={cfg['esp']['pfs']}")
-    log(f"traffic profile {profile} duration={duration:.0f}s port={port}")
+    log(f"traffic profile {traffic_cfg['profile']} duration={traffic_cfg.get('duration', 30.0)}s "
+        f"port={traffic_cfg.get('port', DEFAULT_PORT)}")
 
-    results_root = Path(results_root)
-    tmp_dir = results_root / ".tmp" / experiment_id
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-    remote_pcap = f"/tmp/{experiment_id}.pcap"
-
-    runtime_ctx = traffic_mod.runtime(mode, address_family)
-    cap_container, cap_wan_ip = capture_mod.capture_facing(mode, address_family)
-    runtime_ctx["capture_container"] = cap_container
-    runtime_ctx["capture_interface"] = None
-    metadata = None
     try:
-        reset_and_deploy(mode)
-        load_generated_configs(cfg)
-        initiate_ipsec(mode, address_family)
-        ipsec = verify_ipsec(mode, address_family)
-        log("IPsec status IKE=ESTABLISHED CHILD=INSTALLED")
-
-        connectivity = test_connectivity(mode, address_family)
-        if connectivity["status"] != "PASS":
-            raise RuntimeError(f"connectivity verification failed: {connectivity}")
-        log("connectivity verified PASS")
-
-        traffic_mod.copy_trafficgen(runtime_ctx["source_container"])
-        traffic_mod.copy_trafficgen(runtime_ctx["destination_container"])
-
-        cap_iface = capture_mod.detect_capture_interface(cap_container, cap_wan_ip)
-        runtime_ctx["capture_interface"] = cap_iface
-        log(f"capture interface {cap_container}:{cap_iface} verified (WAN {cap_wan_ip})")
-
-        capture_mod.start_capture(
-            cap_container, cap_iface, remote_pcap,
-            seconds=duration + 5, filter_expr=capture_filter,
-        )
-        log(f"capture started on {cap_container}:{cap_iface} ({capture_filter})")
-
-        traffic_mod.start_receiver(
-            runtime_ctx["destination_container"],
-            runtime_ctx["destination_ip"],
-            port=port,
-            duration=duration + 10,
-        )
-        log("traffic listener started")
-        traffic_mod.wait_receiver(
-            runtime_ctx["source_container"],
-            runtime_ctx["destination_ip"],
-            port=port,
-        )
-        log("traffic listener ready")
-
-        log(f"traffic started ({profile}: {duration:.0f}s)")
-        traffic_log, sender_status = traffic_mod.run_sender(
-            runtime_ctx["source_container"], profile,
-            runtime_ctx["destination_ip"], port=port, duration=duration,
-        )
-        log("traffic stopped")
-        if sender_status != "PASS":
-            raise RuntimeError("traffic generation failed")
-
-        traffic_mod.stop_receiver(runtime_ctx["destination_container"])
-        capture_mod.stop_capture(cap_container, remote_pcap)
-        capture_mod.copy_capture(cap_container, remote_pcap, tmp_dir / "capture.pcap")
-        log("capture stopped")
-
-        fs_extract = features_mod.extract_features(
-            tmp_dir / "capture.pcap",
-            capture_ip=cap_wan_ip,
-            nominal_duration=duration,
-        )
-        log(f"features extracted packet_count={fs_extract['packet_count']}")
-
-        if fs_extract["packet_count"] == 0:
-            raise RuntimeError("capture contains no ESP packets")
-
-        metadata = dataset_mod.build_metadata(
-            experiment_id, cfg, traffic_cfg, runtime_ctx,
-            run_id=run_id, ipsec=ipsec, connectivity=connectivity,
-            status="PASS",
+        outcome = execute_trial_pipeline(
+            experiment_id, cfg, traffic_cfg, tmp_dir,
+            run_id=run_id, log=log,
         )
         dataset_mod.save_experiment(
-            results_root, experiment_id, metadata, fs_extract,
-            traffic_log, pcap_source=tmp_dir / "capture.pcap",
+            results_root, experiment_id, outcome["metadata"],
+            outcome["features"], outcome["traffic_log"],
+            pcap_source=outcome["pcap_path"],
         )
         log("dataset saved")
         return {"experiment_id": experiment_id, "status": "PASS"}
@@ -171,33 +297,8 @@ def run_trial(seq, campaign_cfg, results_root):
         return {"experiment_id": experiment_id, "status": "FAILED", "error": str(exc)}
 
     finally:
-        for container in (
-            runtime_ctx.get("source_container"),
-            runtime_ctx.get("destination_container"),
-        ):
-            if container:
-                try:
-                    traffic_mod.stop_receiver(container)
-                except Exception:
-                    pass
-        try:
-            reset_and_deploy_destroy(mode)
-        except Exception:
-            pass
-        try:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-        except Exception:
-            pass
+        cleanup_experiment(runtime_ctx, mode, tmp_dir)
         log("cleanup complete")
-
-
-def reset_and_deploy_destroy(mode):
-    """Best-effort topology teardown used during cleanup."""
-    from .executor import destroy
-    try:
-        destroy(mode)
-    except RuntimeError:
-        pass
 
 
 def main(argv=None):

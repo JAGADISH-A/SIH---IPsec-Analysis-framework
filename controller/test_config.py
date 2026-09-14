@@ -1,5 +1,5 @@
-from .config import CONFIG
-from .validate import validate_config
+from controller.config import CONFIG
+from controller.validate import validate_config
 
 
 if __name__ == "__main__":

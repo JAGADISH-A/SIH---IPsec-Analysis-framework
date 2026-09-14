@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#ffffff">
-  <title>IPsec VPN Testbed</title>
+  <title>IPsec Testbed — Dataset Generation</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='%232463EB'%3E%3Cpath%20d='M12%202l8%203.5v5.7c0%205-3.3%208.3-8%2010.8-4.7-2.5-8-5.8-8-10.8V5.5L12%202z'/%3E%3Cpath%20d='M9%2016.5l1.5-3M15%2016.5l-1.5-3M12%207v6.5'%20stroke='%23fff'%20stroke-width='1.6'%20stroke-linecap='round'%20fill='none'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/styles.css">
 </head>
@@ -20,8 +20,8 @@
           </svg>
         </div>
         <div class="brand-text">
-          <div class="product-name">IPsec VPN Testbed</div>
-          <div class="product-subtitle">Configurable IPsec Security &amp; Connectivity Experiment</div>
+          <div class="product-name">IPsec Testbed</div>
+          <div class="product-subtitle">Configurable IPsec experiments &amp; dataset generation</div>
         </div>
       </div>
       <div class="status-pill" id="statusPill">
@@ -33,244 +33,345 @@
 
   <main class="main">
 
-    <nav class="flow-strip" aria-label="Experiment workflow">
-      <div class="flow-step active" data-step="configure"><span class="dot"></span>Configure</div>
-      <div class="flow-arrow" aria-hidden="true"></div>
-      <div class="flow-step" data-step="run"><span class="dot"></span>Run</div>
-      <div class="flow-arrow" aria-hidden="true"></div>
-      <div class="flow-step" data-step="verify"><span class="dot"></span>Verify</div>
-      <div class="flow-arrow" aria-hidden="true"></div>
-      <div class="flow-step" data-step="result"><span class="dot"></span>Result</div>
-    </nav>
+    <section class="page-head">
+      <div class="page-title">Testbed Control</div>
+      <div class="page-sub" id="pageSub">Manual IPsec experiments &middot; Dataset generation from <b>security configuration &times; traffic profile</b></div>
+    </section>
 
-    <div class="cards">
+    <div class="dashboard-grid">
 
-      <section class="card config-card" id="configCard" aria-label="Experiment configuration">
+      <div class="col-left">
+
+        <section class="card config-card" id="configCard" aria-label="Experiment configuration">
+          <div class="card-heading">
+            <span class="head-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/>
+                <path d="M1 14h6M9 8h6M17 16h6"/>
+              </svg>
+            </span>
+            <h2>Manual Experiment</h2>
+            <span class="head-note">Configuration</span>
+          </div>
+
+          <div class="card-body">
+
+            <div class="config-section">
+              <div class="section-label">IPsec Configuration</div>
+              <div class="seg-grid">
+                <div class="seg-block">
+                  <div class="seg-label">Mode</div>
+                  <div class="segmented" id="modeSegmented" role="radiogroup" aria-label="IPsec mode"></div>
+                </div>
+                <div class="seg-block">
+                  <div class="seg-label">Address Family</div>
+                  <div class="segmented" id="familySegmented" role="radiogroup" aria-label="Address family"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="config-section">
+              <div class="section-label">IKE Configuration</div>
+              <div class="field-row three">
+                <div class="field">
+                  <label for="ikeEncryption">Encryption</label>
+                  <select id="ikeEncryption"></select>
+                </div>
+                <div class="field">
+                  <label for="ikeIntegrity">Integrity</label>
+                  <select id="ikeIntegrity"></select>
+                </div>
+                <div class="field">
+                  <label for="ikeDh">DH Group</label>
+                  <select id="ikeDh"></select>
+                </div>
+              </div>
+              <div class="field-note plain">IKE version is fixed at IKEv2 by the testbed.</div>
+            </div>
+
+            <div class="config-section">
+              <div class="section-label">ESP Configuration</div>
+              <div class="field-row three">
+                <div class="field">
+                  <label for="espEncryption">Encryption</label>
+                  <select id="espEncryption"></select>
+                </div>
+                <div class="field" id="espIntegrityField">
+                  <label for="espIntegrity">Integrity</label>
+                  <select id="espIntegrity"></select>
+                  <div class="field-note is-hidden" id="espIntegrityNote">Integrity is built into AES-GCM &mdash; set to None.</div>
+                </div>
+                <div class="field">
+                  <label for="espDh">DH Group</label>
+                  <select id="espDh"></select>
+                </div>
+              </div>
+              <div class="pfs-row">
+                <div class="pfs-text">
+                  <div class="pfs-title">Perfect Forward Secrecy</div>
+                  <div class="pfs-sub">Re-negotiates keys for each ESP session</div>
+                </div>
+                <button type="button" class="switch on" id="pfsSwitch" role="switch" aria-checked="true" aria-label="Perfect Forward Secrecy"></button>
+              </div>
+            </div>
+
+            <div class="config-section">
+              <div class="section-label">Traffic Configuration</div>
+              <div class="field-row two">
+                <div class="field">
+                  <label for="trafficProfile">Traffic Profile</label>
+                  <select id="trafficProfile"></select>
+                </div>
+                <div class="field">
+                  <label for="trafficDuration">Duration <span class="field-unit" id="durationUnit">sec</span></label>
+                  <input type="number" id="trafficDuration" min="10" max="120" step="5" inputmode="numeric">
+                </div>
+              </div>
+            </div>
+
+            <div class="summary-box">
+              <div class="summary-label">Configuration Summary</div>
+              <div class="summary" id="summaryLines"></div>
+            </div>
+
+            <button type="button" class="run-btn" id="runBtn">
+              <span class="run-icon" aria-hidden="true">
+                <svg class="play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 001.5.87l11-6.5a1 1 0 000-1.74l-11-6.5A1 1 0 008 5.5z"/></svg>
+                <svg class="spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M12 2a10 10 0 010 20" opacity=".9"/></svg>
+              </span>
+              <span class="run-label" id="runLabel">Run Experiment</span>
+            </button>
+
+          </div>
+        </section>
+
+        <section class="card result-card" id="resultCard" aria-label="Experiment result">
+          <div class="card-heading">
+            <span class="head-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 2h6M10 2v5L5 17a2 2 0 001.7 3h10.6a2 2 0 001.7-3L14 7V2"/>
+                <path d="M7 16h10"/>
+              </svg>
+            </span>
+            <h2>Experiment Status</h2>
+          </div>
+
+          <div class="card-body result-body">
+            <div class="result-area" id="resultArea">
+
+              <div class="result-empty" id="emptyState">
+                <div class="empty-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="9"/>
+                    <path d="M10 8.5v7l6-3.5-6-3.5z" fill="currentColor" stroke="none"/>
+                  </svg>
+                </div>
+                <div class="empty-title">Ready to test</div>
+                <div class="empty-sub">Configure the IPsec parameters and run an experiment.</div>
+              </div>
+
+              <div class="result-progress is-hidden" id="progressWrap">
+                <div class="progress-head">
+                  <span>Experiment in progress</span>
+                  <code class="job-id" id="jobIdText">&mdash;</code>
+                </div>
+                <div class="job-state" id="jobStateLabel">Queued</div>
+                <div class="stage-timeline" id="stageTimeline"></div>
+                <div class="stage-caption" id="stageCaption"></div>
+              </div>
+
+              <div class="result-end is-hidden" id="passState">
+                <div class="result-badge pass" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M20 6L9 17l-5-5"/>
+                  </svg>
+                </div>
+                <div class="result-title">EXPERIMENT PASSED</div>
+                <div class="result-id"><code id="passJobId">&mdash;</code></div>
+                <div class="result-split">
+                  <div class="result-col">
+                    <div class="result-col-head">IPsec</div>
+                    <div class="metric">
+                      <span class="metric-label">IKE SA</span>
+                      <span class="metric-value ok" id="mIke">ESTABLISHED</span>
+                    </div>
+                    <div class="metric">
+                      <span class="metric-label">CHILD SA</span>
+                      <span class="metric-value ok" id="mChild">INSTALLED</span>
+                    </div>
+                    <div class="metric">
+                      <span class="metric-label">IPsec Mode</span>
+                      <span class="metric-value" id="mMode">TUNNEL</span>
+                    </div>
+                  </div>
+                  <div class="result-col">
+                    <div class="result-col-head">Connectivity</div>
+                    <div class="metric">
+                      <span class="metric-label">Status</span>
+                      <span class="metric-value ok" id="mConStatus">PASS</span>
+                    </div>
+                    <div class="metric">
+                      <span class="metric-label">Packet Loss</span>
+                      <span class="metric-value ok" id="mLoss">0%</span>
+                    </div>
+                  </div>
+                  <div class="result-col">
+                    <div class="result-col-head">Traffic</div>
+                    <div class="metric">
+                      <span class="metric-label">Profile</span>
+                      <span class="metric-value" id="mTrafficProfile">&mdash;</span>
+                    </div>
+                    <div class="metric">
+                      <span class="metric-label">Packets</span>
+                      <span class="metric-value" id="mTrafficPackets">&mdash;</span>
+                    </div>
+                    <div class="metric">
+                      <span class="metric-label">Bitrate</span>
+                      <span class="metric-value" id="mTrafficBitrate">&mdash;</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="result-note">Experiment completed successfully.</div>
+                <div class="conf-box">
+                  <div class="conf-box-label">Configuration Used</div>
+                  <div class="conf-rows" id="passConfig"></div>
+                </div>
+              </div>
+
+              <div class="result-end is-hidden" id="failState">
+                <div class="result-badge fail" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 2a10 10 0 100 20 10 10 0 000-20z"/>
+                    <path d="M12 8v5"/>
+                    <path d="M12 16.5v.5"/>
+                  </svg>
+                </div>
+                <div class="result-title">EXPERIMENT FAILED</div>
+                <div class="result-id"><code id="failJobId">&mdash;</code></div>
+                <div class="fail-stage" id="failStage">Failed at <b>the controller</b></div>
+                <div class="fail-card">
+                  <div class="fail-message" id="failMessage">The experiment could not be completed.</div>
+                  <div class="fail-hint">Review the configuration and run the experiment again.</div>
+                </div>
+                <div class="conf-box">
+                  <div class="conf-box-label">Configuration Used</div>
+                  <div class="conf-rows" id="failConfig"></div>
+                </div>
+              </div>
+
+              <div class="result-end is-hidden" id="rejectState">
+                <div class="result-badge warn" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 2a10 10 0 100 20 10 10 0 000-20z"/>
+                    <path d="M12 8v5"/>
+                    <path d="M12 16.5v.5"/>
+                  </svg>
+                </div>
+                <div class="result-title">EXPERIMENT NOT STARTED</div>
+                <div class="result-status-line">
+                  <span class="dot orange"></span>
+                  <span>Rejected before submission &mdash; no changes were made.</span>
+                </div>
+                <div class="fail-card">
+                  <div class="fail-message warn" id="rejectMessage">The experiment could not be started.</div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </section>
+
+      </div>
+
+      <section class="card dataset-card" id="datasetCard" aria-label="Dataset generation">
         <div class="card-heading">
           <span class="head-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/>
-              <path d="M1 14h6M9 8h6M17 16h6"/>
+              <path d="M4 7a2 2 0 012-2h12a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V7z"/>
+              <path d="M4 7v10a2 2 0 002 2h12a2 2 0 002-2V7"/>
+              <path d="M8 7v10"/>
             </svg>
           </span>
-          <h2>Experiment Configuration</h2>
+          <h2>Dataset Generation</h2>
+          <span class="ds-badge ds-badge-idle" id="datasetStatusBadge">Idle</span>
         </div>
 
         <div class="card-body">
 
-          <div class="config-section">
-            <div class="section-label">Experiment</div>
-            <div class="seg-grid">
-              <div class="seg-block">
-                <div class="seg-label">IPsec Mode</div>
-                <div class="segmented" id="modeSegmented" role="radiogroup" aria-label="IPsec mode">
-                  <button type="button" class="seg-option active" data-mode="tunnel" role="radio" aria-checked="true">Tunnel</button>
-                  <button type="button" class="seg-option" data-mode="transport" role="radio" aria-checked="false">Transport</button>
-                </div>
-              </div>
-              <div class="seg-block">
-                <div class="seg-label">Address Family</div>
-                <div class="segmented" id="familySegmented" role="radiogroup" aria-label="Address family">
-                  <button type="button" class="seg-option active" data-family="ipv4" role="radio" aria-checked="true">IPv4</button>
-                  <button type="button" class="seg-option" data-family="ipv6" role="radio" aria-checked="false">IPv6</button>
-                </div>
-              </div>
+          <div class="ds-axes" aria-label="Dataset sampling space">
+            <div class="ds-axis">
+              <span class="ds-axis-ico" aria-hidden="true">&#128274;</span>
+              <span class="ds-axis-name">Security Configuration</span>
+              <span class="ds-axis-sub">posture &amp; IPsec algorithms</span>
             </div>
-            <div class="mode-hint">
-              <span class="hint-row"><b>Tunnel</b> &mdash; protects traffic between networks</span>
-              <span class="hint-row"><b>Transport</b> &mdash; protects host-to-host traffic</span>
+            <span class="ds-axis-op">&times;</span>
+            <div class="ds-axis">
+              <span class="ds-axis-ico" aria-hidden="true">&#8644;</span>
+              <span class="ds-axis-name">Traffic Profile</span>
+              <span class="ds-axis-sub">VoIP / video / web / &hellip;</span>
+            </div>
+            <span class="ds-axis-op">&equals;</span>
+            <div class="ds-axis ds-axis-result">
+              <span class="ds-axis-ico" aria-hidden="true">&#10003;</span>
+              <span class="ds-axis-name">Dataset Sample</span>
+              <span class="ds-axis-sub">1 successful sample</span>
             </div>
           </div>
 
-          <div class="config-section">
-            <div class="section-label">IKE Configuration</div>
-            <div class="field-row">
-              <div class="field">
-                <label for="ikeVersion">IKE Version</label>
-                <select id="ikeVersion"></select>
+          <div class="ds-target">
+            <div class="field ds-target-field">
+              <label for="datasetTargetInput">Number of successful samples</label>
+              <div class="ds-input-row">
+                <input type="number" id="datasetTargetInput" min="1" step="1" inputmode="numeric" placeholder="e.g. 100">
+                <button type="button" class="run-btn ds-run-btn" id="datasetGenerateBtn">Generate Dataset</button>
               </div>
-              <div class="field">
-                <label for="ikeEncryption">Encryption</label>
-                <select id="ikeEncryption"></select>
-              </div>
-            </div>
-            <div class="field-row">
-              <div class="field">
-                <label for="ikeIntegrity">Integrity</label>
-                <select id="ikeIntegrity"></select>
-              </div>
-              <div class="field">
-                <label for="ikeDh">DH Group</label>
-                <select id="ikeDh"></select>
-              </div>
+              <div class="field-note" id="datasetMaxNote"></div>
+              <div class="field-help">Enter the exact number of samples you need. Failures and interruptions do not count.</div>
+              <div class="ds-error is-hidden" id="datasetError" role="alert"></div>
             </div>
           </div>
 
-          <div class="config-section">
-            <div class="section-label">ESP Configuration</div>
-            <div class="field-row">
-              <div class="field">
-                <label for="espEncryption">Encryption</label>
-                <select id="espEncryption"></select>
-              </div>
-              <div class="field" id="espIntegrityField">
-                <label for="espIntegrity">Integrity</label>
-                <select id="espIntegrity"></select>
-                <div class="field-note is-hidden" id="espIntegrityNote">Not applicable for GCM ciphers &mdash; integrity is built in</div>
-              </div>
-            </div>
-            <div class="field-row">
-              <div class="field">
-                <label for="espDh">DH Group</label>
-                <select id="espDh"></select>
-              </div>
-              <div class="field pfs-field">
-                <div class="pfs-row">
-                  <div class="pfs-text">
-                    <div class="pfs-title">Perfect Forward Secrecy</div>
-                    <div class="pfs-sub">Re-negotiates keys for each ESP session</div>
-                  </div>
-                  <button type="button" class="switch on" id="pfsSwitch" role="switch" aria-checked="true" aria-label="Perfect Forward Secrecy"></button>
-                </div>
-              </div>
+          <div class="ds-status" id="datasetStatus">
+            <div class="ds-idle">
+              <div class="ds-idle-title">No active dataset run</div>
+              <div class="ds-idle-sub">Set the exact number of successful samples above and generate. The backend builds one plan across both axes and produces the chosen number of successful samples.</div>
             </div>
           </div>
 
-          <div class="summary-box">
-            <div class="summary-label">Selected Configuration</div>
-            <div class="summary" id="summaryLines"></div>
-          </div>
-
-          <button type="button" class="run-btn" id="runBtn">
-            <span class="run-icon" aria-hidden="true">
-              <svg class="play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 001.5.87l11-6.5a1 1 0 000-1.74l-11-6.5A1 1 0 008 5.5z"/></svg>
-              <svg class="spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M12 2a10 10 0 010 20" opacity=".9"/></svg>
-            </span>
-            <span class="run-label" id="runLabel">Run Experiment</span>
-          </button>
-
-        </div>
-      </section>
-
-      <section class="card result-card" id="resultCard" aria-label="Experiment result">
-        <div class="card-heading">
-          <span class="head-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M9 2h6M10 2v5L5 17a2 2 0 001.7 3h10.6a2 2 0 001.7-3L14 7V2"/>
-              <path d="M7 16h10"/>
-            </svg>
-          </span>
-          <h2>Experiment Result</h2>
-        </div>
-
-        <div class="card-body result-body">
-          <div class="result-area" id="resultArea">
-
-            <div class="result-empty" id="emptyState">
-              <div class="empty-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <circle cx="12" cy="12" r="9"/>
-                  <path d="M10 8.5v7l6-3.5-6-3.5z" fill="currentColor" stroke="none"/>
-                </svg>
-              </div>
-              <div class="empty-title">Ready to test</div>
-              <div class="empty-sub">Configure the IPsec parameters and run an experiment.</div>
-            </div>
-
-            <div class="result-progress is-hidden" id="progressWrap">
-              <div class="progress-head">Experiment in progress</div>
-              <div class="job-state" id="jobStateLabel">Queued</div>
-              <div class="stage-chips" id="stageChips">
-                <div class="stage-chip" id="chQueued"><span class="chip-ico" aria-hidden="true"></span><span>Queued</span></div>
-                <svg class="chip-arrow" viewBox="0 0 24 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M0 6h22M17 1l5 5-5 5"/></svg>
-                <div class="stage-chip" id="chRunning"><span class="chip-ico" aria-hidden="true"></span><span>Running</span></div>
-                <svg class="chip-arrow" viewBox="0 0 24 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M0 6h22M17 1l5 5-5 5"/></svg>
-                <div class="stage-chip" id="chCompleted"><span class="chip-ico" aria-hidden="true"></span><span>Completed</span></div>
-                <svg class="chip-arrow" viewBox="0 0 24 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M0 6h22M17 1l5 5-5 5"/></svg>
-                <div class="stage-chip" id="chFailed"><span class="chip-ico" aria-hidden="true"></span><span>Failed</span></div>
-              </div>
-              <div class="stage-caption" id="stageCaption"></div>
-            </div>
-
-            <div class="result-end is-hidden" id="passState">
-              <div class="result-badge pass" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M20 6L9 17l-5-5"/>
-                </svg>
-              </div>
-              <div class="result-title">EXPERIMENT PASSED</div>
-              <div class="result-status-line">
-                <span class="dot green"></span>
-                <span>Connectivity: PASS</span>
-              </div>
-              <div class="metrics">
-                <div class="metric">
-                  <span class="metric-label">IKE SA</span>
-                  <span class="metric-value ok" id="mIke">ESTABLISHED</span>
-                </div>
-                <div class="metric">
-                  <span class="metric-label">CHILD SA</span>
-                  <span class="metric-value ok" id="mChild">INSTALLED</span>
-                </div>
-                <div class="metric">
-                  <span class="metric-label">IPsec Mode</span>
-                  <span class="metric-value ok" id="mMode">TUNNEL</span>
-                </div>
-                <div class="metric">
-                  <span class="metric-label">Packet Loss</span>
-                  <span class="metric-value ok" id="mLoss">0%</span>
-                </div>
-              </div>
-              <div class="result-note">IPsec tunnel established successfully and connectivity verified.</div>
-              <div class="conf-box">
-                <div class="conf-box-label">Configuration Used</div>
-                <div class="conf-rows" id="passConfig"></div>
-              </div>
-            </div>
-
-            <div class="result-end is-hidden" id="failState">
-              <div class="result-badge fail" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M12 2a10 10 0 100 20 10 10 0 000-20z"/>
-                  <path d="M12 8v5"/>
-                  <path d="M12 16.5v.5"/>
-                </svg>
-              </div>
-              <div class="result-title">EXPERIMENT FAILED</div>
-              <div class="fail-stage" id="failStage">Failed at <b>the controller</b></div>
-              <div class="fail-card">
-                <div class="fail-message" id="failMessage">The experiment could not be completed.</div>
-                <div class="fail-hint">Review the configuration and run the experiment again.</div>
-              </div>
-              <div class="conf-box">
-                <div class="conf-box-label">Configuration Used</div>
-                <div class="conf-rows" id="failConfig"></div>
-              </div>
-            </div>
-
-            <div class="result-end is-hidden" id="rejectState">
-              <div class="result-badge warn" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M12 2a10 10 0 100 20 10 10 0 000-20z"/>
-                  <path d="M12 8v5"/>
-                  <path d="M12 16.5v.5"/>
-                </svg>
-              </div>
-              <div class="result-title">EXPERIMENT NOT STARTED</div>
-              <div class="result-status-line">
-                <span class="dot orange"></span>
-                <span>Rejected before submission &mdash; no changes were made.</span>
-              </div>
-              <div class="fail-card">
-                <div class="fail-message warn" id="rejectMessage">The experiment could not be started.</div>
-              </div>
-            </div>
-
-          </div>
         </div>
       </section>
 
     </div>
+
+    <section class="card stats-card" id="statsCard" aria-label="Dataset statistics">
+      <div class="card-heading">
+        <span class="head-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 3v18h18"/>
+            <path d="M7 15v3M12 10v8M17 6v12"/>
+          </svg>
+        </span>
+        <h2>Dataset Statistics</h2>
+        <span class="head-note">Backend-derived distributions</span>
+      </div>
+      <div class="card-body stats-body">
+        <div class="stats-empty" id="statsEmpty">Generate a dataset to see its traffic and security posture distributions here. Values always come from the backend plan and results.</div>
+        <div class="stats-grid is-hidden" id="statsGrid">
+          <div class="dist-col">
+            <div class="dist-title">Traffic Distribution</div>
+            <div class="dist-list" id="trafficDist"></div>
+          </div>
+          <div class="dist-col">
+            <div class="dist-title">Security Posture Distribution</div>
+            <div class="dist-list" id="postureDist"></div>
+          </div>
+          <div class="dist-col">
+            <div class="dist-title">Run Summary</div>
+            <div class="dist-summary" id="statsSummary"></div>
+          </div>
+        </div>
+      </div>
+    </section>
 
     <section class="card flow-card" aria-label="Testbed flow">
       <div class="card-heading flow-head">
@@ -292,7 +393,7 @@
 
   </main>
 
-  <footer class="site-footer">IPsec VPN Testbed &middot; Configurable IPsec Security &amp; Connectivity Experiment</footer>
+  <footer class="site-footer">IPsec Testbed &middot; Tunnel / Transport &middot; IPv4 / IPv6 &middot; Dataset generation</footer>
 
   <script src="/static/app.js"></script>
 </body>

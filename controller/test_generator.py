@@ -1,6 +1,6 @@
-from .config import CONFIG
-from .topology import TOPOLOGIES
-from .generator import generate_swanctl_config
+from controller.config import CONFIG
+from controller.topology import TOPOLOGIES
+from controller.generator import generate_swanctl_config
 
 
 if __name__ == "__main__":
