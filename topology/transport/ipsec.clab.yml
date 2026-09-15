@@ -9,8 +9,8 @@ topology:
       privileged: true
       cmd: /bin/sh -c "/usr/local/bin/transport-entrypoint.sh"
       binds:
-        - /home/jagan/ipsec-testbed/scripts/transport-entrypoint.sh:/usr/local/bin/transport-entrypoint.sh
-        - /home/jagan/ipsec-testbed/configs/transport/host-c/swanctl:/etc/swanctl
+        - ../../scripts/transport-entrypoint.sh:/usr/local/bin/transport-entrypoint.sh
+        - ../../configs/transport/host-c/swanctl:/etc/swanctl
       exec:
         - ip addr add 10.20.1.10/24 dev eth1
         - ip route add 10.20.1.20/32 dev eth1
@@ -23,8 +23,8 @@ topology:
       privileged: true
       cmd: /bin/sh -c "/usr/local/bin/transport-entrypoint.sh"
       binds:
-        - /home/jagan/ipsec-testbed/scripts/transport-entrypoint.sh:/usr/local/bin/transport-entrypoint.sh
-        - /home/jagan/ipsec-testbed/configs/transport/host-d/swanctl:/etc/swanctl
+        - ../../scripts/transport-entrypoint.sh:/usr/local/bin/transport-entrypoint.sh
+        - ../../configs/transport/host-d/swanctl:/etc/swanctl
       exec:
         - ip addr add 10.20.1.20/24 dev eth1
         - ip route add 10.20.1.10/32 dev eth1
