@@ -1,0 +1,6 @@
+# Runtime dependencies for the IPsec testbed controller (web API + dataset pipeline).
+# Exact versions validated in the project environment (Python 3.14.4).
+fastapi==0.141.1
+pydantic==2.13.5
+pyarrow==25.0.1
+uvicorn==0.52.4
