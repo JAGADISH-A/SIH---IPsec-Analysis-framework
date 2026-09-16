@@ -650,7 +650,7 @@
         const detail = await readDetail(res);
 
         if (res.status === 409) {
-          finalizeReject(detail || "Another experiment is already running (or the testbed is busy generating a dataset).");
+          finalizeReject(detail || "Another experiment is already running (or the testbed is busy with another run).");
           return;
         }
         if (res.status === 422) {
@@ -821,7 +821,7 @@
   }
 
   /* =======================================================================
-   * Dataset generation UI (Module 7)
+   * Automated experiment run UI (formerly "dataset generation")
    * ======================================================================= */
 
   const D = () => state.dataset;
@@ -876,6 +876,7 @@
 
   function currentBlockHtml(st) {
     const seq = st.current_sequence;
+    const target = st.target_samples;
     const profile = st.current_traffic_profile;
     const posture = st.current_security_posture;
     const cfg = st.current_configuration;
@@ -886,7 +887,7 @@
     if (seq != null) {
       chips.push(
         '<div class="ds-chip"><span class="ds-chip-label">Sequence</span><span class="ds-chip-val">' +
-          seq + "</span></div>"
+          seq + (target != null ? " / " + target : "") + "</span></div>"
       );
     }
     if (profile) {
@@ -911,7 +912,7 @@
     const cfgRows = datasetConfigRows(cfg);
     return (
       '<div class="ds-current">' +
-        '<div class="ds-current-title">Currently generating</div>' +
+        '<div class="ds-current-title">Currently running experiment</div>' +
         '<div class="ds-chips">' + chips.join("") + "</div>" +
         (cfgRows ? '<div class="ds-cfg">' + cfgRows + "</div>" : "") +
       "</div>"
@@ -946,10 +947,10 @@
     if (!active) {
       statusEl.innerHTML =
         '<div class="ds-idle">' +
-          '<div class="ds-idle-title">No active dataset run</div>' +
-          '<div class="ds-idle-sub">Set the exact number of successful samples above and generate. ' +
-          "The backend plans one sample per security&nbsp;configuration&nbsp;&times;&nbsp;traffic&nbsp;profile " +
-          "combination and produces the requested number of <b>successful</b> samples.</div>" +
+          '<div class="ds-idle-title">No active automated run</div>' +
+          '<div class="ds-idle-sub">Set the exact number of successful experiments above and start. ' +
+          "The backend plans one experiment per IPsec&nbsp;configuration&nbsp;&times;&nbsp;traffic&nbsp;profile " +
+          "combination and repeats the testbed until the requested number of <b>successful</b> experiments are committed.</div>" +
         "</div>";
       return;
     }
@@ -973,46 +974,48 @@
       banner =
         '<div class="ds-banner ds-banner-ok">' +
           '<span class="ds-banner-check" aria-hidden="true">&#10003;</span>' +
-          "<div><b>Dataset completed</b> &mdash; " + successful + " / " + target +
-          " successful samples generated.</div>" +
+          "<div><b>Automated run completed</b> &mdash; " + successful + " / " + target +
+          " successful experiments.</div>" +
         "</div>";
       if (finalized) {
         extras =
-          '<button type="button" class="run-btn ds-download-btn" id="datasetDownloadBtn">Download Dataset</button>';
+          '<button type="button" class="run-btn ds-download-btn" id="datasetDownloadBtn">' +
+          "Download dataset export (legacy)</button>" +
+          '<div class="ds-download-note">Legacy dataset archive: features.parquet + metadata.jsonl + manifest.json + README.txt. Not a raw PCAP capture.</div>';
       }
     } else if (statusName === "PAUSED") {
       banner =
         '<div class="ds-banner ds-banner-warn">' +
-          "<div><b>Dataset generation paused</b> &mdash; the run can be resumed.</div>" +
+          "<div><b>Run paused</b> &mdash; the run can be resumed.</div>" +
           "</div>";
       extras =
-        '<button type="button" class="run-btn ds-resume-btn" id="datasetResumeBtn">Resume Dataset</button>';
+        '<button type="button" class="run-btn ds-resume-btn" id="datasetResumeBtn">Resume Run</button>';
     } else if (statusName === "FAILED") {
       const msg = (st.error && st.error.trim())
         ? st.error
-        : ((st.finalization && st.finalization.error) || "The dataset generation failed.");
+        : ((st.finalization && st.finalization.error) || "The automated run failed.");
       banner =
         '<div class="ds-banner ds-banner-err">' +
-          "<div><b>Dataset generation failed</b> &mdash; " + escapeHtml(msg) + "</div>" +
+          "<div><b>Automated run failed</b> &mdash; " + escapeHtml(msg) + "</div>" +
         "</div>";
     }
 
     statusEl.innerHTML =
       '<div class="ds-progress">' +
         '<div class="ds-progress-head">' +
-          '<span class="ds-run-label">Dataset run</span>' +
+          '<span class="ds-run-label">Automated run</span>' +
           '<code class="dataset-run-id">' + escapeHtml(d.activeRunId) + "</code>" +
         "</div>" +
         banner +
         '<div class="ds-count">' +
           '<div class="ds-count-num">' + successful + " / " + target + "</div>" +
-          '<div class="ds-count-label">successful samples</div>' +
+          '<div class="ds-count-label">successful experiments</div>' +
         "</div>" +
         '<div class="ds-bar" role="progressbar" aria-valuenow="' + Math.round(safePct) +
           '" aria-valuemin="0" aria-valuemax="100">' +
           '<div class="ds-bar-fill" style="width:' + safePct + '%"></div>' +
         "</div>" +
-        '<div class="ds-bar-caption">' + Math.round(safePct) + "% &mdash; progress is based only on successful samples</div>" +
+        '<div class="ds-bar-caption">' + Math.round(safePct) + "% &mdash; progress is based only on successful experiments</div>" +
         '<div class="ds-metrics">' +
           '<div class="ds-metric"><span class="ds-metric-label">Attempts</span><span class="ds-metric-num">' + attempted + "</span></div>" +
           '<div class="ds-metric"><span class="ds-metric-label">Failed</span><span class="ds-metric-num">' + failed + "</span></div>" +
@@ -1045,16 +1048,16 @@
     let summaryRows = [
       ["Run ID", res.dataset_run_id || "\u2014"],
       ["Target", res.target_samples != null ? res.target_samples : "\u2014"],
-      ["Successful samples", successful],
+      ["Successful experiments", successful],
       ["Attempts", res.attempted_runs != null ? res.attempted_runs : "\u2014"],
       ["Failures", res.failed_samples != null ? res.failed_samples : "\u2014"],
       ["Interruptions", res.interrupted_samples != null ? res.interrupted_samples : "\u2014"],
     ];
     if (res.feature_row_count != null) {
-      summaryRows.push(["Feature rows (Parquet)", res.feature_row_count]);
+      summaryRows.push(["Feature rows (legacy export)", res.feature_row_count]);
     }
     if (res.metadata_record_count != null) {
-      summaryRows.push(["Metadata records", res.metadata_record_count]);
+      summaryRows.push(["Ground-truth metadata records", res.metadata_record_count]);
     }
     if (res.finalization && res.finalization.status) {
       summaryRows.push(["Finalization", res.finalization.status]);
@@ -1143,17 +1146,17 @@
 
   function readDatasetTarget() {
     const raw = $("#datasetTargetInput").value.trim();
-    if (!raw) return { error: "Enter the number of successful samples first." };
+    if (!raw) return { error: "Enter the number of successful experiments first." };
     if (!/^\d+$/.test(raw)) {
-      return { error: "Sample count must be a positive integer (e.g. 2, 50, 500)." };
+      return { error: "Experiment count must be a positive integer (e.g. 2, 50, 500)." };
     }
     const n = Number(raw);
     if (n < 1) {
-      return { error: "Sample count must be at least 1." };
+      return { error: "Experiment count must be at least 1." };
     }
     const max = D().settings && D().settings.maximum_target_samples;
     if (typeof max === "number" && n > max) {
-      return { error: "Sample count " + n + " exceeds the backend maximum of " + max + "." };
+      return { error: "Experiment count " + n + " exceeds the backend maximum of " + max + "." };
     }
     return { value: n };
   }
@@ -1207,16 +1210,16 @@
     const detail = await readDetail(res);
     if (res.status === 409) {
       datasetShowError(
-        detail || "Another dataset run or a manual experiment is already using the testbed."
+        detail || "Another automated run or a manual experiment is already using the testbed."
       );
     } else if (res.status === 422) {
       datasetShowError(
-        detail || "The sample count was rejected. It must be a positive integer within the backend maximum."
+        detail || "The experiment count was rejected. It must be a positive integer within the backend maximum."
       );
     } else if (res.status === 404) {
-      datasetShowError(detail || "The dataset run endpoint was not found.");
+      datasetShowError(detail || "The automated run endpoint was not found.");
     } else {
-      datasetShowError(detail || "The controller rejected the dataset generation request. No run was created.");
+      datasetShowError(detail || "The controller rejected the automated run request. No run was created.");
     }
     renderDataset();
   }
@@ -1256,7 +1259,7 @@
       res = await fetch(DATASETS_URL + "/" + encodeURIComponent(d.activeRunId));
     } catch (_) {
       if (token !== d.pollToken) return;
-      datasetShowError("Lost connection to the controller while monitoring the dataset run. Polling stopped.");
+      datasetShowError("Lost connection to the controller while monitoring the automated run. Polling stopped.");
       stopDatasetPolling();
       return;
     }
@@ -1271,17 +1274,17 @@
     if (token !== d.pollToken) return;
 
     if (res.status === 404) {
-      datasetShowError("Dataset run not found: " + d.activeRunId + ". It may have been removed.");
+      datasetShowError("Automated run not found: " + d.activeRunId + ". It may have been removed.");
       stopDatasetPolling();
       return;
     }
     if (!res.ok) {
-      datasetShowError("The controller reported an error while monitoring the dataset run. Polling stopped.");
+      datasetShowError("The controller reported an error while monitoring the automated run. Polling stopped.");
       stopDatasetPolling();
       return;
     }
     if (!status || !status.status) {
-      datasetShowError("The controller returned an unexpected response for the dataset run. Polling stopped.");
+      datasetShowError("The controller returned an unexpected response for the automated run. Polling stopped.");
       stopDatasetPolling();
       return;
     }
@@ -1370,7 +1373,7 @@
         headers: { "Content-Type": "application/json" },
       });
     } catch (_) {
-      datasetShowError("Unable to reach the controller to resume the dataset run.");
+      datasetShowError("Unable to reach the controller to resume the automated run.");
       d.busy = false;
       renderDataset();
       return;
@@ -1395,13 +1398,13 @@
     }
 
     if (res.status === 409) {
-      datasetShowError(detail || "The dataset run cannot be resumed right now.");
+      datasetShowError(detail || "The automated run cannot be resumed right now.");
     } else if (res.status === 400) {
       datasetShowError(detail || "The run's plan changed and cannot be resumed safely.");
     } else if (res.status === 404) {
-      datasetShowError(detail || "Dataset run not found.");
+      datasetShowError(detail || "Automated run not found.");
     } else {
-      datasetShowError(detail || "The controller could not resume the dataset run.");
+      datasetShowError(detail || "The controller could not resume the automated run.");
     }
     renderDataset();
   }

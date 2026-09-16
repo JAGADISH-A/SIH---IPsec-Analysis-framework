@@ -5,10 +5,10 @@ traffic profiles to run (no implicit Cartesian product).
 
 Pipeline per experiment:
 
-  DEPLOY/RESET TOPOLOGY -> GENERATE CONFIG -> LOAD CONFIG -> INITIATE IPsec
-  -> VERIFY IPsec -> VERIFY CONNECTIVITY -> START CAPTURE -> START LISTENER
-  -> START TRAFFIC -> RUN DURATION -> STOP TRAFFIC -> STOP CAPTURE
-  -> COPY PCAP -> EXTRACT FEATURES -> SAVE METADATA+LABEL -> CLEAN UP
+  DEPLOY/RESET TOPOLOGY -> GENERATE CONFIG -> START CAPTURE (IKE+ESP)
+  -> LOAD CONFIG -> INITIATE IPsec -> VERIFY IPsec -> VERIFY CONNECTIVITY
+  -> START LISTENER -> START TRAFFIC -> RUN DURATION -> STOP TRAFFIC
+  -> STOP CAPTURE -> COPY PCAP -> EXTRACT FEATURES -> SAVE METADATA+LABEL
 
 A failure in any step marks the experiment as failed, saves failure
 metadata, cleans up and moves on to the next trial.
@@ -45,8 +45,19 @@ from . import timing as timing_mod
 from . import reuse as reuse_mod
 
 DEFAULT_CAMPAIGN = "campaign.json"
-DEFAULT_CAPTURE_FILTER = "esp"
+
+# Canonical capture default (IKE + ESP [+ AH]) lives in the capture layer;
+# re-exported here so ``campaign.DEFAULT_CAPTURE_FILTER`` keeps working.
+DEFAULT_CAPTURE_FILTER = capture_mod.DEFAULT_CAPTURE_FILTER
+
 DEFAULT_PORT = 20000
+
+# The capture now starts BEFORE the IKE initiation, so the tcpdump session
+# must stay alive across the whole pre-initiate/verify/connectivity/setup
+# window as well as the traffic duration.  This lead time is a safety margin
+# on top of the traffic duration; stop_capture() terminates tcpdump early
+# right after traffic ends so the pcap is flushed on schedule.
+CAPTURE_LEAD_TIME = 60
 
 
 def load_campaign(path):
@@ -148,6 +159,24 @@ def execute_trial_pipeline(experiment_id, config, traffic_cfg, tmp_dir,
     runtime_ctx["capture_container"] = cap_container
     runtime_ctx["capture_interface"] = None
 
+    capture_seconds = int(duration) + CAPTURE_LEAD_TIME
+
+    def start_ipsec_capture():
+        """Resolve the live WAN interface and start the IKE+ESP capture.
+
+        Started immediately after deploy (fresh) or after the config reload
+        (reuse), i.e. BEFORE the swanctl initiate, so the negotiation itself
+        (IKE_SA_INIT/IKE_AUTH) lands in the pcap ahead of the ESP data.
+        """
+        cap_iface = capture_mod.detect_capture_interface(cap_container, cap_wan_ip)
+        runtime_ctx["capture_interface"] = cap_iface
+        log(f"capture interface {cap_container}:{cap_iface} verified (WAN {cap_wan_ip})")
+        capture_mod.start_capture(
+            cap_container, cap_iface, remote_pcap,
+            seconds=capture_seconds, filter_expr=capture_filter,
+        )
+        log(f"capture started on {cap_container}:{cap_iface} ({capture_filter})")
+
     result = reuse_mod.reset_and_deploy_or_reuse(
         mode,
         address_family,
@@ -157,12 +186,14 @@ def execute_trial_pipeline(experiment_id, config, traffic_cfg, tmp_dir,
         load_fn=lambda: load_generated_configs(config),
         initiate_fn=lambda: initiate_ipsec(mode, address_family),
         verify_fn=lambda: verify_ipsec(mode, address_family),
+        before_initiate_fn=start_ipsec_capture,
         recorder=recorder,
         log=log,
     )
     if result.get("reused"):
         ipsec = result["ipsec"]
     else:
+        start_ipsec_capture()
         load_generated_configs(config)
         initiate_ipsec(mode, address_family)
         ipsec = verify_ipsec(mode, address_family)
@@ -175,16 +206,6 @@ def execute_trial_pipeline(experiment_id, config, traffic_cfg, tmp_dir,
 
     traffic_mod.copy_trafficgen(runtime_ctx["source_container"])
     traffic_mod.copy_trafficgen(runtime_ctx["destination_container"])
-
-    cap_iface = capture_mod.detect_capture_interface(cap_container, cap_wan_ip)
-    runtime_ctx["capture_interface"] = cap_iface
-    log(f"capture interface {cap_container}:{cap_iface} verified (WAN {cap_wan_ip})")
-
-    capture_mod.start_capture(
-        cap_container, cap_iface, remote_pcap,
-        seconds=duration + 5, filter_expr=capture_filter,
-    )
-    log(f"capture started on {cap_container}:{cap_iface} ({capture_filter})")
 
     traffic_mod.start_receiver(
         runtime_ctx["destination_container"],
@@ -228,6 +249,7 @@ def execute_trial_pipeline(experiment_id, config, traffic_cfg, tmp_dir,
         "duration": duration,
         "port": port,
         "capture_filter": capture_filter,
+        "traffic_model": traffic_mod.resolve_traffic_model(profile, duration, port),
     }
     metadata = dataset_mod.build_metadata(
         experiment_id, config, traffic, runtime_ctx,

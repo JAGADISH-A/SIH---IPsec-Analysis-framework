@@ -194,6 +194,8 @@ class TestAcceptance(unittest.TestCase):
             resp = post_target(client, 50)
             self.assertEqual(resp.status_code, 201)
             self.assertEqual(resp.json()["target_samples"], 50)
+            # wait for the background worker so temp dir teardown never races it
+            wait_finalized(client, resp.json()["dataset_run_id"])
 
     def test_post_target_500_accepted_if_below_maximum(self):
         with tempfile.TemporaryDirectory() as tmp:

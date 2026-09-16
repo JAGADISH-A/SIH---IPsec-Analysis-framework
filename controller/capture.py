@@ -22,6 +22,16 @@ import json
 import subprocess
 import time
 
+# Canonical capture filter for the whole testbed (single source of truth).
+#
+# IKE (UDP 500/4500) is purposefully captured alongside ESP (and AH, when
+# used) so a capture contains the full negotiation (IKE_SA_INIT / IKE_AUTH /
+# CREATE_CHILD_SA) followed by encrypted data, not ESP alone.  The capture
+# *location* is unchanged: only the outer/WAN interface is observed.  An
+# ESP-only capture stays available as an explicit override for legacy / parity
+# evidence.
+DEFAULT_CAPTURE_FILTER = "udp port 500 or udp port 4500 or esp or ah"
+
 # For every mode/family pair we know which container carries the WAN-facing
 # interface and which *IP address* must be present on it.  The concrete
 # interface name (eth1, eth2, ...) is never assumed: it is resolved from the
@@ -67,7 +77,7 @@ def detect_capture_interface(container, wan_ip):
     )
 
 
-def start_capture(container, interface, remote_path, seconds, filter_expr="esp"):
+def start_capture(container, interface, remote_path, seconds, filter_expr=DEFAULT_CAPTURE_FILTER):
     """Start tcpdump inside the container, detached.
 
     tcpdump runs in the *foreground* of a `docker exec -d` session wrapped in
@@ -96,11 +106,22 @@ def start_capture(container, interface, remote_path, seconds, filter_expr="esp")
 
 
 def stop_capture(container, remote_path, wait=15):
-    """Wait for the capture to finish and flush its pcap.
+    """Stop the capture early and wait for its pcap to flush.
 
-    tcpdump terminates on its own when its `timeout` expires; the completion
-    marker ensures the pcap is fully flushed before we hand it to the caller.
+    Since the capture now starts BEFORE the IKE initiation (see campaign.py),
+    its ``timeout`` budget is much longer than the traffic window.  Rather
+    than waiting out that whole budget, we SIGTERM tcpdump right after
+    traffic ends: tcpdump flushes and closes the pcap on SIGTERM, the
+    ``timeout`` wrapper then emits the ``.done`` marker, and the file is
+    copied out intact.  The ``timeout`` wrapper remains as the
+    controller-death failsafe.
     """
+    subprocess.run(
+        ["sudo", "docker", "exec", container, "sh", "-c",
+         "pkill -TERM tcpdump || true"],
+        capture_output=True,
+        text=True,
+    )
     for _ in range(wait * 2):
         if _done(container, remote_path):
             time.sleep(1.0)

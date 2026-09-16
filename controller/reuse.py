@@ -106,7 +106,8 @@ class TopologyReuseManager:
         return result
 
     def reuse_and_reinitiate(self, mode, address_family, *, terminate_fn,
-                             load_fn, initiate_fn, verify_fn, recorder=None):
+                             load_fn, initiate_fn, verify_fn, recorder=None,
+                             before_initiate_fn=None):
         """In-place StrongSwan reset+rereinitiate with strong fallback.
 
         Safe order (see MODULE9_DESIGN.md §4):
@@ -114,8 +115,10 @@ class TopologyReuseManager:
           1. terminate every active CHILD SA
           2. terminate the IKE SA (so no old proposal can survive)
           3. load the new generated configs
-          4. initiate the new CHILD SA
-          5. re-verify IPsec against the new selectors/family/proposal
+          4. start the IKE+ESP capture (``before_initiate_fn``), so the fresh
+             negotiation below is observed
+          5. initiate the new CHILD SA
+          6. re-verify IPsec against the new selectors/family/proposal
 
         Any failure at ANY stage → the caller (campaign) falls back to a
         full fresh ``reset_and_deploy`` for this sample; never a stale SA
@@ -127,6 +130,8 @@ class TopologyReuseManager:
             terminate_fn()
         with timing_mod.stage(recorder, "sa_reload"):
             load_fn()
+        if before_initiate_fn is not None:
+            before_initiate_fn()
         with timing_mod.stage(recorder, "sa_initiate"):
             initiate_fn()
         verify_result = verify_fn()
@@ -152,7 +157,8 @@ class ReuseVerificationError(RuntimeError):
 def reset_and_deploy_or_reuse(mode, address_family, *, reuse_manager=None,
                               fresh_fn=None, recorder=None, log=None,
                               terminate_fn=None, load_fn=None,
-                              initiate_fn=None, verify_fn=None):
+                              initiate_fn=None, verify_fn=None,
+                              before_initiate_fn=None):
     """Module-10 seam: deploy-fresh OR reuse-in-place, decided by the manager.
 
     Additive dispatch used by the (reuse-aware) dataset execution path.  It
@@ -167,9 +173,10 @@ def reset_and_deploy_or_reuse(mode, address_family, *, reuse_manager=None,
     ``_prev_identity`` survives across consecutive samples of the SAME run.
 
     When reuse is attempted, the full lifecycle runs in order:
-    ``terminate_fn`` -> ``load_fn`` -> ``initiate_fn`` -> ``verify_fn`` and
-    any failure falls back to a full fresh deployment through ``fresh_fn``.
-    A failed reuse is never counted as a successful sample by itself.
+    ``terminate_fn`` -> ``load_fn`` -> ``before_initiate_fn`` (capture start
+    for IKE+ESP, optional) -> ``initiate_fn`` -> ``verify_fn`` and any failure
+    falls back to a full fresh deployment through ``fresh_fn``.  A failed
+    reuse is never counted as a successful sample by itself.
     """
     log = log or (lambda msg: None)
 
@@ -196,6 +203,7 @@ def reset_and_deploy_or_reuse(mode, address_family, *, reuse_manager=None,
                 initiate_fn=initiate_fn,
                 verify_fn=verify_fn,
                 recorder=recorder,
+                before_initiate_fn=before_initiate_fn,
             )
         except Exception as exc:
             reuse_manager._fallbacks += 1

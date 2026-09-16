@@ -19,6 +19,8 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import capture as capture_mod
+
 DEFAULT_RESULTS_ROOT = "results"
 
 FEATURE_COLUMNS = [
@@ -85,7 +87,8 @@ def build_metadata(experiment_id, config, traffic, runtime_ctx, run_id=None,
         "traffic_type": traffic["profile"],
         "traffic_duration": traffic["duration"],
         "traffic_port": traffic.get("port", 20000),
-        "capture_filter": traffic.get("capture_filter", "esp"),
+        "capture_filter": traffic.get("capture_filter", capture_mod.DEFAULT_CAPTURE_FILTER),
+        "traffic_model": traffic.get("traffic_model"),
         "source_container": runtime_ctx.get("source_container"),
         "source_ip": runtime_ctx.get("source_ip"),
         "destination_container": runtime_ctx.get("destination_container"),

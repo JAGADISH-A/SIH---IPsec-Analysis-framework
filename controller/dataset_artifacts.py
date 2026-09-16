@@ -18,7 +18,7 @@ never staged as successful.
 
 Data contract (all documented again in SCHEMA.md)
 --------------------------------------------------
-``dataset_schema_version = "v1"``.  The feature table is the 54-column output
+``dataset_schema_version = "v1"``.  The feature table is the 64-column output
 of ``controller/features.py`` (the feature extraction authority).  The schema
 is declared explicitly here -- it must never "emerge" from whatever dictionary
 the extractor happens to return.  ``assert_feature_keys()`` cross-checks the
@@ -97,7 +97,7 @@ EXPORT_ARTIFACT_FILENAMES = (
 )
 
 # ---------------------------------------------------------------------------
-# Feature schema (v1) -- the 54 columns produced by controller/features.py.
+# Feature schema (v1) -- the 64 columns produced by controller/features.py.
 # Types are the source-of-truth extractor types for real captures.
 # ---------------------------------------------------------------------------
 
@@ -156,6 +156,16 @@ FEATURE_COLUMNS = [
     "mean_burst_packets_50ms",         # float: mean burst size (50 ms gate)
     "burst_count_200ms",               # int  : bursts gated at 200 ms
     "mean_burst_packets_200ms",        # float: mean burst size (200 ms gate)
+    "ike_packet_count",                # int  : IKE frames (UDP 500/4500)
+    "ike_datagram_bytes",              # int  : total IKE datagram bytes
+    "ike_min_packet_size",             # int  : smallest IKE frame (bytes)
+    "ike_max_packet_size",             # int  : largest IKE frame (bytes)
+    "ike_mean_packet_size",            # float: mean IKE frame size (bytes)
+    "ike_sa_init_count",               # int  : IKE_SA_INIT exchanges seen
+    "ike_auth_count",                  # int  : IKE_AUTH exchanges seen
+    "ike_create_child_sa_count",       # int  : CREATE_CHILD_SA exchanges seen
+    "ike_informational_count",         # int  : INFORMATIONAL exchanges seen
+    "ike_version",                     # int  : observed IKE version (0 none)
 ]
 
 INT_FEATURES = frozenset({
@@ -165,6 +175,11 @@ INT_FEATURES = frozenset({
     "outbound_bytes", "inbound_bytes",
     "burst_count", "burst_count_10ms", "burst_count_50ms",
     "burst_count_200ms",
+    "ike_packet_count", "ike_datagram_bytes",
+    "ike_min_packet_size", "ike_max_packet_size",
+    "ike_sa_init_count", "ike_auth_count",
+    "ike_create_child_sa_count", "ike_informational_count",
+    "ike_version",
 })
 
 FLOAT_FEATURES = frozenset(FEATURE_COLUMNS) - INT_FEATURES
@@ -404,9 +419,11 @@ def build_successful_record(run, sample, experiment_id, attempt, outcome,
     """
     config = sample["ipsec_configuration"]
     timestamp = None
+    traffic_model = None
     metadata = outcome.get("metadata")
     if isinstance(metadata, dict):
         timestamp = metadata.get("timestamp")
+        traffic_model = metadata.get("traffic_model")
     record = {
         "dataset_schema_version": SCHEMA_VERSION,
         "feature_schema_version": FEATURE_SCHEMA_VERSION,
@@ -424,6 +441,8 @@ def build_successful_record(run, sample, experiment_id, attempt, outcome,
         "pcap_path": pcap_path,
         "features": normalize_feature_record(outcome["features"]),
     }
+    if traffic_model is not None:
+        record["traffic_model"] = traffic_model
     return record
 
 

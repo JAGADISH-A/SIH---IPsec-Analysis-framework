@@ -4,7 +4,8 @@ Driven by ``--run-id`` (matching ``run_id`` in a campaign file).  Loads every
 experiment directory ``results/<run_id>-exp-*/`` and re-verifies the dataset
 properties that matter before scaling:
 
-  * every captured frame is encrypted ESP (no plaintext application frames)
+  * every captured frame is ESP (encrypted data plane) or IKE (UDP 500/4500
+    negotiation control plane) -- no unexpected plaintext application frames
   * no NaN / negative values in the extracted features
   * ground-truth labels only from the configured traffic profile
   * GCM integrity is null, CBC integrity is sha256
@@ -22,6 +23,7 @@ import math
 import shutil
 from pathlib import Path
 
+from . import capture as capture_mod
 from . import dataset as dataset_mod
 from . import features as features_mod
 
@@ -84,16 +86,67 @@ def _outer_protocol(data, linktype):
     return None
 
 
+def _udp_port(data, linktype):
+    """Return the outer-IP UDP destination port of a frame, else None.
+
+    Used to distinguish IKE control-plane datagrams (UDP 500/4500) from
+    unexpected plaintext application frames during the capture audit.
+    """
+    if linktype == 1:
+        if len(data) < 14:
+            return None
+        ethertype = int.from_bytes(data[12:14], "big")
+        offset = 14
+        if ethertype == 0x0800:
+            if len(data) < offset + 20:
+                return None
+            if data[offset + 9] != 17:
+                return None
+            ihl = (data[offset] & 0x0F) * 4
+            udp_offset = offset + ihl
+        elif ethertype == 0x86DD:
+            if len(data) < offset + 40:
+                return None
+            if data[offset + 6] != 17:
+                return None
+            udp_offset = offset + 40
+        else:
+            return None
+    elif linktype == 101:
+        if len(data) < 20:
+            return None
+        if data[9] != 17:
+            return None
+        udp_offset = (data[0] & 0x0F) * 4
+    elif linktype == 127:
+        if len(data) < 40:
+            return None
+        if data[6] != 17:
+            return None
+        udp_offset = 40
+    else:
+        return None
+    if len(data) < udp_offset + 4:
+        return None
+    return int.from_bytes(data[udp_offset + 2:udp_offset + 4], "big")
+
+
 def scan_frames(path):
-    """Return (total_records, esp_frames, non_esp_ip, malformed)."""
+    """Return (total_records, esp_frames, ike_frames, non_esp_ip, malformed).
+
+    ESP frames are the encrypted data plane; IKE frames (UDP 500/4500) are
+    the (deliberately captured) negotiation control plane.  ``non_esp_ip``
+    counts any other IP frame, which is what the audit treats as unexpected
+    plaintext application traffic.
+    """
     try:
         fh = open(path, "rb")
     except OSError:
-        return (0, 0, 0, 0)
+        return (0, 0, 0, 0, 0)
     with fh:
         header = fh.read(24)
         if len(header) < 24:
-            return (0, 0, 0, 1)
+            return (0, 0, 0, 0, 1)
         magic = header[:4]
         if magic in (b"\xa1\xb2\xc3\xd4", b"\xa1\xb2\x3c\x4d"):
             endian = "big"
@@ -101,8 +154,8 @@ def scan_frames(path):
             endian = "little"
         linktype = int.from_bytes(header[20:24], endian)
         if linktype not in (1, 101, 127):
-            return (0, 0, 0, 1)
-        total = esp = non_esp = 0
+            return (0, 0, 0, 0, 1)
+        total = esp = ike = non_esp = 0
         while True:
             record = fh.read(16)
             if len(record) < 16:
@@ -117,9 +170,11 @@ def scan_frames(path):
             proto = _outer_protocol(data, linktype)
             if proto == 50:
                 esp += 1
+            elif _udp_port(data, linktype) in features_mod.IKE_UDP_PORTS:
+                ike += 1
             elif proto is not None:
                 non_esp += 1
-    return (total, esp, non_esp, 0)
+    return (total, esp, ike, non_esp, 0)
 
 
 def _num(value):
@@ -265,8 +320,6 @@ def rebuild_aggregate(results_root, run_id=None):
     in features.csv / metadata.jsonl conforms to the current feature schema
     regardless of when the experiment was recorded.
     """
-    from . import capture as capture_mod
-
     results_root = Path(results_root)
     dataset_dir = results_root / dataset_mod.DATASET_PATH
     if dataset_dir.exists():
@@ -297,7 +350,7 @@ def rebuild_aggregate(results_root, run_id=None):
             "profile": meta["traffic_type"],
             "duration": duration,
             "port": meta.get("traffic_port", 20000),
-            "capture_filter": meta.get("capture_filter", "esp"),
+            "capture_filter": meta.get("capture_filter", capture_mod.DEFAULT_CAPTURE_FILTER),
         }
         new_meta = dataset_mod.build_metadata(
             meta["experiment_id"], config, traffic, _runtime_ctx_from_meta(meta),
@@ -350,7 +403,7 @@ def report(args):
         if (exp_dir / "features.json").exists():
             features = json.loads((exp_dir / "features.json").read_text())
 
-        total, esp, non_esp, malformed = scan_frames(exp_dir / "capture.pcap" if (exp_dir / "capture.pcap").exists() else "/nonexistent")
+        total, esp, ike, non_esp, malformed = scan_frames(exp_dir / "capture.pcap" if (exp_dir / "capture.pcap").exists() else "/nonexistent")
         pcap_path = exp_dir / "capture.pcap"
         pcap_bytes = pcap_path.stat().st_size if pcap_path.exists() else 0
 
@@ -358,9 +411,9 @@ def report(args):
         if malformed:
             fmt_problem.append("malformed pcap")
         if non_esp:
-            fmt_problem.append(f"{non_esp} plaintext frames")
-        if total and esp and esp != total:
-            fmt_problem.append(f"non-ESP records {total - esp}")
+            fmt_problem.append(f"{non_esp} unexpected plaintext frames")
+        if total and esp + ike != total:
+            fmt_problem.append(f"unexpected records {total - esp - ike}")
         fmt_problem += check_features(features)
 
         expected_cfg = expected.get(experiment_id)

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#ffffff">
-  <title>IPsec Testbed — Dataset Generation</title>
+  <title>IPsec Testbed — Manual &amp; Automated Experiments</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='%232463EB'%3E%3Cpath%20d='M12%202l8%203.5v5.7c0%205-3.3%208.3-8%2010.8-4.7-2.5-8-5.8-8-10.8V5.5L12%202z'/%3E%3Cpath%20d='M9%2016.5l1.5-3M15%2016.5l-1.5-3M12%207v6.5'%20stroke='%23fff'%20stroke-width='1.6'%20stroke-linecap='round'%20fill='none'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/styles.css">
 </head>
@@ -21,7 +21,7 @@
         </div>
         <div class="brand-text">
           <div class="product-name">IPsec Testbed</div>
-          <div class="product-subtitle">Configurable IPsec experiments &amp; dataset generation</div>
+          <div class="product-subtitle">Configurable IPsec experiments &amp; automated repeated runs</div>
         </div>
       </div>
       <div class="status-pill" id="statusPill">
@@ -35,7 +35,7 @@
 
     <section class="page-head">
       <div class="page-title">Testbed Control</div>
-      <div class="page-sub" id="pageSub">Manual IPsec experiments &middot; Dataset generation from <b>security configuration &times; traffic profile</b></div>
+      <div class="page-sub" id="pageSub">Manual IPsec experiments &middot; Automated runs of <b>IPsec configuration &times; traffic profile</b></div>
     </section>
 
     <div class="dashboard-grid">
@@ -283,7 +283,7 @@
 
       </div>
 
-      <section class="card dataset-card" id="datasetCard" aria-label="Dataset generation">
+      <section class="card dataset-card" id="datasetCard" aria-label="Automated experiment run">
         <div class="card-heading">
           <span class="head-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -292,13 +292,13 @@
               <path d="M8 7v10"/>
             </svg>
           </span>
-          <h2>Dataset Generation</h2>
+          <h2>Automated Experiment Run</h2>
           <span class="ds-badge ds-badge-idle" id="datasetStatusBadge">Idle</span>
         </div>
 
         <div class="card-body">
 
-          <div class="ds-axes" aria-label="Dataset sampling space">
+          <div class="ds-axes" aria-label="Experiment sampling space">
             <div class="ds-axis">
               <span class="ds-axis-ico" aria-hidden="true">&#128274;</span>
               <span class="ds-axis-name">Security Configuration</span>
@@ -313,28 +313,28 @@
             <span class="ds-axis-op">&equals;</span>
             <div class="ds-axis ds-axis-result">
               <span class="ds-axis-ico" aria-hidden="true">&#10003;</span>
-              <span class="ds-axis-name">Dataset Sample</span>
-              <span class="ds-axis-sub">1 successful sample</span>
+              <span class="ds-axis-name">Successful Experiment</span>
+              <span class="ds-axis-sub">1 successful experiment</span>
             </div>
           </div>
 
           <div class="ds-target">
             <div class="field ds-target-field">
-              <label for="datasetTargetInput">Number of successful samples</label>
+              <label for="datasetTargetInput">Number of successful experiments</label>
               <div class="ds-input-row">
                 <input type="number" id="datasetTargetInput" min="1" step="1" inputmode="numeric" placeholder="e.g. 100">
-                <button type="button" class="run-btn ds-run-btn" id="datasetGenerateBtn">Generate Dataset</button>
+                <button type="button" class="run-btn ds-run-btn" id="datasetGenerateBtn">Start Automated Run</button>
               </div>
               <div class="field-note" id="datasetMaxNote"></div>
-              <div class="field-help">Enter the exact number of samples you need. Failures and interruptions do not count.</div>
+              <div class="field-help">Enter the exact number of successful experiments you need. Failures and interruptions do not count.</div>
               <div class="ds-error is-hidden" id="datasetError" role="alert"></div>
             </div>
           </div>
 
           <div class="ds-status" id="datasetStatus">
             <div class="ds-idle">
-              <div class="ds-idle-title">No active dataset run</div>
-              <div class="ds-idle-sub">Set the exact number of successful samples above and generate. The backend builds one plan across both axes and produces the chosen number of successful samples.</div>
+              <div class="ds-idle-title">No active automated run</div>
+              <div class="ds-idle-sub">Set the exact number of successful experiments above and start. The backend builds one plan across both axes and repeats the testbed until the requested number of successful experiments are committed.</div>
             </div>
           </div>
 
@@ -343,7 +343,7 @@
 
     </div>
 
-    <section class="card stats-card" id="statsCard" aria-label="Dataset statistics">
+    <section class="card stats-card" id="statsCard" aria-label="Experiment run statistics">
       <div class="card-heading">
         <span class="head-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -351,11 +351,11 @@
             <path d="M7 15v3M12 10v8M17 6v12"/>
           </svg>
         </span>
-        <h2>Dataset Statistics</h2>
+        <h2>Experiment Run Statistics</h2>
         <span class="head-note">Backend-derived distributions</span>
       </div>
       <div class="card-body stats-body">
-        <div class="stats-empty" id="statsEmpty">Generate a dataset to see its traffic and security posture distributions here. Values always come from the backend plan and results.</div>
+        <div class="stats-empty" id="statsEmpty">Run automated experiments to see their traffic and security posture distributions here. Values always come from the backend plan and results.</div>
         <div class="stats-grid is-hidden" id="statsGrid">
           <div class="dist-col">
             <div class="dist-title">Traffic Distribution</div>
@@ -369,6 +369,72 @@
             <div class="dist-title">Run Summary</div>
             <div class="dist-summary" id="statsSummary"></div>
           </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card evidence-card" id="evidenceCard" aria-label="Experiment evidence and raw PCAP">
+      <div class="card-heading">
+        <span class="head-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 7h16M4 12h16M4 17h10"/>
+            <circle cx="17" cy="17" r="3"/>
+            <path d="M19.5 17.5L21 16"/>
+          </svg>
+        </span>
+        <h2>Experiment Evidence &amp; Raw PCAP</h2>
+        <span class="head-note">Raw observations per experiment</span>
+      </div>
+      <div class="card-body evidence-body">
+        <div class="ev-grid">
+          <div class="ev-item">
+            <span class="ev-item-ico" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="7" width="18" height="12" rx="2"/>
+                <path d="M7 7V5h10v2M10 12l3 2 4-4"/>
+              </svg>
+            </span>
+            <span class="ev-item-title">Raw PCAP Observation</span>
+            <span class="ev-item-sub">One ESP + IKE traffic capture per experiment</span>
+          </div>
+          <div class="ev-item">
+            <span class="ev-item-ico" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 4h16v12H8l-4 4V4z"/>
+                <path d="M8 9h8M8 12h5"/>
+              </svg>
+            </span>
+            <span class="ev-item-title">Ground-Truth Metadata</span>
+            <span class="ev-item-sub">IPsec configuration, security posture, traffic model, outcome</span>
+          </div>
+          <div class="ev-item">
+            <span class="ev-item-ico" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="9"/>
+                <path d="M12 7v5l3 2"/>
+              </svg>
+            </span>
+            <span class="ev-item-title">Experiment Identifier</span>
+            <span class="ev-item-sub">Run ID and experiment ID for every repeated run</span>
+          </div>
+          <div class="ev-item">
+            <span class="ev-item-ico" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 3v18h18"/>
+                <path d="M7 14l4-5 3 3 4-6"/>
+              </svg>
+            </span>
+            <span class="ev-item-title">Traffic Model</span>
+            <span class="ev-item-sub">VoIP / video / messaging / email / web / ICMP</span>
+          </div>
+        </div>
+        <div class="ev-note">
+          <b>Where the raw observations live.</b> Every automated experiment stores its raw PCAP with the run on disk:
+          <code>results/datasets/&lt;run_id&gt;/captures/&lt;sequence&gt;/&lt;experiment_id&gt;.pcap</code>, alongside its
+          ground-truth metadata record. A raw-PCAP download endpoint is a backend follow-up. The
+          <b>Download dataset export (legacy)</b> button exports the legacy dataset archive
+          (features.parquet + metadata.jsonl + manifest.json + README.txt) for compatibility &mdash; a derived feature
+          table, not a raw capture.
         </div>
       </div>
     </section>
@@ -393,7 +459,7 @@
 
   </main>
 
-  <footer class="site-footer">IPsec Testbed &middot; Tunnel / Transport &middot; IPv4 / IPv6 &middot; Dataset generation</footer>
+  <footer class="site-footer">IPsec Testbed &middot; Tunnel / Transport &middot; IPv4 / IPv6 &middot; Manual &amp; automated experiments</footer>
 
   <script src="/static/app.js"></script>
 </body>

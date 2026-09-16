@@ -1913,6 +1913,84 @@ select:disabled {
   margin-top: 4px;
 }
 
+.ds-download-note {
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink-3);
+  text-align: center;
+}
+
+/* ---------- Experiment evidence card ---------- */
+
+.evidence-card {
+  margin-top: 24px;
+}
+
+.evidence-body {
+  padding-top: 18px;
+}
+
+.ev-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.ev-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: #f7f9fc;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  min-width: 0;
+}
+
+.ev-item-ico {
+  color: var(--accent);
+  width: 18px;
+  height: 18px;
+  margin-bottom: 6px;
+}
+
+.ev-item-ico svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.ev-item-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.ev-item-sub {
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.ev-note {
+  margin-top: 14px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  background: #fff;
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.ev-note code {
+  font-size: 11.5px;
+  background: #f0f3f8;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+
 /* posture badges */
 
 .posture-badge {

@@ -939,5 +939,113 @@ class TestTopologyLifecycle(unittest.TestCase):
                 self.assertEqual(mock_deploy.call_args.args[0], "tunnel")
 
 
+class TestTrafficCaptureParameterization(unittest.TestCase):
+    """Traffic/capture inputs are parameterized (RunOptions + per-sample
+    overrides) while the legacy defaults stay byte-identical."""
+
+    def _pipeline_artifacts(self):
+        return {
+            "status": "PASS",
+            "experiment_id": "any",
+            "metadata": {"experiment_id": "any"},
+            "features": {"packet_count": 1},
+            "traffic_log": "STATS\n",
+            "pcap_path": "/nonexistent/never-read.pcap",
+            "ipsec": {"ike_sa": "ESTABLISHED"},
+            "connectivity": {"status": "PASS"},
+            "runtime_ctx": {},
+            "capture_wan_ip": "192.168.100.1",
+        }
+
+    def test_run_attempt_honors_sample_traffic_overrides(self):
+        from controller.dataset_executor import RunOptions
+        with tempfile.TemporaryDirectory() as tmp:
+            run, plan = make_run_and_plan(tmp, target=1)
+            sample = plan["samples"][0]
+            sample["traffic"] = {
+                "duration": 60,
+                "port": 44444,
+                "capture_filter": "udp port 500 or esp",
+            }
+            exp_id = experiment_id_for(run.id, 1, 1)
+            exp_tmp = Path(tmp) / "attempt-tmp"
+            with patch("controller.campaign.execute_trial_pipeline") as mock_pipeline:
+                mock_pipeline.return_value = self._pipeline_artifacts()
+                outcome = run_attempt(
+                    exp_id, sample, exp_tmp, tmp, run_id=run.id, log=None,
+                )
+                self.assertEqual(outcome["status"], OUTCOME_SUCCESS)
+                called_cfg = mock_pipeline.call_args.args[1]
+                self.assertEqual(called_cfg["traffic"]["profile"], sample["traffic_profile"])
+                self.assertEqual(called_cfg["traffic"]["duration"], 60)
+                self.assertEqual(called_cfg["traffic"]["port"], 44444)
+                self.assertEqual(called_cfg["traffic"]["capture_filter"], "udp port 500 or esp")
+
+    def test_run_attempt_defaults_without_overrides(self):
+        from controller.capture import DEFAULT_CAPTURE_FILTER
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run, plan = make_run_and_plan(tmp, target=1)
+            sample = plan["samples"][0]
+            exp_id = experiment_id_for(run.id, 1, 1)
+            exp_tmp = Path(tmp) / "attempt-tmp"
+            with patch("controller.campaign.execute_trial_pipeline") as mock_pipeline:
+                mock_pipeline.return_value = self._pipeline_artifacts()
+                run_attempt(
+                    exp_id, sample, exp_tmp, tmp, run_id=run.id, log=None,
+                )
+                called_cfg = mock_pipeline.call_args.args[1]
+                self.assertEqual(called_cfg["traffic"], {
+                    "profile": sample["traffic_profile"],
+                    "duration": 30.0,
+                    "port": 20000,
+                    "capture_filter": DEFAULT_CAPTURE_FILTER,
+                })
+
+    def test_execute_dataset_run_forwards_run_options(self):
+        from controller.dataset_executor import RunOptions
+        seen = []
+
+        def capturing_run_attempt(experiment_id, sample, tmp_dir, results_root,
+                                  run_id=None, log=None, reuse=None):
+            seen.append(dict(sample.get("traffic") or {}))
+            pcap = Path(tmp_dir) / "capture.pcap"
+            tmp_dir = Path(tmp_dir)
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            pcap.write_bytes(b"\xd4\xc3\xb2\xa1" + b"\x00" * 48)
+            return {
+                "status": OUTCOME_SUCCESS,
+                "experiment_id": experiment_id,
+                "metadata": {
+                    "experiment_id": experiment_id,
+                    "sequence": sample["sequence"],
+                    "security_posture": sample["security_posture"],
+                    "traffic_profile": sample["traffic_profile"],
+                    "status": "PASS",
+                },
+                "features": {"packet_count": 1},
+                "traffic_log": "STATS\n",
+                "pcap_path": str(pcap),
+                "connectivity": {"status": "PASS"},
+                "ipsec": {"ike_sa": "ESTABLISHED", "child_sa": "INSTALLED"},
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run, _ = make_run_and_plan(tmp, target=2)
+            opts = RunOptions(duration=45, port=40000, capture_filter="esp or ah")
+            completed = execute_dataset_run(
+                tmp, run.id,
+                run_attempt_fn=capturing_run_attempt,
+                cleanup_fn=FakeCleanup(),
+                run_options=opts,
+            )
+            self.assertEqual(completed.status, STATUS_COMPLETED)
+            self.assertEqual(len(seen), 2)
+            for traffic in seen:
+                self.assertEqual(traffic["duration"], 45.0)
+                self.assertEqual(traffic["port"], 40000)
+                self.assertEqual(traffic["capture_filter"], "esp or ah")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
