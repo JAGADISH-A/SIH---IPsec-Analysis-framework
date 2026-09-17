@@ -16,9 +16,12 @@ topology:
       kind: linux
       image: ipsec-test-gateway:6.0.3
       privileged: true
+      env:
+        AUDIT_TAP_IFACE: "eth2"
       cmd: /bin/sh -c "/usr/local/bin/gw-entrypoint.sh"
       binds:
         - ../../scripts/gw-entrypoint.sh:/usr/local/bin/gw-entrypoint.sh
+        - ../../scripts/audit-tap-setup.sh:/usr/local/bin/audit-tap-setup.sh
         - ../../configs/gw-a/swanctl:/usr/local/etc/swanctl
       exec:
         - ip addr add 10.10.1.1/24 dev eth1
@@ -44,6 +47,17 @@ topology:
         - sysctl -w net.ipv4.ip_forward=1
         - sysctl -w net.ipv6.conf.all.forwarding=1
 
+    br-wan:
+      kind: bridge
+
+    sensor:
+      kind: linux
+      image: ipsec-test-gateway:6.0.3
+      cmd: /bin/sh -c "sleep infinity"
+      exec:
+        - sysctl -w net.ipv4.ip_forward=0
+        - sysctl -w net.ipv6.conf.all.forwarding=0
+
     host-b:
       kind: linux
       image: ipsec-test-host:24.04
@@ -58,8 +72,13 @@ topology:
     # LAN-A
     - endpoints: ["host-a:eth1", "gw-a:eth1"]
 
-    # WAN
-    - endpoints: ["gw-a:eth2", "gw-b:eth2"]
+    # WAN: transparent L2 segment (bridge br-wan, root netns)
+    #   eth1 <- gw-a:eth2 (192.168.100.1)
+    #   eth2 <- gw-b:eth2 (192.168.100.2)
+    #   eth3 <- sensor:eth1 (passive mirror listener, no IP, no forwarding)
+    - endpoints: ["gw-a:eth2", "br-wan:eth1"]
+    - endpoints: ["gw-b:eth2", "br-wan:eth2"]
+    - endpoints: ["sensor:eth1", "br-wan:eth3"]
 
     # LAN-B
     - endpoints: ["gw-b:eth1", "host-b:eth1"]
