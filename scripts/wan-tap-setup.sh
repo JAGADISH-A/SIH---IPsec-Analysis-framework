@@ -1,26 +1,41 @@
 #!/usr/bin/env bash
 #
-# wan-tap-setup.sh - passive middle-link mirror for the ipsec lab WAN segment.
+# wan-tap-setup.sh - passive GW-A WAN-side mirror feeding the XDP sensor.
 #
-# The lab WAN is now a transparent L2 segment: Linux bridge `br-wan` created in
-# the HOST (root) network namespace by scripts/deploy-ipsec.sh. Its members are
+# The observation point for the live XDP sensor is moved from the br-wan
+# middle-link (both dataplane members) to the WAN-facing side of GW-A only:
 #
-#   br-wan:eth1  <-  clab-ipsec-gw-a:eth2   (192.168.100.1)
-#   br-wan:eth2  <-  clab-ipsec-gw-b:eth2   (192.168.100.2)
-#   br-wan:eth3  <-  clab-ipsec-sensor:eth1 (passive mirror listener)
+#     GW-A eth2 (192.168.100.1)
+#       |  copy-only passive mirror (tc mirred ... mirror)
+#       v
+#     br-wan:eth1 = root-netns peer of gw-a:eth2  (source hook: ingress + egress)
+#       |  mirred copies -> br-wan:eth3
+#       v
+#     clab-ipsec-sensor:eth1  (dedicated sink; XDP/eBPF reads it)
 #
-# This script installs an explicit L2 SPAN-style mirror on the two dataplane
-# bridge members (ingress side) that copies BOTH directions into the
-# sensor-facing member br-wan:eth3:
+# Mirror source hook: the root-netns bridge member `br-wan:eth1`, which is the
+# peer veth of `gw-a:eth2`.  Because that member sits on the WAN side of GW-A:
 #
-#   gw-a -> gw-b : tc mirred mirror of ingress on br-wan:eth1
-#   gw-b -> gw-a : tc mirred mirror of ingress on br-wan:eth2
+#   ingress on br-wan:eth1  == frames GW-A transmits toward the WAN (A -> B)
+#   egress  on br-wan:eth1  == frames the WAN delivers toward GW-A (B -> A)
+#
+# Both hooks are mirrored copy-only into the sensor-facing member `br-wan:eth3`
+# (SPAN semantics).  The XFRM/plaintext question is unchanged from the previous
+# middle-link tap: these frames are the encrypted ESP payloads on the wire; any
+# plaintext artifacts can only appear INSIDE gw-a's netns and are intentionally
+# not part of this feed (verified empirically in the validation report).
 #
 # The mirror is copy-only (`mirred egress mirror`). It never redirects, drops,
 # or alters the original frames: gw-a <-> gw-b continues directly through the
-# bridge. The sensor-facing interface is receive-only from the WAN dataplane's
-# perspective (sensor has no IP, no routes, forwarding disabled, charon not
-# running).
+# bridge.  The sensor-facing member is a dedicated sink:
+#
+#   - isolated on, learning off, flood off, mcast_flood off, bcast_flood off
+#     so the bridge NEVER floods/forwards dataplane frames to it (sensor only
+#     ever sees the explicit mirred copies - no duplicates, no re-injection);
+#   - sensor has no IP, no routes, forwarding disabled, charon not running.
+#
+# The gw-b leg (br-wan:eth2) carries NO mirror anymore; any leftover clsact
+# from the previous middle-link provisioning is removed.
 #
 # Idempotent: safe to re-run after every deploy / container re-create.
 # Fail-safe: exits non-zero (without touching the dataplane) if the topology
@@ -65,7 +80,7 @@ root_member() { # $1 container iface e.g. gw-a:eth2 -> prints root netns dev
     printf '%s' "$dev"
 }
 
-echo "== [$BRIDGE] passive middle-link mirror provisioning =="
+echo "== [$BRIDGE] GW-A WAN-side mirror provisioning =="
 
 # --- 0. all lab containers up
 for n in gw-a gw-b sensor; do
@@ -101,9 +116,9 @@ for spec in "${NODES[@]}"; do
     echo "  $node:$ifc  ->  root netns '$dev' ensl. $BRIDGE (ifindex $dev_idx)"
 done
 
-DA=${DEV[gw-a]}   # mirrors gw-a -> gw-b (source of WAN traffic from gw-a)
-DB=${DEV[gw-b]}   # mirrors gw-b -> gw-a
-DS=${DEV[sensor]} # sensor-facing member (receives BOTH mirrored directions)
+DA=${DEV[gw-a]}   # WAN-side observation point (peer of gw-a:eth2) - mirror source
+DB=${DEV[gw-b]}   # no mirror on this leg anymore (cleanup target)
+DS=${DEV[sensor]} # sensor-facing sink member (receives the mirrored copies)
 
 [ "$DA" != "$DS" ] && [ "$DB" != "$DS" ] || die "mirror source/target resolved to the same device"
 
@@ -114,29 +129,52 @@ for d in "$DA" "$DB" "$DS"; do
 done
 docker exec "$PREFIX-sensor" ip link set dev eth1 mtu "$MTU"
 
-# --- 4. explicit L2 mirror (SPAN semantics) - copy only, BOTH directions
-mirror_into_sensor() { # $1 source bridge member -> copies its ingress to $DS
+# --- 4. sensor member becomes a dedicated sink: isolated + all floods/learning
+#        disabled so the ONLY frames it ever receives are the explicit mirred
+#        copies below (no bridge flood duplicates, no re-injection possible).
+#        (Empirically verified that `isolated on` alone does NOT stop floods;
+#        the flood/learning flags must be off too.)
+bridge link set dev "$DS" isolated on
+bridge link set dev "$DS" learning off
+bridge link set dev "$DS" flood off
+bridge link set dev "$DS" mcast_flood off
+bridge link set dev "$DS" bcast_flood off
+
+# --- 5. explicit GW-A WAN-side mirror (SPAN semantics) - copy only, BOTH
+#        directions from the single WAN-side hook at GW-A.
+#
+#        ingress on DA  == GW-A -> WAN  (A -> B)
+#        egress  on DA  == WAN  -> GW-A (B -> A)
+mirror_into_sensor() { # $1 source bridge member -> copies ing+eg to $DS
     local src="$1"
     # idempotent: drop any existing clsact/filters, then re-add cleanly
     tc qdisc del dev "$src" clsact 2>/dev/null || true
     tc qdisc add dev "$src" clsact
     tc filter add dev "$src" ingress prio 1 protocol all matchall \
         action mirred egress mirror dev "$DS"
-    echo "  [mirror] ingress of $src  ->  mirror copy -> $DS"
+    tc filter add dev "$src" egress prio 1 protocol all matchall \
+        action mirred egress mirror dev "$DS"
+    echo "  [mirror] ingress+egress of $src  ->  mirror copies -> $DS"
 }
 
-mirror_into_sensor "$DA"   # direction: gw-a -> gw-b
-mirror_into_sensor "$DB"   # direction: gw-b -> gw-a
+# --- 6. remove the old gw-b leg mirror (previous middle-link deployment)
+if tc qdisc show dev "$DB" | grep -q clsact; then
+    tc qdisc del dev "$DB" clsact 2>/dev/null || \
+        die "could not remove leftover clsact on $DB (old middle-link mirror)"
+    echo "  [cleanup] removed old middle-link mirror on $DB"
+fi
 
-# --- 5. verify
+mirror_into_sensor "$DA"   # GW-A WAN-side; captures A->B (ingress) and B->A (egress)
+
+# --- 7. verify
 echo
 echo "== [$BRIDGE] verification =="
 echo "-- bridge members --"
-bridge link show master "$BRIDGE"
+bridge -d link show master "$BRIDGE"
 
 echo
-echo "-- sensor-facing member state (receive-only, copies land here) --"
-ip -d link show "$DS"
+echo "-- sensor-facing member state (dedicated sink, receive-only) --"
+ip -d link show "$DS" | sed -n '1,3p'
 docker exec "$PREFIX-sensor" ip -d link show eth1 | sed -n '1,2p'
 docker exec "$PREFIX-sensor" sh -c '
     echo "  sensor IPv4 addrs: $(ip -4 -o addr show eth1 | wc -l)"
@@ -147,12 +185,19 @@ docker exec "$PREFIX-sensor" sh -c '
 
 echo
 echo "-- mirror filters (tc, root netns) --"
-for d in "$DA" "$DB"; do
-    echo "[$d]"
-    tc -s filter show dev "$d" ingress
-done
+echo "[$DA] (GW-A WAN-side observation point)"
+tc -s filter show dev "$DA" 2>/dev/null
+
+echo
+echo "-- no mirror filters on the gw-b leg --"
+if tc qdisc show dev "$DB" | grep -q clsact; then
+    echo "WARNING: $DB still has a clsact qdisc - expected none"
+else
+    echo "[$DB] clean (no clsact / no mirror)"
+fi
 
 echo
 echo "== [$BRIDGE] mirror ready =="
 echo "  capture BOTH directions on the sensor interface:"
 echo "    docker exec $PREFIX-sensor tcpdump -en -i eth1"
+echo "  (the audit tap on gw-a eth2 is unaffected)"

@@ -13,6 +13,14 @@
 # it.  A mirror failure aborts the wrapper (non-zero) but leaves the lab up and
 # the gw-a <-> gw-b dataplane untouched.
 #
+# Observation point:  the mirror observation point is the WAN-facing side of
+# GW-A — specifically the root-netns peer of gw-a:eth2 (br-wan:eth1).  Both
+# ingress (A -> B) and egress (B -> A) on that single member are mirrored
+# copy-only into the sensor-facing member br-wan:eth3.  The old middle-link
+# mirror (mirrored ingress on BOTH gw-a and gw-b dataplane members) was
+# removed during the WAN-side migration; see wan-tap-setup.sh header for
+# details.
+#
 # Why --reconfigure (forced fresh deploy)?  Since containerlab 0.79, `deploy`
 # CONVERGES an already-deployed lab in place (same reconcile engine as `apply`).
 # `br-wan` is a root-namespace bridge that containerlab treats as externally
@@ -70,7 +78,7 @@ case "$ACTION" in
         # Remove the WAN bridge ONLY if this lab is its last user.  An unrelated
         # bridge/reuse of the name must never be destroyed by accident.
         if ip link show "$BRIDGE" >/dev/null 2>&1; then
-            members=$(bridge link show master "$BRIDGE" 2>/dev/null | grep -v '^$' | wc -l)
+            members=$(bridge link show master "$BRIDGE" 2>/dev/null | grep -vc '^$' || true)
             if [ "$members" -eq 0 ]; then
                 ip link del "$BRIDGE"
                 echo "[deploy] destroyed (lab + $BRIDGE)"

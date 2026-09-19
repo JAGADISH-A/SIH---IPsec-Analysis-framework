@@ -73,9 +73,11 @@ topology:
     - endpoints: ["host-a:eth1", "gw-a:eth1"]
 
     # WAN: transparent L2 segment (bridge br-wan, root netns)
-    #   eth1 <- gw-a:eth2 (192.168.100.1)
+    #   eth1 <- gw-a:eth2 (192.168.100.1)  [mirror source: gw-a WAN side]
     #   eth2 <- gw-b:eth2 (192.168.100.2)
-    #   eth3 <- sensor:eth1 (passive mirror listener, no IP, no forwarding)
+    #   eth3 <- sensor:eth1 (passive dedicated sink, no IP, no forwarding)
+    # Mirror: ingress+egress on eth1 (gw-a peer) only, feeding eth3.
+    # eth3 is isolated (no bridge floods) - only mirred copies arrive.
     - endpoints: ["gw-a:eth2", "br-wan:eth1"]
     - endpoints: ["gw-b:eth2", "br-wan:eth2"]
     - endpoints: ["sensor:eth1", "br-wan:eth3"]

@@ -204,8 +204,13 @@ inferred. Tests 16 and 17 assert this.
 Confirmed unchanged:
 
 - containerlab topology and gateway configs
-- passive TAP/mirror (still `eth1 ingress → mirred mirror → eth3`,
-  `eth2 ingress → mirred mirror → eth3`; mirror stats show 0 drops)
+- passive TAP/mirror (observation point migrated to the GW-A WAN side: the live
+  XDP sensor now receives copy-only mirred copies of the WAN-facing peer of
+  `gw-a:eth2` — ingress (A → B) + egress (B → A) on `br-wan:eth1` → `br-wan:eth3`
+  → `sensor:eth1`; the old middle-link mirror on both dataplane members is gone;
+  the sensor member is isolated with floods/learning disabled so it sees only
+  the explicit mirror copies; mirror stats show 0 drops. The existing gw-a
+  audit tap is a separate observation path and is unaffected)
 - StrongSwan configuration
 - existing XDP classifier and ring-buffer event struct (`xdp_monitor_common.h`,
   `xdp_monitor.bpf.c`, `xdp_monitor.c`)
