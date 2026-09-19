@@ -51,11 +51,6 @@ BURST_WINDOWS_S = (0.010, 0.050, 0.200)
 # IKE is carried over UDP 500 (and UDP 4500 under NAT-T).  These ports are
 # captured alongside ESP so the negotiation is observable in the dataset.
 IKE_UDP_PORTS = (500, 4500)
-# IKEv2 exchange types (RFC 7296) used for the exchange-type breakdown.
-IKEV2_EXCHANGE_IKE_SA_INIT = 34
-IKEV2_EXCHANGE_IKE_AUTH = 35
-IKEV2_EXCHANGE_CREATE_CHILD_SA = 36
-IKEV2_EXCHANGE_INFORMATIONAL = 37
 
 
 def read_pcap(path):
@@ -164,6 +159,10 @@ def read_pcap_ike(path):
     record type with their own size/timing/exchange statistics.  Parse
     failures are degraded the same way as the ESP path (frame skipped), never
     raised.
+
+    The ``version`` and ``exchange_type`` fields are provenance only: since
+    feature-schema v2 they are no longer emitted as ML features (see
+    ``_ike_summary``) because the live XDP sensor cannot parse the IKE header.
     """
     with open(path, "rb") as fh:
         header = fh.read(24)
@@ -372,40 +371,30 @@ def _burst_stats(timestamps, window=DEFAULT_BURST_WINDOW_S):
     }
 
 
-def extract_features(path, burst_window=DEFAULT_BURST_WINDOW_S,
-                     capture_ip=None, nominal_duration=None):
-    """Extract the numerical features from an encrypted IPsec capture.
+def summarize_capture(packets, ike_sizes, burst_window=DEFAULT_BURST_WINDOW_S,
+                      capture_ip=None, nominal_duration=None):
+    """Compute the 59-feature record from already-parsed capture data.
 
-    Parameters
-    ----------
-    path : str
-        PCAP file to parse.
-    burst_window : float, optional
-        Gating window for the *legacy* single-window burst fields.
-    capture_ip : str, optional
-        Verified WAN address of the capture point; used to classify each
-        frame as outbound (outer src == capture point) or inbound (outer
-        dst == capture point).  When omitted, directional fields are zero.
-    nominal_duration : float, optional
-        Intended experiment (traffic) duration.  When provided the statistics
-        are restricted to the ``nominal_duration``-sized window containing the
-        most packets (the main traffic burst), discarding pre-traffic listener
-        probes and trailing TCP teardown.  When omitted the whole capture is
-        used.
+    ``packets`` is the ESP-frame list produced by :func:`read_pcap` (each item
+    is ``(timestamp_seconds, incl_len, ip_total, src, dst)``) and ``ike_sizes``
+    is the list of ``ip_total`` sizes of the IKE datagrams (UDP 500/4500) as
+    produced by ``read_pcap_ike``.  Everything downstream is pure feature math
+    with no dependency on a PCAP file, so the exact same record is recomputable
+    from the live XDP event stream (``controller/live_features.py``) once each
+    frame's L2 ``len`` is converted to the L3 ``ip_total`` by subtracting the
+    14-byte Ethernet header.  This is the single computation shared by the
+    training pipeline and the live bridge; ``extract_features`` is a thin
+    PCAP-reading wrapper around it.
 
-    Unreadable/empty/invalid captures are handled safely: the caller receives
-    a well-formed feature dict with ``packet_count == 0`` instead of an
-    exception, so a trial can fail cleanly at the "no traffic captured" check.
+    ``capture_ip`` is the verified WAN address of the capture point; frames
+    whose outer src equals it are outbound, outer dst equals it are inbound
+    (passing None leaves directional fields zero).  ``nominal_duration``, when
+    provided, restricts the statistics to the ``nominal_duration``-sized window
+    containing the most packets (see :func:`extract_features`).
+
+    Empty input is handled safely: a well-formed all-zero feature dict is
+    returned so callers can detect "no traffic" without special-casing.
     """
-    try:
-        packets = read_pcap(path)
-    except (ValueError, OSError):
-        packets = []
-    try:
-        ike_records = read_pcap_ike(path)
-    except (ValueError, OSError):
-        ike_records = []
-
     count = len(packets)
     if count and nominal_duration:
         timestamps_all = [p[0] for p in packets]
@@ -473,47 +462,88 @@ def extract_features(path, burst_window=DEFAULT_BURST_WINDOW_S,
         stats = _burst_stats(timestamps, window=window)
         features[f"burst_count_{ms}ms"] = stats["burst_count"]
         features[f"mean_burst_packets_{ms}ms"] = stats["mean_burst_packets"]
-    features.update(_ike_summary(ike_records))
+    features.update(_ike_summary(ike_sizes))
     return features
 
 
-def _ike_summary(records):
+def extract_features(path, burst_window=DEFAULT_BURST_WINDOW_S,
+                     capture_ip=None, nominal_duration=None):
+    """Extract the numerical features from an encrypted IPsec capture.
+
+    Parameters
+    ----------
+    path : str
+        PCAP file to parse.
+    burst_window : float, optional
+        Gating window for the *legacy* single-window burst fields.
+    capture_ip : str, optional
+        Verified WAN address of the capture point; used to classify each
+        frame as outbound (outer src == capture point) or inbound (outer
+        dst == capture point).  When omitted, directional fields are zero.
+    nominal_duration : float, optional
+        Intended experiment (traffic) duration.  When provided the statistics
+        are restricted to the ``nominal_duration``-sized window containing the
+        most packets (the main traffic burst), discarding pre-traffic listener
+        probes and trailing TCP teardown.  When omitted the whole capture is
+        used.
+
+    This is a thin PCAP-reading wrapper over :func:`summarize_capture`, which
+    holds the actual feature computation shared with the live bridge.
+    Unreadable/empty/invalid captures are handled safely here: a well-formed
+    feature dict with ``packet_count == 0`` is returned instead of an
+    exception, so a trial can fail cleanly at the "no traffic captured" check.
+    """
+    try:
+        packets = read_pcap(path)
+    except (ValueError, OSError):
+        packets = []
+    try:
+        ike_records = read_pcap_ike(path)
+    except (ValueError, OSError):
+        ike_records = []
+
+    return summarize_capture(
+        packets,
+        ike_sizes=[r[2] for r in ike_records],
+        burst_window=burst_window,
+        capture_ip=capture_ip,
+        nominal_duration=nominal_duration,
+    )
+
+
+def _ike_summary(sizes):
     """A distinct IKE record block alongside the ESP features.
 
     IKE frames are never folded into the ESP statistics: they are reported
-    separately (count, bytes, sizes and per-exchange-type counts) so a
-    capture that includes the negotiation can be distinguished from an
-    ESP-only one and inspected per exchange.  When no IKE frames are present
-    every field is zero / the version is 0.
+    separately (count, bytes and size statistics) so a capture that includes
+    the negotiation can be distinguished from an ESP-only one and inspected
+    per exchange.  ``sizes`` is the list of IKE ``ip_total`` frame sizes (the
+    shared caller passes the ``ip_total`` slice of ``read_pcap_ike`` records).
+    The per-exchange-type breakdown and the observed IKE version are
+    deliberately NOT part of the ML feature vector: the live WAN-side XDP
+    sensor classifies IKE / IKE-NAT-T by transport port and exposes a
+    per-packet length, but never parses the IKE payload header, so
+    ``ike_version`` and the four ``ike_*_count`` exchange-type columns would
+    not be reproducible from the live feed at inference time.  Training
+    features must be obtainable by the same passive sensor, so the extractor
+    stops emitting them (feature-schema v2).  The full exchange breakdown is
+    still recoverable from the stored PCAP via ``read_pcap_ike`` when needed
+    as provenance.  When no IKE frames are present every field is zero.
     """
-    if not records:
+    if not sizes:
         return {
             "ike_packet_count": 0,
             "ike_datagram_bytes": 0,
             "ike_min_packet_size": 0,
             "ike_max_packet_size": 0,
             "ike_mean_packet_size": 0.0,
-            "ike_sa_init_count": 0,
-            "ike_auth_count": 0,
-            "ike_create_child_sa_count": 0,
-            "ike_informational_count": 0,
-            "ike_version": 0,
         }
-    sizes = [r[2] for r in records]
-    versions = {r[6] for r in records if r[6] in (1, 2)}
-    version = max(versions) if versions else 0
-    exchanges = Counter(r[7] for r in records)
     return {
-        "ike_packet_count": len(records),
+        "ike_packet_count": len(sizes),
         "ike_datagram_bytes": sum(sizes),
         "ike_min_packet_size": min(sizes),
         "ike_max_packet_size": max(sizes),
         "ike_mean_packet_size": round(statistics.mean(sizes), 3),
-        "ike_sa_init_count": exchanges.get(IKEV2_EXCHANGE_IKE_SA_INIT, 0),
-        "ike_auth_count": exchanges.get(IKEV2_EXCHANGE_IKE_AUTH, 0),
-        "ike_create_child_sa_count": exchanges.get(IKEV2_EXCHANGE_CREATE_CHILD_SA, 0),
-        "ike_informational_count": exchanges.get(IKEV2_EXCHANGE_INFORMATIONAL, 0),
-        "ike_version": version,
     }
 
 

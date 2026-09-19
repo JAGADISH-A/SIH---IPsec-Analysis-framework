@@ -1,0 +1,269 @@
+# Dataset Generate — End-to-End Inspection Report
+
+Date: 2026-09-19
+Mode: inspection-only (no production code or architecture modified)
+
+The "Dataset Generate" feature surfaced in today's UI as the card **"Automated
+Experiment Run"** with button **"Start Automated Run"** (`datasetGenerateBtn`).
+Per FRONTEND_RELABEL_REPORT.md this is the former "Generate Dataset" button;
+the backend `/dataset-runs` API and all dataset modules are unchanged.
+
+---
+
+## 1. Objective
+
+Determine, by static inspection + inspection of real persisted runs, whether
+the Dataset Generate feature produces a labeled dataset that could train an ML
+model later consumed by the live passive GW-A WAN-side XDP sensor feed, and
+report findings + a recommendation.
+
+## 2. Scope & method
+
+- Read: capture, traffic, features, artifacts, planner, generator, executor,
+  runner, reuse, campaign, dataset API, quality, audit, ipsec_events, api
+  (all `controller/*.py`), XDP monitor + aggregator + state builder
+  (`ebpf/*`), frontend (`index.html`, `app.js`), SCHEMA.md,
+  FRONTEND_RELABEL_REPORT.md, MODULE10_FINAL_LIVE_CHECK.md.
+- Inspected real artifacts under `results/datasets/*`, `results/audit/`,
+  `results/observed-state/`.
+- Ran planner + feature extractor against real pcaps to verify counts,
+  catalogue size, plan distribution, and size semantics.
+- Did NOT run a live generation: each sample destroys/redeploys the shared lab
+  topology and would disturb the currently deployed mirror/XDP monitor. The
+  completed run `dataset-20260916-231246` is used as ground truth instead.
+
+## 3. User path (UI → API)
+
+`index.html` card "Automated Experiment Run" + target input (placeholder 100,
+max from settings) + `app.js`:
+
+1. `loadDatasetSettings()` → `GET /dataset-runs/settings` (max ceiling) → input bounds.
+2. `startDatasetRun(n)` → validates integer in [1, max]; `POST /dataset-runs {target_samples:n}`.
+3. Poll `GET /dataset-runs/{id}` every 2500 ms; render status, sequence/target chip,
+   progress %, traffic/profile chips.
+4. On COMPLETED → stats card (traffic distribution, posture distribution, counts)
+   + legacy download button `GET /dataset-runs/{id}/download`.
+5. Resume via `POST /dataset-runs/{id}/resume`.
+
+Observation: frontend/backend contract is intact; PAUSED state renders a Resume
+control; download only shown post-finalization.
+
+## 4. Backend entry points
+
+`controller/api.py` FastAPI app mounts the dataset router (`dataset_api.py`) at
+`/dataset-runs`, shares `TESTBED_LOCK`, serves static frontend, exposes
+`/experiments*` (manual) beside run polling/resume/results/download/settings.
+Run state lives under `results/datasets/<run_id>/`.
+
+## 5. Sample lifecycle (`generator.py` → `experiment_runner.py`)
+
+Per sample (`build_sample_plan` first):
+
+1. Pick a configuration from `build_catalogue` (posture band × quota rotation) + a
+   traffic profile (quota balanced across the 6 profiles).
+2. Run a Module 3 IPsec experiment (`experiment_runner.run_experiment`): deploy
+   topology for that configuration (mode/family/cipher/integrity/dh/pfs), capture
+   on the gateway's WAN-facing interface with tcpdump, generate traffic for
+   ~30 s, tear down.
+3. Label from the plan (never from traffic): `security_posture`, `traffic_profile`,
+   `configuration_id`.
+4. On success — finalize sample; on failure — record failed and retry up to target.
+
+Container reuse is resolved by `reuse.py` (decides reuse of topology vs
+re-deploy per regression/mutation rules); planner catalogue (Module 2) gates
+which configs are valid (192 of 384 shape candidates accepted).
+
+## 6. Capture point (training)
+
+`capture.py`: `DEFAULT_CAPTURE_FILTER = "udp port 500 or udp port 4500 or esp or ah"`.
+Capture inside the gateway container:
+
+- tunnel (`clab-ipsec-gw-a`), WAN iface 192.168.100.1;
+- transport (`clab-ipsec-transport-host-c`), 192.168.100.3/192.168.100.4.
+
+Interface resolved live via `ip -j addr`; capture uses tcpdump. Each sample
+produces `captures/<seq>/<experiment_id>.pcap` (ESP + IKE only), i.e. the outer
+encrypted stream plus IKE control plane. No inner plaintext application frames
+appear in the training capture (verified on real pcaps; quality report checks
+every frame is ESP or IKE/ICMP).
+
+## 7. Feature extraction (training surface)
+
+`features.extract_features` reads the pcap and emits 64 keys:
+
+- protocol activity counts (esp count, ah, ike packet/datagram counts,
+  `ike_sa_init_count`, `ike_auth_count`, `ike_create_child_sa_count`,
+  `ike_informational_count`, `ike_version`);
+- size/timing statistics (packet_count, total_bytes, mean/min/max/sizes,
+  percentiles, packets_per_second, bytes_per_second, mean_interarrival,
+  jitter/std-dev/IAT percentiles);
+- direction split (outbound/inbound counts+bytes) keyed by outer src/dst vs
+  capture-point IP;
+- burst analysis (burst_count, mean/max burst duration, total burst bytes);
+- entropy metrics (byte/column entropy).
+
+No payload bytes are ever exposed. SCHEMA.md documents 54 feature columns
+(14 int + 40 double); the code carries 64 (22 int + 42 float) — the code is
+authoritative and is cross-checked against the live-feature keys via
+`assert_feature_keys`. **Doc drift confirmed** (SCHEMA.md is stale).
+
+## 8. Artifacts (what a model would train on)
+
+`dataset_artifacts.py` finalizes:
+
+- `features.parquet` (schema v1; row = features + linkage columns);
+- `metadata.jsonl` (ground truth: posture, profile, configuration columns);
+- `README.txt`, `manifest.json`, `staging/successful_samples.jsonl`;
+- `finalization.json` (status, parquet_rows, metadata_records).
+
+Verified persisted run `dataset-20260916-231246`: COMPLETED, 5/5 samples,
+parquet_rows 5, metadata_records 5, 5 pcaps + finalization.json. A second run
+`acc-eng-01` completed 6/6. `dataset-20260916-122612` remained CREATED (0
+executed) — a stale/aborted run, not a data problem.
+
+## 9. Labels & ground truth
+
+Three columns per sample: `traffic_profile` (6: voip/video/messaging/email/web/icmp),
+`security_posture` (5 bands, MODULE2/status: STRONG/GOOD/MEDIUM/WEAK/WORST),
+`configuration_id` (atomic string like
+`tunnel-ipv4-aes128gcm16-none-modp4096-true`). Labels come from the Module 2
+plan by deterministic sequence; traffic characteristics never alter the posture
+label (README asserts this). No leakage: features are observation-only, labels
+plan-only.
+
+## 10. Planner catalogue & plan reproducibility
+
+`build_catalogue` over mode × family × cipher × integrity × dh-group × pfs:
+384 shape candidates, of which 192 accepted (52 MEDIUM, 48 WEAK, 44 GOOD, 12
+STRONG, 36 WORST) and 192 rejected by IPsec validity (e.g. integrity `none`
+only valid with GCM; nonce/auth combos). `build_sample_plan(N)` is
+deterministic **across runs** (re-verified: 5-sample plan reproduced
+identically; N=100 balances posture 20/20/20/20/20 and traffic quotas
+17/17/17/17/16/16). Plan per posture band → good class balance for training.
+
+## 11. Determinism of the data path
+
+Config orders, posture assignment, traffic quotas, and sample ids are derived
+from a seeded plan, so the dataset is reproducible. Note: kind
+per-experiment traffic models (CBR-ish VoIP/video etc.) are synthetic and
+fixed at 30 s / port 20000; this is a controlled-lab corpus, not a real-traffic
+capture — generalizing to arbitrary live workloads requires caution.
+
+## 12. Live observation surface (deployment)
+
+`xdp_monitor.bpf.c` on the WAN mirror emits per-packet events
+(`results/observed-state/live_events_wan_side_new.jsonl`): ESP(8)
+`ts,type,src,dst,proto,len,spi,seq` (no sport/dport on ESP). `len` is
+`data_end - data`, i.e. **L2 frame length including the 14-byte Ethernet
+header** (line 57). Windows (`live_windows_*.jsonl`) are 100 ms aggregates:
+counts, min/max/avg size, per-direction packets/bytes, unique SPI,
+first/last/highest ESP sequence, pps, bps. The state builder
+(`ipsec_state_builder.py`) maintains per-SPI ESP state, endpoints, tunnel/active
+flags and deliberately refuses to infer "ike_sa_established".
+
+## 13. Audit/TShark path (deep parse, old path)
+
+`audit_observer.py` (legacy TShark-on-audit-tap0 path) → `ipsec_events.py`
+parses the IKE payload: `ike_exchange_type` (SA_INIT/AUTH/CREATE_CHILD/
+INFORMATIONAL), `message_id`, plus ESP spi/seq/direction and `frame_length`
+(L2). `results/audit/events.jsonl` confirms: direction inbound/outbound,
+`frame_length` 154, exchange types present. TShark is the only component that
+recovers IKE exchange types end-to-end.
+
+## 14. Train ↔ deploy semantic alignment
+
+| aspect | training (dataset) | live XDP feed | aligned? |
+|---|---|---|---|
+| observation point | gw-a WAN iface, outer ESP+IKE | host WAN mirror, same outer frames | yes (same wire) |
+| size unit | `ip_total` (L3) | `len` = L2 frame incl. header | **no, +14 bytes** |
+| direction | outer src/dst vs capture IP | src/dst present | yes |
+| timing | pcap wall clock, IAT fine-grained | kernel ns ts, per-event | yes |
+| IKE exchange types | parsed from header | not parsed (only IKE/IKE-NAT-T + sport/dport) | **no** |
+| window semantics | per-trial 30 s dense window | continuous 100 ms windows | **no** |
+| feature-computing stage | offline pcap extractor | aggregator + state builder only | **no** |
+
+Concretely: `features.py` uses IPv4 `ip_total`; pcap tuple `(incl=154,
+ip_total=140)` ⇒ L2 totals exactly +14 over L3. Live `len` equals
+`incl_len` (L2). So a deployed feature stage fed by the XDP stream must either
+parse outer IPv4 `total_length` or subtract 14 — otherwise
+mean/percentile sizes, `total_bytes`, and the `<300`/`>1400` packet-ratio
+thresholds are shifted. The IKE exchange-count features
+(`ike_*_count`, `ike_version`) cannot be produced from the XDP feed as shipped
+(it does not parse UDP 500/4500 payloads); the audit/TShark path can, but that
+is the old path and is not wired to the WAN-side sensor. A live feature
+extractor producing the exact 64-key vector does not exist yet — even with
+correct sizes, window alignment (fixed 30 s sliding vs continuous windows)
+must be defined before inference can match training.
+
+## 15. What already works (evidence)
+
+- Planning, quota rotation, catalogue validity, Module 2 posture mapping.
+- Full generate→capture→extract→finalize pipeline executed to completion on the
+  live lab (5/5 and 6/6 runs with parquet + metadata + pcap evidence).
+- Determinism and balance of the plan; no feature/label leakage.
+- Aggregator/state-builder unit suites pass (aggregator 19, state builder 25);
+  controller suite 359 green per FRONTEND_RELABEL_REPORT.md.
+
+## 16. Gaps found in inspection
+
+1. **Size semantics mismatch (+14)**: training uses L3 `ip_total`, live XDP
+   `len` is L2. Must be normalized in a deploy-time feature stage (parse outer
+   IPv4 header, or train on L2 semantics).
+2. **IKE exchange types missing from XDP feed**: `ike_sa_init/auth/create_child/
+   informational/version` cannot be computed from current events. Options: add
+   IKE payload parsing to the sensor (TSHARK does it), or drop those columns.
+3. **No live 64-feature extractor**: only 100 ms window aggregator + per-SPI
+   state builder exist; nothing emits the training-compatible feature vector
+   from the live stream; windowing policy unspecified.
+4. **Schema doc drift**: SCHEMA.md says 54 features; code emits 64.
+5. **pyarrow on host Python**: importing `dataset_artifacts` on this host fails
+   (`ModuleNotFoundError: pyarrow`); the lab/venv used to produce the parquet
+   has it. Keep the controller env pinned for any generation/inference.
+6. **Stale run artifact**: `dataset-20260916-122612` left in CREATED
+   (0/… executed) — cosmetic; consider cleanup/marking.
+
+## 17. Risks of running a live generation now
+
+Every sample re-deploys the shared containerlab topology (destroy/redeploy per
+configuration changes via `reuse.py`). A generate run would therefore tear down
+and rebuild the WAN mirror/XDP monitor context being inspected today and holds
+`TESTBED_LOCK`. Recommendation: run generation in a maintenance window, after
+the live-lab verification, not concurrently.
+
+## 18. Feasibility verdict
+
+Training a model on this dataset is sound for the observables the testbed
+captures (outer encrypted stream + IKE control plane), with deterministic,
+balanced, leak-free labels and reproducible data. Deploying that model on the
+live WAN-side XDP feed is architecturally plausible — same observation wire,
+same outer frames — but today it is blocked by the three gaps in §16
+(size L2 vs L3, no IKE exchange types in the feed, no live feature-extractor
+stage). None is fatal; all are additive (parse outer IP total length / optionally
+IKE payload; build a live 64-feature stage with a defined window).
+
+## 19. Next milestone candidate scope (if allowed to change code)
+
+1. Add a live feature-extractor over the XDP event stream producing the exact
+   64-key vector (with ip_total semantics = L3), given a window (e.g. rolling
+   30 s).
+2. Normalize training capture to L3 size (already `ip_total`) and add a
+   regression test pinning `len(L2) − ip_total(L3) = 14` on real pcaps.
+3. Decide IKE exchange columns: implement IKE payload parse in the XDP path
+   (reuse ipsec_events-style parsing off the event stream) or drop
+   `ike_*_count`/`ike_version` from the training schema.
+4. Fix SCHEMA.md to the 64-column schema; align FEATURE_COLUMNS.
+5. Wire a model-consume demo: train script reading `features.parquet` → live
+   feed → window feature stage → prediction.
+
+## 20. Recommendation for next milestone
+
+Keep the "Dataset Generate" (Automated Experiment Run) endpoint exactly as is —
+terminology and format. **Recommended next milestone: build the live feature
+stage that mirrors `features.extract_features` on the WAN-side XDP event
+stream, add the +14 L2/L3 normalization, and close the IKE exchange-type gap**
+(either extend the sensor to parse UDP 500/4500 IKE headers, reusing the
+`ipsec_events`/TShark parsing rules, or remove those columns from the training
+schema). Do NOT run a live generate during this inspection window to preserve
+the deployed lab; schedule any generation for the maintenance window with
+target ≥ 25 samples for a usable per-posture class balance.
+DATASET_GENERATE_AUDIT_REPORT.md

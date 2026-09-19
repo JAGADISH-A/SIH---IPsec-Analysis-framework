@@ -734,12 +734,12 @@ class TestEndToEnd(unittest.TestCase):
             run_with_collector(tmp, run)
             record = read_staging(run)[0]
             self.assertEqual(record["dataset_schema_version"], "v1")
-            self.assertEqual(record["feature_schema_version"], "v1")
+            self.assertEqual(record["feature_schema_version"], "v2")
             finalize_dataset(tmp, run.id)
             row = pq.read_table(
                 run.directory / FEATURES_PARQUET_FILENAME
             ).to_pylist()[0]
-            self.assertEqual(row["feature_schema_version"], "v1")
+            self.assertEqual(row["feature_schema_version"], "v2")
             manifest = json.loads(
                 (run.directory / "manifest.json").read_text()
             )

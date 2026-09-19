@@ -18,11 +18,18 @@ never staged as successful.
 
 Data contract (all documented again in SCHEMA.md)
 --------------------------------------------------
-``dataset_schema_version = "v1"``.  The feature table is the 64-column output
-of ``controller/features.py`` (the feature extraction authority).  The schema
-is declared explicitly here -- it must never "emerge" from whatever dictionary
-the extractor happens to return.  ``assert_feature_keys()`` cross-checks the
-declared feature columns against the live extractor so drift is caught.
+``dataset_schema_version = "v1"``.  The feature table is the 59-column output
+of ``controller/features.py`` (the feature extraction authority) at
+``feature_schema_version = "v2"``.  Every column must be obtainable from the
+live WAN-side XDP event stream as well as from a training PCAP; the IKE
+exchange-type and observed-version columns (``ike_sa_init_count``,
+``ike_auth_count``, ``ike_create_child_sa_count``, ``ike_informational_count``,
+``ike_version``) were removed in v2 for exactly that reason (the live sensor
+classifies IKE by transport port but does not parse the IKE header).  The
+schema is declared explicitly here -- it must never "emerge" from whatever
+dictionary the extractor happens to return.  ``assert_feature_keys()``
+cross-checks the declared feature columns against the live extractor so drift
+is caught.
 
 Collection / commit boundary
 ----------------------------
@@ -74,7 +81,7 @@ from .dataset_executor import (
 )
 
 SCHEMA_VERSION = "v1"             # dataset artifact schema version
-FEATURE_SCHEMA_VERSION = "v1"     # feature-record schema version
+FEATURE_SCHEMA_VERSION = "v2"     # feature-record schema version
 SUCCESS_LABEL = "SUCCESS"
 
 SUCCESSFUL_SAMPLES_FILENAME = "successful_samples.jsonl"
@@ -97,7 +104,11 @@ EXPORT_ARTIFACT_FILENAMES = (
 )
 
 # ---------------------------------------------------------------------------
-# Feature schema (v1) -- the 64 columns produced by controller/features.py.
+# Feature schema (v2) -- the 59 columns produced by controller/features.py.
+# Every column is obtainable from the live WAN-side XDP event stream (per-
+# event ts/src/dst/len/type/ports) as well as from a training PCAP.  v2
+# removed the five IKE exchange-type / observed-version columns of v1 because
+# the live sensor never parses the IKE header.
 # Types are the source-of-truth extractor types for real captures.
 # ---------------------------------------------------------------------------
 
@@ -161,12 +172,12 @@ FEATURE_COLUMNS = [
     "ike_min_packet_size",             # int  : smallest IKE frame (bytes)
     "ike_max_packet_size",             # int  : largest IKE frame (bytes)
     "ike_mean_packet_size",            # float: mean IKE frame size (bytes)
-    "ike_sa_init_count",               # int  : IKE_SA_INIT exchanges seen
-    "ike_auth_count",                  # int  : IKE_AUTH exchanges seen
-    "ike_create_child_sa_count",       # int  : CREATE_CHILD_SA exchanges seen
-    "ike_informational_count",         # int  : INFORMATIONAL exchanges seen
-    "ike_version",                     # int  : observed IKE version (0 none)
 ]
+
+# NOTE: feature_schema_version v1 also carried ike_version and the four
+# per-exchange-type counts (ike_sa_init/auth/create_child_sa/informational).
+# They are not reproducible by the live XDP feed (which classifies IKE by
+# port only), so v2 removes them from the ML feature vector.
 
 INT_FEATURES = frozenset({
     "packet_count", "total_bytes", "min_packet_size", "max_packet_size",
@@ -177,9 +188,6 @@ INT_FEATURES = frozenset({
     "burst_count_200ms",
     "ike_packet_count", "ike_datagram_bytes",
     "ike_min_packet_size", "ike_max_packet_size",
-    "ike_sa_init_count", "ike_auth_count",
-    "ike_create_child_sa_count", "ike_informational_count",
-    "ike_version",
 })
 
 FLOAT_FEATURES = frozenset(FEATURE_COLUMNS) - INT_FEATURES
@@ -228,13 +236,13 @@ FLATTENED_CONFIG_KEYS = {
 
 
 def assert_feature_keys(features):
-    """Fail if a feature dict does not match the declared v1 feature schema."""
+    """Fail if a feature dict does not match the declared v2 feature schema."""
     observed = set(features)
     if observed != FEATURE_KEYS:
         missing = sorted(FEATURE_KEYS - observed)
         extra = sorted(observed - FEATURE_KEYS)
         raise ValueError(
-            f"feature record does not match schema v1 "
+            f"feature record does not match schema v2 "
             f"(missing={missing}, extra={extra})"
         )
 
@@ -369,7 +377,7 @@ def _require_float(value, column):
 
 
 def normalize_feature_record(features):
-    """Coerce a feature dict into the canonical v1 schema.
+    """Coerce a feature dict into the canonical v2 schema.
 
     Enforces the exact feature-set (no missing / extra columns) and the exact
     per-column type.  Strings are never silently coerced into numbers: a mixed
