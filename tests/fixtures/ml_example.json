@@ -1,0 +1,11 @@
+{
+  "comment": "TEST FIXTURE - NOT REAL EVIDENCE (ML layer does not exist yet)",
+  "model_version": "v1",
+  "traffic_class": "video",
+  "classification_confidence": 0.94,
+  "anomaly": false,
+  "anomaly_score": 0.08,
+  "extras": {
+    "model_family": "placeholder-contract"
+  }
+}

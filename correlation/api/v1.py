@@ -1,0 +1,118 @@
+"""Phase 10 — /api/v1 route handlers (pure functions, no sockets).
+
+Complements the Phase-8 contract WITHOUT touching it:
+
+    GET /api/v1/health                      -> component health
+    GET /api/v1/metrics                     -> Prometheus text exposition
+    GET /api/v1/traffic-generator           -> traffic generator status
+    GET /api/v1/evidence/{evidence_id}      -> evidence metadata
+    GET /api/v1/evidence/{evidence_id}/pcap -> binary PCAP download (or 404)
+
+The dashboard remains read-only: NO endpoint accepts an action, an approval
+or a target; enforcement stays behind the two-layer gateway.
+"""
+
+from dataclasses import dataclass
+from typing import Any, Dict, Optional
+
+from .pcap import PcapService
+from .routes import ApiError
+
+CONTENT_TYPE_JSON = "application/json"
+CONTENT_TYPE_PROMETHEUS = "text/plain; version=0.0.4; charset=utf-8"
+CONTENT_TYPE_PCAP = "application/vnd.tcpdump.pcap"
+
+HEALTH_PATH = "/api/v1/health"
+METRICS_PATH = "/api/v1/metrics"
+TRAFFIC_GENERATOR_PATH = "/api/v1/traffic-generator"
+EVIDENCE_PREFIX = "/api/v1/evidence/"
+
+
+def _evidence_id(path: str) -> str:
+    remainder = path[len(EVIDENCE_PREFIX):]
+    if "/" in remainder:
+        evidence_id, sub = remainder.split("/", 1)
+        if sub != "pcap":
+            raise ApiError(
+                404, "unknown_resource",
+                f"unknown evidence sub-resource {sub!r}; expected 'pcap'",
+            )
+        return evidence_id
+    return remainder
+
+
+def handle_v1_health(health) -> Dict[str, Any]:
+    return health.to_dict()
+
+
+def handle_v1_metrics(metrics) -> str:
+    return metrics.render()
+
+
+def handle_v1_traffic_generator(monitor) -> Dict[str, Any]:
+    status = monitor.status()
+    return {
+        "api": "traffic-generator",
+        "status": status,
+    }
+
+
+def handle_v1_evidence(context, evidence_id: str) -> Dict[str, Any]:
+    pcap: PcapService = context.pcap
+    registry = pcap.registry
+    if not registry.has(evidence_id):
+        raise ApiError(404, "evidence_not_found", f"no evidence {evidence_id!r}")
+    resolved = registry.resolve(evidence_id)
+    if resolved is None:
+        raise ApiError(
+            403, "evidence_unavailable",
+            f"evidence {evidence_id!r} cannot be served (no capture resolved)",
+        )
+    return {
+        "evidence_id": evidence_id,
+        "served_from": resolved,
+        "extension_locked": True,
+        "read_only": True,
+        "download_path": f"/api/v1/evidence/{evidence_id}/pcap",
+    }
+
+
+def handle_v1_pcap(context, evidence_id: str) -> Dict[str, Any]:
+    """Return a download descriptor; the transport layer streams the bytes."""
+    pcap: PcapService = context.pcap
+    registry = pcap.registry
+    if not registry.has(evidence_id):
+        raise ApiError(404, "evidence_not_found", f"no evidence {evidence_id!r}")
+    if registry.resolve(evidence_id) is None:
+        raise ApiError(
+            403, "evidence_unavailable",
+            f"evidence {evidence_id!r} cannot be served",
+        )
+    return {"evidence_id": evidence_id}
+
+
+def handle_v1_get(context, path: str):
+    """Dispatch one /api/v1 path; returns (content, content_type) or raises."""
+    if path.startswith(HEALTH_PATH):
+        return handle_v1_health(context.health), CONTENT_TYPE_JSON
+    if path == METRICS_PATH:
+        return handle_v1_metrics(context.metrics), CONTENT_TYPE_PROMETHEUS
+    if path == TRAFFIC_GENERATOR_PATH:
+        return handle_v1_traffic_generator(context.traffic_generator), CONTENT_TYPE_JSON
+    if path.startswith(EVIDENCE_PREFIX):
+        remainder = path[len(EVIDENCE_PREFIX):]
+        if not remainder:
+            raise ApiError(404, "invalid_route", f"unknown route {path!r}")
+        if "/" not in remainder:
+            return handle_v1_evidence(context, remainder), CONTENT_TYPE_JSON
+        evidence_id, sub = remainder.split("/", 1)
+        if sub == "pcap":
+            # transport reads + streams the bytes (handled by app layer)
+            return handle_v1_pcap(context, evidence_id), CONTENT_TYPE_JSON
+        raise ApiError(404, "unknown_resource",
+                       f"unknown evidence sub-resource {sub!r}; expected 'pcap'")
+    raise ApiError(404, "unknown_route", f"unknown route {path!r}")
+
+
+def is_v1_path(path: str) -> bool:
+    return path.startswith("/api/v1/") or path == "/api/v1"

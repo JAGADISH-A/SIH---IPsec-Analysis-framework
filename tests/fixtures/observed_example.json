@@ -1,0 +1,62 @@
+{
+  "comment": "TEST FIXTURE - NOT REAL EVIDENCE (no real secrets; no real capture data)",
+  "timestamp_ns": 123456789000,
+  "endpoints": {
+    "a": "192.0.2.100",
+    "b": "192.0.2.200"
+  },
+  "tunnel_seen": true,
+  "active": true,
+  "packets_seen": 120,
+  "bytes_seen": 48000,
+  "packets_a_to_b": 60,
+  "packets_b_to_a": 60,
+  "bytes_a_to_b": 24000,
+  "bytes_b_to_a": 24000,
+  "ike_seen": true,
+  "ike_nat_t_seen": false,
+  "esp_seen": true,
+  "ah_seen": false,
+  "observed_ike_activity": true,
+  "last_ike_timestamp_ns": 123456780000,
+  "last_ike_nat_t_timestamp_ns": null,
+  "last_esp_timestamp_ns": 123456788500,
+  "last_ah_timestamp_ns": null,
+  "spis": [
+    {
+      "spi": 3443443859,
+      "direction": "A_TO_B",
+      "active": true,
+      "first_seen_ns": 123456789000,
+      "last_seen_ns": 123456789000,
+      "packet_count": 60,
+      "first_sequence": 9001,
+      "last_sequence": 9060,
+      "highest_sequence": 9060,
+      "sequence_delta": 59
+    },
+    {
+      "spi": 2339467593,
+      "direction": "B_TO_A",
+      "active": true,
+      "first_seen_ns": 123456789001,
+      "last_seen_ns": 123456789001,
+      "packet_count": 0,
+      "first_sequence": null,
+      "last_sequence": null,
+      "highest_sequence": null,
+      "sequence_delta": null
+    }
+  ],
+  "transitions": [
+    {
+      "name": "ACTIVE",
+      "timestamp_ns": 123456789000,
+      "details": {
+        "spi": 3443443859,
+        "direction": "A_TO_B",
+        "known_spis": [3443443859, 2339467593]
+      }
+    }
+  ]
+}

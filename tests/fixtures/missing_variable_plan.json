@@ -1,0 +1,179 @@
+{
+  "planner_version": "v1",
+  "dataset_schema_version": "v1",
+  "target_samples": 6,
+  "traffic_quota": {
+    "voip": 1,
+    "video": 1,
+    "messaging": 1,
+    "email": 1,
+    "web": 1,
+    "icmp": 1
+  },
+  "posture_planned": {
+    "STRONG": 2,
+    "GOOD": 1,
+    "MEDIUM": 1,
+    "WEAK": 1,
+    "WORST": 1
+  },
+  "posture_unique_configuration_count": {
+    "STRONG": 2,
+    "GOOD": 1,
+    "MEDIUM": 1,
+    "WEAK": 1,
+    "WORST": 1
+  },
+  "posture_configuration_reuses": {
+    "STRONG": 0,
+    "GOOD": 0,
+    "MEDIUM": 0,
+    "WEAK": 0,
+    "WORST": 0
+  },
+  "catalogue": {
+    "total_candidates": 384,
+    "accepted": 192,
+    "rejected": 192,
+    "per_posture": {
+      "STRONG": 12,
+      "GOOD": 44,
+      "MEDIUM": 52,
+      "WEAK": 48,
+      "WORST": 36
+    }
+  },
+  "samples": [
+    {
+      "sequence": 1,
+      "traffic_profile": "voip",
+      "security_posture": "STRONG",
+      "configuration_id": "tunnel-ipv4-aes128gcm16-none-modp4096-true",
+      "ipsec_configuration": {
+        "mode": "tunnel",
+        "address_family": "ipv4",
+        "ike": {
+          "version": 2,
+          "encryption": "aes256",
+          "integrity": "sha256",
+          "dh_group": "modp2048"
+        },
+        "esp": {
+          "integrity": null,
+          "dh_group": "modp4096",
+          "pfs": true
+        }
+      }
+    },
+    {
+      "sequence": 2,
+      "traffic_profile": "video",
+      "security_posture": "GOOD",
+      "configuration_id": "tunnel-ipv4-aes128gcm16-none-modp3072-true",
+      "ipsec_configuration": {
+        "mode": "tunnel",
+        "address_family": "ipv4",
+        "ike": {
+          "version": 2,
+          "encryption": "aes256",
+          "integrity": "sha256",
+          "dh_group": "modp2048"
+        },
+        "esp": {
+          "encryption": "aes128gcm16",
+          "integrity": null,
+          "dh_group": "modp3072",
+          "pfs": true
+        }
+      }
+    },
+    {
+      "sequence": 3,
+      "traffic_profile": "messaging",
+      "security_posture": "MEDIUM",
+      "configuration_id": "tunnel-ipv4-aes128gcm16-none-modp2048-true",
+      "ipsec_configuration": {
+        "mode": "tunnel",
+        "address_family": "ipv4",
+        "ike": {
+          "version": 2,
+          "encryption": "aes256",
+          "integrity": "sha256",
+          "dh_group": "modp2048"
+        },
+        "esp": {
+          "encryption": "aes128gcm16",
+          "integrity": null,
+          "dh_group": "modp2048",
+          "pfs": true
+        }
+      }
+    },
+    {
+      "sequence": 4,
+      "traffic_profile": "email",
+      "security_posture": "WEAK",
+      "configuration_id": "tunnel-ipv4-aes128gcm16-none-modp2048-false",
+      "ipsec_configuration": {
+        "mode": "tunnel",
+        "address_family": "ipv4",
+        "ike": {
+          "version": 2,
+          "encryption": "aes256",
+          "integrity": "sha256",
+          "dh_group": "modp2048"
+        },
+        "esp": {
+          "encryption": "aes128gcm16",
+          "integrity": null,
+          "dh_group": "modp2048",
+          "pfs": false
+        }
+      }
+    },
+    {
+      "sequence": 5,
+      "traffic_profile": "web",
+      "security_posture": "WORST",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha256-modp2048-false",
+      "ipsec_configuration": {
+        "mode": "tunnel",
+        "address_family": "ipv4",
+        "ike": {
+          "version": 2,
+          "encryption": "aes256",
+          "integrity": "sha256",
+          "dh_group": "modp2048"
+        },
+        "esp": {
+          "encryption": "aes128cbc",
+          "integrity": "sha256",
+          "dh_group": "modp2048",
+          "pfs": false
+        }
+      }
+    },
+    {
+      "sequence": 6,
+      "traffic_profile": "icmp",
+      "security_posture": "STRONG",
+      "configuration_id": "tunnel-ipv4-aes256gcm16-none-modp3072-true",
+      "ipsec_configuration": {
+        "mode": "tunnel",
+        "address_family": "ipv4",
+        "ike": {
+          "version": 2,
+          "encryption": "aes256",
+          "integrity": "sha256",
+          "dh_group": "modp2048"
+        },
+        "esp": {
+          "encryption": "aes256gcm16",
+          "integrity": null,
+          "dh_group": "modp3072",
+          "pfs": true
+        }
+      }
+    }
+  ]
+}
