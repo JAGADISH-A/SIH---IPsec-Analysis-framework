@@ -1,5 +1,7 @@
-import subprocess
 import json
+import os
+import signal
+import subprocess
 from pathlib import Path
 
 from .config import CONFIG
@@ -10,6 +12,50 @@ from . import traffic as traffic_mod
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+# Every testbed subprocess is launched under ``sudo -n`` (non-interactive).
+#
+# The workers that drive the lab (FastAPI background tasks, dataset executor)
+# must NEVER wait on an interactive sudo password prompt: a web worker has no
+# controlling terminal session the operator can answer, so a plain ``sudo``
+# would block for its (often multi-minute) conversation timeout and leave a
+# dataset run looking stuck in RUNNING.  ``sudo -n`` fails immediately with
+# "sudo: a password is required" / "sudo: interactive authentication is
+# required" when non-interactive privilege is unavailable, which the dataset
+# executor surfaces as a fast fatal FAILED run instead of an indefinite hang.
+SUDO = ("sudo", "-n")
+
+# Stage-appropriate bounded subprocess timeouts (seconds).  These are caps for
+# host-side commands; the on-box traffic/capture stages keep their own
+# duration-derived bounds.  Deliberately generous so a legitimately slow
+# operation is never cut off, but bounded so a wedged child can never leave a
+# dataset run perpetually RUNNING.
+DEFAULT_COMMAND_TIMEOUT = 300.0      # generic per-command cap (docker exec/cp, swanctl, ping)
+DOCKER_COMMAND_TIMEOUT = 120.0       # fast docker micro-operations (ping, swanctl, file copy)
+LIFECYCLE_TIMEOUT = 900.0            # containerlab deploy --reconfigure (may pull images)
+DESTROY_TIMEOUT = 600.0              # containerlab destroy --cleanup
+
+# Host-bridge lifecycle.  The tunnel topology treats ``br-wan`` as an
+# externally-managed root-namespace bridge that containerlab does NOT create
+# (and refuses to recreate).  The authoritative deploy/destroy wrapper
+# (scripts/deploy-ipsec.sh) ensures the bridge deterministically and
+# idempotently before ``containerlab deploy`` and removes it only when it has
+# no remaining members after ``containerlab destroy``.  Routing the tunnel
+# lifecycle through this wrapper is the project's intended host-bridge
+# lifecycle; the transport topology has no external bridge and keeps the raw
+# containerlab calls.
+LIFECYCLE_SCRIPT = PROJECT_ROOT / "scripts" / "deploy-ipsec.sh"
+
+
+class FatalTopologyError(RuntimeError):
+    """A topology deployment/infrastructure failure that cannot be retried.
+
+    Raised when the lab cannot be deployed for an infrastructure-level reason
+    (missing host bridge, bridge creation failure, containerlab deploy
+    failure).  Such failures cannot be fixed by re-attempting the same sample,
+    so the dataset runner treats them as fatal instead of burning the per
+    sequence attempt budget on meaningless retries.
+    """
 
 
 def get_topology(mode, address_family):
@@ -28,28 +74,85 @@ def get_topology(mode, address_family):
     return topology[address_family]
 
 
-def run(command):
+def _privileged(*argv):
+    """Return a sudo command guaranteed to be non-interactive (``sudo -n``).
+
+    The first token is the command (e.g. use ``_privileged("docker", ...)``).
+    A web/background worker must never block on an interactive sudo prompt, so
+    every privileged subprocess in the testbed path goes through this.
+    """
+    return [*SUDO, *argv]
+
+
+def _kill_process_group(proc):
+    """SIGKILL the whole process group started by ``proc`` (incl. children).
+
+    ``subprocess.run`` only kills the direct child on timeout, which would
+    orphan ``sudo`` -> ``bash`` -> ``containerlab`` (and its docker children).
+    Every testbed subprocess starts a new session, so a single ``killpg``
+    reaps the entire tree.
+    """
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    try:
+        proc.wait(timeout=5)
+    except Exception:
+        pass
+
+
+def run(command, timeout=DEFAULT_COMMAND_TIMEOUT, cwd=None):
     print(f"$ {' '.join(command)}")
 
-    result = subprocess.run(
+    # If a call site still greps for sudo arguments, always insert ``-n`` so
+    # an interactive password prompt can never block the worker.
+    if command and command[0] == "sudo" and not (
+        len(command) > 1 and command[1] == "-n"
+    ):
+        command = ["sudo", "-n", *command[1:]]
+
+    proc = subprocess.Popen(
         command,
-        cwd=PROJECT_ROOT,
+        cwd=cwd or PROJECT_ROOT,
         text=True,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        # Own session: the kill-on-timeout path can then reap the whole tree.
+        start_new_session=True,
     )
 
-    if result.stdout:
-        print(result.stdout)
-
-    if result.returncode != 0:
-        if result.stderr:
-            print(result.stderr)
-
-        raise RuntimeError(
-            f"Command failed with exit code {result.returncode}"
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        _kill_process_group(proc)
+        detail = (exc.stderr or exc.stdout or "").strip()
+        message = (
+            f"Command timed out after {timeout:.0f}s "
+            f"(process group killed): {' '.join(command)}"
         )
+        if detail:
+            message += f": {detail[-2000:]}"
+        raise RuntimeError(message)
 
-    return result.stdout
+    if stdout:
+        print(stdout)
+
+    if proc.returncode != 0:
+        if stderr:
+            print(stderr)
+
+        detail = (stderr or stdout or "").strip()
+        message = f"Command failed with exit code {proc.returncode}"
+        if detail:
+            message += f": {detail[-2000:]}"
+
+        raise RuntimeError(message)
+
+    return stdout
 
 
 def topology_file(mode):
@@ -70,26 +173,35 @@ def topology_file(mode):
 def destroy(mode):
     topo = topology_file(mode)
 
-    run([
-        "sudo",
-        "containerlab",
-        "destroy",
-        "-t",
-        str(topo),
-        "--cleanup",
-    ])
+    if mode == "tunnel":
+        # Authoritative lifecycle wrapper: containerlab destroy --cleanup
+        # AND removal of the externally-managed br-wan bridge (only when it
+        # has no remaining members).
+        run(_privileged("bash", str(LIFECYCLE_SCRIPT), "destroy"),
+            timeout=DESTROY_TIMEOUT)
+        return
+
+    run(_privileged("containerlab", "destroy", "-t", str(topo), "--cleanup"),
+        timeout=DESTROY_TIMEOUT)
 
 
 def deploy(mode):
     topo = topology_file(mode)
 
-    run([
-        "sudo",
-        "containerlab",
-        "deploy",
-        "-t",
-        str(topo),
-    ])
+    try:
+        if mode == "tunnel":
+            # Authoritative lifecycle wrapper: ensure br-wan (deterministic,
+            # idempotent), then containerlab deploy --reconfigure, then the
+            # GW-A observation health-check.  ``br-wan`` is externally managed
+            # by containerlab, so it MUST exist in the root netns before
+            # deploy enslaves the gateway endpoints.
+            run(_privileged("bash", str(LIFECYCLE_SCRIPT), "deploy"),
+                timeout=LIFECYCLE_TIMEOUT)
+        else:
+            run(_privileged("containerlab", "deploy", "-t", str(topo)),
+                timeout=LIFECYCLE_TIMEOUT)
+    except RuntimeError as exc:
+        raise FatalTopologyError(str(exc)) from exc
 
 
 def reset_and_deploy(mode):
@@ -174,43 +286,25 @@ def load_generated_configs(config):
 
     print("\n=== Loading generated configurations ===\n")
 
-    run([
-        "sudo",
-        "docker",
-        "cp",
-        str(local_file),
-        f"{local_container}:{local_tmp}",
-    ])
+    run(
+        _privileged("docker", "cp", str(local_file), f"{local_container}:{local_tmp}"),
+        timeout=DOCKER_COMMAND_TIMEOUT,
+    )
 
-    run([
-        "sudo",
-        "docker",
-        "cp",
-        str(remote_file),
-        f"{remote_container}:{remote_tmp}",
-    ])
+    run(
+        _privileged("docker", "cp", str(remote_file), f"{remote_container}:{remote_tmp}"),
+        timeout=DOCKER_COMMAND_TIMEOUT,
+    )
 
-    run([
-        "sudo",
-        "docker",
-        "exec",
-        local_container,
-        "swanctl",
-        "--load-conns",
-        "--file",
-        local_tmp,
-    ])
+    run(
+        _privileged("docker", "exec", local_container, "swanctl", "--load-conns", "--file", local_tmp),
+        timeout=DOCKER_COMMAND_TIMEOUT,
+    )
 
-    run([
-        "sudo",
-        "docker",
-        "exec",
-        remote_container,
-        "swanctl",
-        "--load-conns",
-        "--file",
-        remote_tmp,
-    ])
+    run(
+        _privileged("docker", "exec", remote_container, "swanctl", "--load-conns", "--file", remote_tmp),
+        timeout=DOCKER_COMMAND_TIMEOUT,
+    )
 
     print("\n=== Generated configurations loaded ===\n")
 
@@ -229,16 +323,10 @@ def initiate_ipsec(mode, address_family):
 
     print("\n=== Initiating IPsec ===\n")
 
-    run([
-        "sudo",
-        "docker",
-        "exec",
-        container,
-        "swanctl",
-        "--initiate",
-        "--child",
-        connection_name,
-    ])
+    run(
+        _privileged("docker", "exec", container, "swanctl", "--initiate", "--child", connection_name),
+        timeout=DOCKER_COMMAND_TIMEOUT,
+    )
 
 
 def terminate_sas(mode, address_family):
@@ -286,14 +374,10 @@ def terminate_sas(mode, address_family):
             ["--terminate", "--ike", connection_name],
         ):
             try:
-                run([
-                    "sudo",
-                    "docker",
-                    "exec",
-                    container,
-                    "swanctl",
-                    *command,
-                ])
+                run(
+                    _privileged("docker", "exec", container, "swanctl", *command),
+                    timeout=DOCKER_COMMAND_TIMEOUT,
+                )
             except RuntimeError:
                 pass
 
@@ -371,7 +455,8 @@ def test_connectivity(mode, address_family):
     print("\n=== Testing connectivity ===\n")
 
     output = run(
-        ["sudo", "docker", "exec", source] + ping_command
+        _privileged("docker", "exec", source, *ping_command),
+        timeout=DOCKER_COMMAND_TIMEOUT,
     )
 
     packet_loss = None
@@ -401,14 +486,10 @@ def verify_ipsec(mode, address_family):
 
     print("\n=== Verifying IPsec SA ===\n")
 
-    output = run([
-        "sudo",
-        "docker",
-        "exec",
-        source,
-        "swanctl",
-        "--list-sas",
-    ])
+    output = run(
+        _privileged("docker", "exec", source, "swanctl", "--list-sas"),
+        timeout=DOCKER_COMMAND_TIMEOUT,
+    )
 
     if "ESTABLISHED" not in output:
         raise RuntimeError("IKE SA is not established")

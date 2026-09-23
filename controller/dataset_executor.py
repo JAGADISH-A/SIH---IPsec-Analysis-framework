@@ -35,6 +35,7 @@ from .dataset_planner import (
     POSTURE_ORDER,
     validate_traffic_profile,
 )
+from .executor import FatalTopologyError
 from .traffic import DEFAULT_DURATION, DEFAULT_PORT
 from .validate import validate_config
 
@@ -169,7 +170,12 @@ def run_attempt(experiment_id, sample, tmp_dir, results_root, run_id=None,
       {"status": "FAILED",  "experiment_id", "reason", "error"}
       {"status": "INTERRUPTED", "experiment_id", "reason", "error"}
 
-    Any pipeline exception maps to FAILED, never to success.
+    Any pipeline exception maps to FAILED, never to success.  A fatal
+    infrastructure failure (``FatalTopologyError`` - typically the lab cannot
+    deploy: missing host bridge, bridge creation failure, containerlab deploy
+    failure) returns a FAILED outcome additionally marked ``"fatal": True`` so
+    the engine stops the run instead of burning the attempt budget on
+    meaningless retries.
     """
     log = log or (lambda msg: None)
     config = dict(sample["ipsec_configuration"])
@@ -186,6 +192,14 @@ def run_attempt(experiment_id, sample, tmp_dir, results_root, run_id=None,
             experiment_id, config, config["traffic"], tmp_dir,
             run_id=run_id, log=log, reuse=reuse,
         )
+    except FatalTopologyError as exc:
+        return {
+            "status": OUTCOME_FAILED,
+            "experiment_id": experiment_id,
+            "reason": "FatalTopologyError",
+            "error": str(exc),
+            "fatal": True,
+        }
     except Exception as exc:
         return {
             "status": OUTCOME_FAILED,

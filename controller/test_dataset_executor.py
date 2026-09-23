@@ -722,6 +722,30 @@ class TestExecutorReuse(unittest.TestCase):
                     called_cfg["esp"], sample["ipsec_configuration"]["esp"]
                 )
 
+    def test_default_runner_maps_fatal_topology_error(self):
+        """A sudo/containerlab deploy failure must surface as a fatal FAILED
+        outcome (never a retryable failure), so the engine fails the run fast
+        instead of staying RUNNING or burning the attempt budget."""
+        from controller.executor import FatalTopologyError
+        with tempfile.TemporaryDirectory() as tmp:
+            run, plan = make_run_and_plan(tmp, target=1)
+            sample = plan["samples"][0]
+            exp_id = experiment_id_for(run.id, 1, 1)
+            exp_tmp = Path(tmp) / "attempt-tmp"
+
+            with patch("controller.campaign.execute_trial_pipeline",
+                       side_effect=FatalTopologyError(
+                           "Command failed with exit code 1: "
+                           "sudo: a password is required"
+                       )):
+                outcome = run_attempt(
+                    exp_id, sample, exp_tmp, tmp, run_id=run.id, log=None,
+                )
+            self.assertEqual(outcome["status"], OUTCOME_FAILED)
+            self.assertTrue(outcome.get("fatal"))
+            self.assertEqual(outcome["reason"], "FatalTopologyError")
+            self.assertIn("sudo: a password is required", outcome["error"])
+
     def test_default_cleanup_reuses_campaign_cleanup(self):
         with tempfile.TemporaryDirectory() as tmp:
             sample = {"ipsec_configuration": {"mode": "tunnel"}}

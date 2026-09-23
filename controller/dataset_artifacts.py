@@ -315,19 +315,31 @@ def _append_staged_record(run, record):
         os.fsync(fh.fileno())
 
 
-def _rewrite_staging_without(run, experiment_id):
-    """Remove one stale record from the staging log (rewrite, atomic)."""
-    staging_path = run.directory / STAGING_SUBDIR / SUCCESSFUL_SAMPLES_FILENAME
-    records = [r for r in read_staging(run) if r["experiment_id"] != experiment_id]
+def rewrite_staging(run, records):
+    """Atomically replace the entire staging log with ``records``.
+
+    Normal collection stays append-only (``_append_staged_record``); this is
+    the explicit exception for a controlled, pre-validated migration such as
+    re-deriving every staged feature record under a newer
+    ``feature_schema_version`` from preserved PCAP evidence.  The write is
+    atomic (tmp + fsync + replace) like every other staging primitive.
+    """
+    path = run.directory / STAGING_SUBDIR / SUCCESSFUL_SAMPLES_FILENAME
     text = "".join(
         json.dumps(record, sort_keys=True) + "\n" for record in records
     )
-    tmp = staging_path.with_suffix(staging_path.suffix + ".tmp")
+    tmp = path.with_suffix(path.suffix + ".tmp")
     with open(tmp, "w", encoding="utf-8") as fh:
         fh.write(text)
         fh.flush()
         os.fsync(fh.fileno())
-    os.replace(tmp, staging_path)
+    os.replace(tmp, path)
+
+
+def _rewrite_staging_without(run, experiment_id):
+    """Remove one stale record from the staging log (rewrite, atomic)."""
+    records = [r for r in read_staging(run) if r["experiment_id"] != experiment_id]
+    rewrite_staging(run, records)
 
 
 def _archive_orphan_staged_record(run, record, log):

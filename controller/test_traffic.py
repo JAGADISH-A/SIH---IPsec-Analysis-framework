@@ -257,7 +257,7 @@ class TestSenderDispatch(unittest.TestCase):
             )
             self.assertEqual(status, "PASS")
             args = run.call_args.args[0]
-            self.assertEqual(args[0:3], ["sudo", "docker", "exec"])
+            self.assertEqual(args[0:4], ["sudo", "-n", "docker", "exec"])
             self.assertIn("/tmp/ITGSend", args)
             self.assertIn("Started sending", log)
 
@@ -332,7 +332,7 @@ class TestWaitReceiverDispatch(unittest.TestCase):
                                           timeout=2)
             )
             args = run.call_args.args[0]
-            self.assertEqual(args[0:3], ["sudo", "docker", "exec"])
+            self.assertEqual(args[0:4], ["sudo", "-n", "docker", "exec"])
             self.assertIn("socket", args[-1])
 
     def test_unknown_dest_ip_rejected_for_ditg(self):

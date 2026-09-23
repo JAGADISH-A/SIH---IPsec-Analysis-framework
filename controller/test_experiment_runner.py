@@ -84,6 +84,14 @@ class _FakeRunner:
 
         if kind == "KeyboardInterrupt":
             raise KeyboardInterrupt()
+        if kind == "FATAL":
+            return {
+                "status": OUTCOME_FAILED,
+                "experiment_id": experiment_id,
+                "reason": "FatalTopologyError",
+                "error": "lab cannot deploy: host bridge unavailable",
+                "fatal": True,
+            }
         if kind == OUTCOME_FAILED:
             (tmp / "partial.log").write_text("partial", encoding="utf-8")
             return {
@@ -380,6 +388,32 @@ class TestGenericEngine(unittest.TestCase):
             )
             self.assertEqual(failed.status, STATUS_FAILED)
             self.assertEqual(failed.data["successful_samples"], 0)
+
+    def test_fatal_outcome_stops_run_after_one_attempt(self):
+        teardown_calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            run = create_dataset_run(tmp, target_samples=2)
+            plan = _make_generic_plan(2)
+            runner = _FakeRunner(script={(1, 1): "FATAL"})
+            failed = execute_repeated_run(
+                tmp, run.id,
+                load_plan_fn=lambda rr, rid: plan,
+                run_attempt_fn=runner,
+                cleanup_fn=_FakeCleanup(),
+                max_attempts_per_sequence=5,
+                teardown_fn=lambda rm, log: teardown_calls.append(rm),
+            )
+            self.assertEqual(failed.status, STATUS_FAILED)
+            # Fatal failure: exactly ONE attempt for sequence 1; the engine
+            # must NOT burn the remaining 4 attempts on the same doomed
+            # deployment, and sequence 2 must never start.
+            self.assertEqual(len(runner.calls), 1)
+            self.assertEqual(failed.data["failed_samples"], 1)
+            self.assertEqual(failed.data["attempted_runs"], 1)
+            self.assertEqual(committed_sequences(failed), set())
+            self.assertIn("FatalTopologyError", failed.data["error"])
+            self.assertIn("host bridge unavailable", failed.data["error"])
+            self.assertEqual(len(teardown_calls), 1)
 
     def test_rejects_invalid_max_attempts(self):
         with tempfile.TemporaryDirectory() as tmp:

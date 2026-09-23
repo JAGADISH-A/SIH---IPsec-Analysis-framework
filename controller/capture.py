@@ -22,6 +22,12 @@ import json
 import subprocess
 import time
 
+# All testbed privileged subprocesses run under ``sudo -n`` (non-interactive).
+# A web worker must never block on an interactive sudo prompt.
+SUDO = ["sudo", "-n"]
+
+CAPTURE_COMMAND_TIMEOUT = 120.0
+
 # Canonical capture filter for the whole testbed (single source of truth).
 #
 # IKE (UDP 500/4500) is purposefully captured alongside ESP (and AH, when
@@ -57,10 +63,11 @@ def detect_capture_interface(container, wan_ip):
     hardcoded ethX name.  Raises RuntimeError if the address is not found.
     """
     out = subprocess.run(
-        ["sudo", "docker", "exec", container, "ip", "-j", "addr"],
+        [*SUDO, "docker", "exec", container, "ip", "-j", "addr"],
         capture_output=True,
         text=True,
         check=True,
+        timeout=CAPTURE_COMMAND_TIMEOUT,
     ).stdout
     try:
         ifaces = json.loads(out)
@@ -99,9 +106,10 @@ def start_capture(container, interface, remote_path, seconds, filter_expr=DEFAUL
         f"< /dev/null > /dev/null 2>&1 &"
     )
     subprocess.run(
-        ["sudo", "docker", "exec", "-d", container, "sh", "-c", cmd],
+        [*SUDO, "docker", "exec", "-d", container, "sh", "-c", cmd],
         check=True,
         capture_output=True,
+        timeout=CAPTURE_COMMAND_TIMEOUT,
     )
 
 
@@ -117,10 +125,11 @@ def stop_capture(container, remote_path, wait=15):
     controller-death failsafe.
     """
     subprocess.run(
-        ["sudo", "docker", "exec", container, "sh", "-c",
+        [*SUDO, "docker", "exec", container, "sh", "-c",
          "pkill -TERM tcpdump || true"],
         capture_output=True,
         text=True,
+        timeout=CAPTURE_COMMAND_TIMEOUT,
     )
     for _ in range(wait * 2):
         if _done(container, remote_path):
@@ -132,17 +141,19 @@ def stop_capture(container, remote_path, wait=15):
 
 def _done(container, remote_path):
     probe = subprocess.run(
-        ["sudo", "docker", "exec", container, "sh", "-c",
+        [*SUDO, "docker", "exec", container, "sh", "-c",
          f"test -f {remote_path}.done"],
         capture_output=True,
         text=True,
+        timeout=CAPTURE_COMMAND_TIMEOUT,
     )
     return probe.returncode == 0
 
 
 def copy_capture(container, remote_path, destination):
     subprocess.run(
-        ["sudo", "docker", "cp", f"{container}:{remote_path}", str(destination)],
+        [*SUDO, "docker", "cp", f"{container}:{remote_path}", str(destination)],
         check=True,
         capture_output=True,
+        timeout=CAPTURE_COMMAND_TIMEOUT,
     )

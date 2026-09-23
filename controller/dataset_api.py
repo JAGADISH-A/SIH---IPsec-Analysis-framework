@@ -280,6 +280,32 @@ def results_payload(run, plan, finalization=None):
 # Background worker
 # ---------------------------------------------------------------------------
 
+def _make_run_logger(results_root, dataset_run_id):
+    """Return a ``log(message) -> None`` sink for one dataset run.
+
+    Appends ``[dataset-run <id>] <message>`` lines (newline-terminated, flushed)
+    to ``<run_dir>/logs/run.log`` and mirrors each line to stdout so a live
+    uvicorn terminal shows the same stage progression.  The engine emits the
+    stage markers (``[seq N] attempt ...``, deploy, traffic, capture, feature
+    extraction, committed/failed, finalization) through this single sink.
+    """
+    run_dir = dataset_run_mod.run_directory(results_root, dataset_run_id)
+    log_dir = run_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "run.log"
+
+    def _log(message):
+        line = f"[dataset-run {dataset_run_id}] {message}"
+        try:
+            with log_path.open("a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
+        except Exception:
+            pass
+        print(line, flush=True)
+
+    return _log
+
+
 def _run_dataset_worker(results_root, dataset_run_id, lock, *, run_attempt_fn,
                         cleanup_fn, collector_fn, max_attempts_per_sequence):
     """Execute and finalize one dataset run; release the testbed afterwards.
@@ -294,6 +320,8 @@ def _run_dataset_worker(results_root, dataset_run_id, lock, *, run_attempt_fn,
     collector = collector_fn
     if collector is None:
         collector = artifacts_mod.collect_successful_sample
+    log = _make_run_logger(results_root, dataset_run_id)
+    log("worker started")
     try:
         run = executor_mod.execute_dataset_run(
             results_root, dataset_run_id,
@@ -301,9 +329,12 @@ def _run_dataset_worker(results_root, dataset_run_id, lock, *, run_attempt_fn,
             cleanup_fn=cleaner,
             max_attempts_per_sequence=max_attempts_per_sequence,
             collector_fn=collector,
+            log=log,
         )
         if run.status == STATUS_COMPLETED:
+            log("finalization started")
             artifacts_mod.finalize_dataset(results_root, dataset_run_id)
+            log("finalization completed")
     except Exception as exc:
         try:
             run = dataset_run_mod.load_dataset_run(
@@ -317,9 +348,14 @@ def _run_dataset_worker(results_root, dataset_run_id, lock, *, run_attempt_fn,
                         f"({type(exc).__name__}: {exc})"
                     ),
                 )
+                log(
+                    f"background execution failed "
+                    f"({type(exc).__name__}: {exc})"
+                )
         except Exception:
-            pass
+            log(f"background execution failed, state unreadable ({type(exc).__name__})")
     finally:
+        log("worker finished; releasing testbed")
         lock.release(DATASET, dataset_run_id)
 
 

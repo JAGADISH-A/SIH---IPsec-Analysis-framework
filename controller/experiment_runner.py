@@ -518,6 +518,13 @@ def _run_sequence(run, sample, samples_by_seq, results_root, run_attempt_fn,
     when an attempt STARTS.  A failed attempt, a returned-INTERRUPTED attempt
     and a killed attempt all consume budget slots.  A real KeyboardInterrupt
     pauses the run regardless of the budget.  Success is never fabricated.
+
+    Fatal outcomes
+    --------------
+    A FAILED outcome carrying ``fatal: True`` (a non-retryable infrastructure
+    failure, e.g. the topology cannot be deployed) marks the run FAILED with
+    the actual error and returns "EXHAUSTED" immediately - the remaining
+    per-sequence attempt budget is never burned on the same doomed deployment.
     """
     seq = sample["sequence"]
     config = sample.get("ipsec_configuration") or {}
@@ -660,6 +667,23 @@ def _run_sequence(run, sample, samples_by_seq, results_root, run_attempt_fn,
                 current_security_posture=posture,
             )
             log(f"[seq {seq}] attempt {attempt} FAILED: {outcome.get('error')}")
+
+        if outcome.get("fatal"):
+            reason = outcome.get("reason", "InfrastructureError")
+            error = outcome.get("error") or (
+                "the testbed topology could not be deployed"
+            )
+            run.update(
+                status=STATUS_FAILED,
+                error=(
+                    f"fatal {reason}: {error}"
+                ),
+            )
+            log(
+                f"[seq {seq}] fatal infrastructure failure "
+                f"({reason}) -> run FAILED without further retries"
+            )
+            return "EXHAUSTED"
 
         if interrupted_by_signal:
             run.update(
