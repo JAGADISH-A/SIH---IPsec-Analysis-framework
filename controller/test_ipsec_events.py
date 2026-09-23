@@ -71,6 +71,71 @@ _IKE_AUTH_PKT_4500 = {
     }
 }
 
+# IPv6-outer variants (TShark field names from real IPv6 captures): no ``ip``
+# layer is present -- the outer header is exposed as ``ipv6.*``.
+_ESP_PKT_V6 = {
+    "_source": {
+        "layers": {
+            "frame": {
+                "frame.number": "5",
+                "frame.len": "174",
+                "frame.time_epoch": "2026-09-22T18:44:16.163358000Z",
+                "frame.protocols": "eth:ethertype:ipv6:esp",
+            },
+            "ipv6": {
+                "ipv6.src": "2001:db8:20::10",
+                "ipv6.dst": "2001:db8:20::20",
+                "ipv6.nxt": "50",
+            },
+            "esp": {"esp.spi": "0xcb407ab6", "esp.sequence": "1"},
+        }
+    }
+}
+
+_IKE_SA_INIT_PKT_V6 = {
+    "_source": {
+        "layers": {
+            "frame": {
+                "frame.number": "11",
+                "frame.len": "464",
+                "frame.time_epoch": "2026-09-22T18:44:03.952871000Z",
+                "frame.protocols": "eth:ethertype:ipv6:udp:isakmp",
+            },
+            "ipv6": {
+                "ipv6.src": "2001:db8:20::10",
+                "ipv6.dst": "2001:db8:20::20",
+                "ipv6.nxt": "17",
+            },
+            "udp": {"udp.srcport": "500", "udp.dstport": "500",
+                    "udp.length": "472"},
+            "isakmp": {
+                "isakmp.exchangetype": "34",
+                "isakmp.messageid": "0x00000000",
+                "isakmp.length": "464",
+            },
+        }
+    }
+}
+
+# Non-ESP/non-IKE (IPv6 TCP): must be ignored by the parser.
+_TCP_PKT_V6 = {
+    "_source": {
+        "layers": {
+            "frame": {
+                "frame.number": "8",
+                "frame.len": "64",
+                "frame.time_epoch": "2026-09-22T18:50:10.000000000Z",
+                "frame.protocols": "eth:ethertype:ipv6:tcp",
+            },
+            "ipv6": {"ipv6.src": "2001:db8:20::10", "ipv6.dst": "2001:db8:20::20",
+                     "ipv6.nxt": "6"},
+            "tcp": {"tcp.srcport": "9995", "tcp.dstport": "9995"},
+        }
+    }
+}
+
+WAN_IP_V6 = "2001:db8:20::10"
+
 
 class TestNormalizeEsp(unittest.TestCase):
     def test_esp_metadata_and_direction(self):
@@ -114,6 +179,79 @@ class TestNormalizeIke(unittest.TestCase):
         self.assertEqual(event["ike_exchange_type"], 35)
         self.assertEqual(event["ike_exchange_name"], "IKE_AUTH")
         self.assertEqual(event["direction"], "inbound")
+
+
+class TestNormalizeEspV6(unittest.TestCase):
+    def test_esp_ipv6_metadata_outbound(self):
+        event = events_mod.normalize_esp_event(
+            _ESP_PKT_V6["_source"]["layers"], WAN_IP_V6
+        )
+        self.assertEqual(event["source_ip"], "2001:db8:20::10")
+        self.assertEqual(event["destination_ip"], "2001:db8:20::20")
+        self.assertEqual(event["ip_protocol"], events_mod.IP_PROTO_ESP)
+        self.assertEqual(event["spi"], "0xcb407ab6")
+        self.assertEqual(event["sequence"], 1)
+        self.assertEqual(event["frame_number"], 5)
+        self.assertEqual(event["direction"], "outbound")
+        self.assertEqual(event["timestamp"], "2026-09-22T18:44:16.163358000Z")
+
+    def test_esp_ipv6_inbound(self):
+        pkt = json.loads(json.dumps(_ESP_PKT_V6))
+        pkt["_source"]["layers"]["ipv6"]["ipv6.src"] = "2001:db8:20::20"
+        pkt["_source"]["layers"]["ipv6"]["ipv6.dst"] = WAN_IP_V6
+        event = events_mod.normalize_esp_event(pkt["_source"]["layers"], WAN_IP_V6)
+        self.assertEqual(event["source_ip"], "2001:db8:20::20")
+        self.assertEqual(event["destination_ip"], "2001:db8:20::10")
+        self.assertEqual(event["direction"], "inbound")
+
+
+class TestNormalizeIkeV6(unittest.TestCase):
+    def test_ike_over_ipv6(self):
+        event = events_mod.normalize_ike_event(
+            _IKE_SA_INIT_PKT_V6["_source"]["layers"], WAN_IP_V6
+        )
+        self.assertEqual(event["source_ip"], "2001:db8:20::10")
+        self.assertEqual(event["destination_ip"], "2001:db8:20::20")
+        self.assertEqual(event["source_port"], 500)
+        self.assertEqual(event["destination_port"], 500)
+        self.assertEqual(event["ike_exchange_type"], 34)
+        self.assertEqual(event["ike_exchange_name"], "IKE_SA_INIT")
+        self.assertEqual(event["packet_length"], 464)
+        self.assertEqual(event["direction"], "outbound")
+
+
+class TestParseTsharkJsonV6(unittest.TestCase):
+    def test_parse_mixed_ipv4_ipv6(self):
+        text = json.dumps([_ESP_PKT, _IKE_SA_INIT_PKT, _ESP_PKT_V6,
+                           _IKE_SA_INIT_PKT_V6])
+        esp_events, ike_events = events_mod.parse_tshark_json(text, WAN_IP)
+        self.assertEqual(len(esp_events), 2)
+        self.assertEqual(len(ike_events), 2)
+        for event in esp_events:
+            self.assertNotEqual(event["source_ip"], "None")
+            self.assertIsNotNone(event["ip_protocol"])
+
+    def test_ipv6_direction_when_wan_ip_is_ipv6(self):
+        text = json.dumps([_ESP_PKT_V6, json.loads(json.dumps(_ESP_PKT_V6))])
+        esp_events, _ = events_mod.parse_tshark_json(text, WAN_IP_V6)
+        self.assertEqual(len(esp_events), 1)
+        self.assertEqual(esp_events[0]["direction"], "outbound")
+
+    def test_non_esp_non_ike_ignored(self):
+        text = json.dumps([_ESP_PKT, _TCP_PKT_V6, _IKE_SA_INIT_PKT])
+        esp_events, ike_events = events_mod.parse_tshark_json(text, WAN_IP)
+        self.assertEqual(len(esp_events), 1)
+        self.assertEqual(len(ike_events), 1)
+
+    def test_invalid_json_lines_skipped_safely(self):
+        text = "\n".join([
+            json.dumps(_ESP_PKT),
+            "this-is-not-json",
+            json.dumps(_ESP_PKT_V6),
+            "{\"broken\": ",
+        ])
+        esp_events, _ = events_mod.parse_tshark_json(text, WAN_IP_V6)
+        self.assertEqual(len(esp_events), 2)
 
 
 class TestParseTsharkJson(unittest.TestCase):

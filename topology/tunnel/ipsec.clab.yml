@@ -18,6 +18,12 @@ topology:
       privileged: true
       env:
         AUDIT_TAP_IFACE: "eth2"
+        # GW-A is the authoritative observation point.  Inside gw-a the
+        # entrypoint mirrors eth2 (WAN/IPsec side: IKE + ESP) into the
+        # in-container tap (audit-tap0) AND copy-only into eth3, which is a
+        # direct veth feed to the passive sensor (sensor:eth1).  The sensor is
+        # an observation sink, never an inline member of the WAN segment.
+        AUDIT_TAP_TARGET: "eth3"
       cmd: /bin/sh -c "/usr/local/bin/gw-entrypoint.sh"
       binds:
         - ../../scripts/gw-entrypoint.sh:/usr/local/bin/gw-entrypoint.sh
@@ -72,15 +78,18 @@ topology:
     # LAN-A
     - endpoints: ["host-a:eth1", "gw-a:eth1"]
 
-    # WAN: transparent L2 segment (bridge br-wan, root netns)
-    #   eth1 <- gw-a:eth2 (192.168.100.1)  [mirror source: gw-a WAN side]
+    # WAN: transparent L2 segment (bridge br-wan, root netns) - IPsec/ESP
+    # dataplane only.  br-wan carries exactly the two gateway members; it is
+    # NOT a monitoring/tap component and has no sensor member.
+    #   eth1 <- gw-a:eth2 (192.168.100.1)
     #   eth2 <- gw-b:eth2 (192.168.100.2)
-    #   eth3 <- sensor:eth1 (passive dedicated sink, no IP, no forwarding)
-    # Mirror: ingress+egress on eth1 (gw-a peer) only, feeding eth3.
-    # eth3 is isolated (no bridge floods) - only mirred copies arrive.
     - endpoints: ["gw-a:eth2", "br-wan:eth1"]
     - endpoints: ["gw-b:eth2", "br-wan:eth2"]
-    - endpoints: ["sensor:eth1", "br-wan:eth3"]
+
+    # GW-A -> sensor passive observation feed (direct veth, NOT in the WAN
+    # path).  gw-a mirrors eth2 (IKE + ESP) copy-only into eth3; the sensor
+    # receives the mirrored stream on eth1 (no IP, no forwarding, sink only).
+    - endpoints: ["gw-a:eth3", "sensor:eth1"]
 
     # LAN-B
     - endpoints: ["gw-b:eth1", "host-b:eth1"]

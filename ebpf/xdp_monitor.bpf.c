@@ -7,6 +7,10 @@
 #define ETH_P_IP 0x0800
 #endif
 
+#ifndef ETH_P_IPV6
+#define ETH_P_IPV6 0x86DD
+#endif
+
 #define RINGBUF_ENTRIES (1 << 18)
 
 struct {
@@ -37,6 +41,7 @@ int xdp_pass(struct xdp_md *ctx)
 	struct xdp_monitor_event *e;
 	struct ethhdr *eth;
 	struct iphdr *ip;
+	struct ipv6hdr *ip6;
 	struct udphdr *udp;
 
 	increment(COUNTER_TOTAL);
@@ -60,66 +65,145 @@ int xdp_pass(struct xdp_md *ctx)
 	if ((void *)(eth + 1) > data_end)
 		goto submit;
 
-	if (eth->h_proto != bpf_htons(ETH_P_IP))
-		goto submit;
-
-	ip = (void *)(eth + 1);
-	if ((void *)(ip + 1) > data_end)
-		goto submit;
-
-	if (ip->version != 4)
-		goto submit;
-
-	e->src = ip->saddr;
-	e->dst = ip->daddr;
-	e->proto = ip->protocol;
-
-	if (ip->protocol == IPPROTO_ESP) {
-		void *esp = (void *)ip + (__u32)ip->ihl * 4;
-
-		if ((void *)esp + 8 > data_end)
+	/*
+	 * IPv4 outer header.
+	 */
+	if (eth->h_proto == bpf_htons(ETH_P_IP)) {
+		ip = (void *)(eth + 1);
+		if ((void *)(ip + 1) > data_end)
 			goto submit;
-		e->spi = *(__u32 *)esp;
-		e->seq = *(__u32 *)(esp + 4);
-		e->type = COUNTER_ESP;
-		increment(COUNTER_ESP);
-		goto submit;
-	}
 
-	if (ip->protocol == IPPROTO_AH) {
-		void *ah = (void *)ip + (__u32)ip->ihl * 4;
-
-		if ((void *)ah + 12 > data_end)
+		if (ip->version != 4)
 			goto submit;
-		e->spi = *(__u32 *)(ah + 4);
-		e->seq = *(__u32 *)(ah + 8);
-		e->type = COUNTER_AH;
-		increment(COUNTER_AH);
+
+		e->family = 4;
+		e->src = ip->saddr;
+		e->dst = ip->daddr;
+		e->proto = ip->protocol;
+
+		if (ip->protocol == IPPROTO_ESP) {
+			void *esp = (void *)ip + (__u32)ip->ihl * 4;
+
+			if ((void *)esp + 8 > data_end)
+				goto submit;
+			e->spi = *(__u32 *)esp;
+			e->seq = *(__u32 *)(esp + 4);
+			e->type = COUNTER_ESP;
+			increment(COUNTER_ESP);
+			goto submit;
+		}
+
+		if (ip->protocol == IPPROTO_AH) {
+			void *ah = (void *)ip + (__u32)ip->ihl * 4;
+
+			if ((void *)ah + 12 > data_end)
+				goto submit;
+			e->spi = *(__u32 *)(ah + 4);
+			e->seq = *(__u32 *)(ah + 8);
+			e->type = COUNTER_AH;
+			increment(COUNTER_AH);
+			goto submit;
+		}
+
+		if (ip->protocol != IPPROTO_UDP)
+			goto submit;
+
+		if (ip->ihl < 5)
+			goto submit;
+
+		udp = (void *)ip + (__u32)ip->ihl * 4;
+		if ((void *)(udp + 1) > data_end)
+			goto submit;
+
+		e->sport = udp->source;
+		e->dport = udp->dest;
+
+		if (udp->source == bpf_htons(500) || udp->dest == bpf_htons(500)) {
+			e->type = COUNTER_IKE;
+			increment(COUNTER_IKE);
+			goto submit;
+		}
+
+		if (udp->source == bpf_htons(4500) || udp->dest == bpf_htons(4500)) {
+			e->type = COUNTER_IKE_NATT;
+			increment(COUNTER_IKE_NATT);
+			goto submit;
+		}
+
+		increment(COUNTER_OTHER);
 		goto submit;
 	}
 
-	if (ip->protocol != IPPROTO_UDP)
-		goto submit;
+	/*
+	 * IPv6 outer header.
+	 *
+	 * Parsing scope: only the immediate IPv6 header is examined.  The
+	 * next-header field (`nexthdr`) is inspected directly; extension
+	 * headers (hop-by-hop 0, routing 43, fragment 44, destination 60, ...)
+	 * are NOT traversed, so ESP/AH following an extension header is not
+	 * classified (falls through to OTHER).  This is a documented scope
+	 * limitation of the lightweight classifier, not silent misclassification.
+	 */
+	if (eth->h_proto == bpf_htons(ETH_P_IPV6)) {
+		ip6 = (void *)(eth + 1);
+		if ((void *)(ip6 + 1) > data_end)
+			goto submit;
 
-	if (ip->ihl < 5)
-		goto submit;
+		if (ip6->version != 6)
+			goto submit;
 
-	udp = (void *)ip + (__u32)ip->ihl * 4;
-	if ((void *)(udp + 1) > data_end)
-		goto submit;
+		e->family = 6;
+		__builtin_memcpy(e->src6, &ip6->saddr, sizeof(ip6->saddr));
+		__builtin_memcpy(e->dst6, &ip6->daddr, sizeof(ip6->daddr));
+		e->proto = ip6->nexthdr;
 
-	e->sport = udp->source;
-	e->dport = udp->dest;
+		if (ip6->nexthdr == IPPROTO_ESP) {
+			void *esp = (void *)(ip6 + 1);
 
-	if (udp->source == bpf_htons(500) || udp->dest == bpf_htons(500)) {
-		e->type = COUNTER_IKE;
-		increment(COUNTER_IKE);
-		goto submit;
-	}
+			if ((void *)esp + 8 > data_end)
+				goto submit;
+			e->spi = *(__u32 *)esp;
+			e->seq = *(__u32 *)(esp + 4);
+			e->type = COUNTER_ESP;
+			increment(COUNTER_ESP);
+			goto submit;
+		}
 
-	if (udp->source == bpf_htons(4500) || udp->dest == bpf_htons(4500)) {
-		e->type = COUNTER_IKE_NATT;
-		increment(COUNTER_IKE_NATT);
+		if (ip6->nexthdr == IPPROTO_AH) {
+			void *ah = (void *)(ip6 + 1);
+
+			if ((void *)ah + 12 > data_end)
+				goto submit;
+			e->spi = *(__u32 *)(ah + 4);
+			e->seq = *(__u32 *)(ah + 8);
+			e->type = COUNTER_AH;
+			increment(COUNTER_AH);
+			goto submit;
+		}
+
+		if (ip6->nexthdr != IPPROTO_UDP)
+			goto submit;
+
+		udp = (void *)(ip6 + 1);
+		if ((void *)(udp + 1) > data_end)
+			goto submit;
+
+		e->sport = udp->source;
+		e->dport = udp->dest;
+
+		if (udp->source == bpf_htons(500) || udp->dest == bpf_htons(500)) {
+			e->type = COUNTER_IKE;
+			increment(COUNTER_IKE);
+			goto submit;
+		}
+
+		if (udp->source == bpf_htons(4500) || udp->dest == bpf_htons(4500)) {
+			e->type = COUNTER_IKE_NATT;
+			increment(COUNTER_IKE_NATT);
+			goto submit;
+		}
+
+		increment(COUNTER_OTHER);
 		goto submit;
 	}
 

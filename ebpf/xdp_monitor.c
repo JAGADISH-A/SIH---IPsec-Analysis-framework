@@ -59,31 +59,38 @@ static int handle_event(void *ctx, void *data, size_t size)
         return 0;
 
     const struct xdp_monitor_event *e = data;
-    char src[INET_ADDRSTRLEN];
-    char dst[INET_ADDRSTRLEN];
+    char src[INET6_ADDRSTRLEN];
+    char dst[INET6_ADDRSTRLEN];
 
-    inet_ntop(AF_INET, &e->src, src, sizeof(src));
-    inet_ntop(AF_INET, &e->dst, dst, sizeof(dst));
+    if (e->family == 6) {
+        inet_ntop(AF_INET6, e->src6, src, sizeof(src));
+        inet_ntop(AF_INET6, e->dst6, dst, sizeof(dst));
+    } else {
+        inet_ntop(AF_INET, &e->src, src, sizeof(src));
+        inet_ntop(AF_INET, &e->dst, dst, sizeof(dst));
+    }
 
     if (json_out) {
         if (e->type == COUNTER_ESP || e->type == COUNTER_AH) {
             printf("{\"ts\":%llu,\"type\":\"%s\",\"src\":\"%s\",\"dst\":\"%s\","
-                   "\"proto\":%u,\"len\":%u,\"spi\":%u,\"seq\":%u}\n",
+                   "\"family\":%u,\"proto\":%u,\"len\":%u,\"spi\":%u,\"seq\":%u}\n",
                    (unsigned long long)e->timestamp,
                    e->type < COUNTER_MAX ? counter_labels[e->type] : "?",
                    src,
                    dst,
+                   e->family,
                    e->proto,
                    e->len,
                    ntohl(e->spi),
                    ntohl(e->seq));
         } else {
             printf("{\"ts\":%llu,\"type\":\"%s\",\"src\":\"%s\",\"dst\":\"%s\","
-                   "\"proto\":%u,\"len\":%u,\"sport\":%u,\"dport\":%u}\n",
+                   "\"family\":%u,\"proto\":%u,\"len\":%u,\"sport\":%u,\"dport\":%u}\n",
                    (unsigned long long)e->timestamp,
                    e->type < COUNTER_MAX ? counter_labels[e->type] : "?",
                    src,
                    dst,
+                   e->family,
                    e->proto,
                    e->len,
                    ntohs(e->sport),
@@ -93,11 +100,12 @@ static int handle_event(void *ctx, void *data, size_t size)
         return 0;
     }
 
-    printf("ts=%llu type=%s src=%s dst=%s proto=%u len=%u",
+    printf("ts=%llu type=%s src=%s dst=%s family=%u proto=%u len=%u",
            (unsigned long long)e->timestamp,
            e->type < COUNTER_MAX ? counter_labels[e->type] : "?",
            src,
            dst,
+           e->family,
            e->proto,
            e->len);
 

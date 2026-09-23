@@ -3,7 +3,8 @@
 TShark runs inside the gateway container against the observation interface
 (``audit-tap0``).  Only *metadata* is extracted -- never payload content:
 
-* ESP frames: outer IP header + ESP header (SPI, sequence number).
+* ESP frames: outer IP header (IPv4 ``ip.*`` or IPv6 ``ipv6.*``) + ESP
+  header (SPI, sequence number).
 * IKE frames: UDP header (ports) + IKE header (exchange type, message id).
 
 ESP payloads are never decrypted; no key material is fed to TShark, so
@@ -89,19 +90,32 @@ def _as_timestamp(value):
     return datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc).isoformat()
 
 
+def _outer_addrs(layers):
+    """Outer header endpoints/protocol from the IPv4 or IPv6 header.
+
+    TShark exposes IPv4 as ``ip.*`` and IPv6 as ``ipv6.*``.  IPv4 wins when
+    both are present; each value stays in the existing canonical form so the
+    event schema is unchanged for either address family.
+    """
+    ip = layers.get("ip", {})
+    ip6 = layers.get("ipv6", {})
+    src = ip.get("ip.src") or ip6.get("ipv6.src")
+    dst = ip.get("ip.dst") or ip6.get("ipv6.dst")
+    proto = ip.get("ip.proto") or ip6.get("ipv6.nxt")
+    return src, dst, proto
+
+
 def normalize_esp_event(layers, wan_ip):
     """Build a normalized ESP observation dict from one packet's layers."""
     frame = layers.get("frame", {})
-    ip = layers.get("ip", {})
     esp = layers.get("esp", {})
-    src = _as_str(ip.get("ip.src"))
-    dst = _as_str(ip.get("ip.dst"))
+    src, dst, proto = _outer_addrs(layers)
     return {
         "timestamp": _as_timestamp(frame.get("frame.time_epoch")),
         "frame_number": _as_int(frame.get("frame.number")),
-        "source_ip": src,
-        "destination_ip": dst,
-        "ip_protocol": _as_int(ip.get("ip.proto")),
+        "source_ip": _as_str(src),
+        "destination_ip": _as_str(dst),
+        "ip_protocol": _as_int(proto),
         "frame_length": _as_int(frame.get("frame.len")),
         "spi": _as_str(esp.get("esp.spi")),
         "sequence": _as_int(esp.get("esp.sequence")),
@@ -112,17 +126,15 @@ def normalize_esp_event(layers, wan_ip):
 def normalize_ike_event(layers, wan_ip):
     """Build a normalized IKE observation dict from one packet's layers."""
     frame = layers.get("frame", {})
-    ip = layers.get("ip", {})
     udp = layers.get("udp", {})
     isakmp = layers.get("isakmp", {})
-    src = _as_str(ip.get("ip.src"))
-    dst = _as_str(ip.get("ip.dst"))
+    src, dst, _proto = _outer_addrs(layers)
     exchange_type = _as_int(isakmp.get("isakmp.exchangetype"))
     return {
         "timestamp": _as_timestamp(frame.get("frame.time_epoch")),
         "frame_number": _as_int(frame.get("frame.number")),
-        "source_ip": src,
-        "destination_ip": dst,
+        "source_ip": _as_str(src),
+        "destination_ip": _as_str(dst),
         "source_port": _as_int(udp.get("udp.srcport")),
         "destination_port": _as_int(udp.get("udp.dstport")),
         "ike_exchange_type": exchange_type,

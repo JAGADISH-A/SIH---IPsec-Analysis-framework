@@ -1,631 +1,261 @@
-# SIH — IPsec Analysis Framework
+# IPsec VPN Testbed — Observation & Analysis Framework
 
-# IPsec VPN Testbed
-
-A reproducible four-container IPsec VPN testbed built with **Containerlab** and **strongSwan 6.0.3**.
-
-The testbed models two LANs connected through two IPsec gateways:
+A reproducible **five-container** IPsec VPN testbed built with **Containerlab**, **strongSwan 6.0.3** and
+eBPF/XDP monitoring, in which **GW-A is the authoritative observation point**.
 
 ```text
-              IPsec VPN
-             ═══════════
-Host-A ─── GW-A ───────── GW-B ─── Host-B
-          LAN-A    WAN     LAN-B
+                    IPsec VPN (ESP)
+╭─LAN-A─────────╮  ╭──────WAN──────╮  ╭─LAN-B─────────╮
+│               │  │               │  │               │
+│  Host-A ───── GW-A ───── br-wan ───── GW-B ───── Host-B │
+│  10.10.1.10   │ eth2    eth2     │  10.10.2.10      │
+│               │  │               │  │               │
+│               │  eth3    eth1    │                     sensor (passive)
+│               │    ╰── mirror ──╯╯  ip_forward=0, NOT on br-wan
+│               │  audit-tap0         eBPF/XDP eth1      │
+╰───────────────╯  (in-gw-a tap)                         │
 ```
 
-## 1. Testbed Topology
+There are **five** containers (tunnel topology):
 
-The testbed contains exactly four containers:
+| Node     | Role              | Address                            |
+| -------- | ----------------- | ---------------------------------- |
+| `host-a` | LAN-A host        | `10.10.1.10/24`                    |
+| `gw-a`   | IPsec gateway (observation point) | `10.10.1.1/24`, `192.168.100.1/24` |
+| `gw-b`   | IPsec gateway     | `192.168.100.2/24`, `10.10.2.1/24` |
+| `host-b` | LAN-B host        | `10.10.2.10/24`                    |
+| `sensor` | Passive observation node | mirror feed on `eth1`          |
 
-| Node     | Role          | Address                            |
-| -------- | ------------- | ---------------------------------- |
-| `host-a` | LAN-A host    | `10.10.1.10/24`                    |
-| `gw-a`   | IPsec gateway | `10.10.1.1/24`, `192.168.100.1/24` |
-| `gw-b`   | IPsec gateway | `192.168.100.2/24`, `10.10.2.1/24` |
-| `host-b` | LAN-B host    | `10.10.2.10/24`                    |
+Architecture notes (verified behaviour — do not "fix"):
 
-The WAN link between the gateways uses:
-
-```text
-GW-A: 192.168.100.1/24
-GW-B: 192.168.100.2/24
-```
-
-The LANs are:
-
-```text
-LAN-A: 10.10.1.0/24
-LAN-B: 10.10.2.0/24
-```
-
-The Containerlab management network is separate from the IPsec dataplane.
+* The WAN is a root-namespace bridge named **`br-wan`** carrying **only** the two gateway
+  members (`gw-a eth2`, `gw-b eth2`). The sensor is **not** a member and has
+  `net.ipv4.ip_forward=0`.
+* GW-A mirrors **both directions** of its `eth2` traffic using `tc`/`clsact` `mirred`
+  actions. The mirror feeds (**a**) an in-gw-a `tap` device `audit-tap0` (forensic surface,
+  readable with `tshark`) and (**b**) `gw-a eth3` → `sensor eth1`.
+* `br-wan` must exist **before** `containerlab deploy`; the deploy wrapper handles this.
+  Always deploy/teardown through the wrapper — never a bare `containerlab deploy`.
 
 ---
 
-## 2. Requirements
+## Quick Start (one-step lifecycle)
 
-Run the testbed inside the Ubuntu VM.
-
-Required:
-
-* Ubuntu
-* Docker
-* Containerlab
-* Git
-
-Check Containerlab:
+Everything is scripted. From the repository root:
 
 ```bash
-containerlab version
+./scripts/install.sh   # 1) host prereqs + images + ebpf build + topology validation
+./scripts/run.sh       # 2) deploy (or converge) + full verification
+./scripts/status.sh    # 3) concise health report, any time
+./scripts/stop.sh      # 4) teardown (reuses the deployment destroy path)
 ```
 
-Check Docker:
+`run.sh` and `stop.sh` recreate `br-wan` and run Containerlab, so they require root
+(`sudo ./scripts/run.sh`); `install.sh` and `status.sh` run unprivileged.
 
-```bash
-docker --version
+### Output conventions
+
+| Tag      | Meaning                                             |
+| -------- | --------------------------------------------------- |
+| `[OK]`   | check passed                                        |
+| `[WARN]` | non-fatal observation (e.g. optional XDP sampling)  |
+| `[FAIL]` | required check failed → the script exits non-zero   |
+
+`install.sh` exits non-zero if a **required** prerequisite is missing. It will not fail
+because native XDP cannot attach (native/DRV XDP is a known veth/MTU limitation; the
+verified mode is **generic/SKB** — see §XDP).
+
+### Idempotency
+
+* `install.sh`: existing images and the built `ebpf/xdp_monitor` are reused.
+* `run.sh`: if the lab is already deployed and observation-mirror healthy, it **converges**
+  (skips redeploy) and re-verifies the full stack; otherwise it redeploys through the
+  deploy wrapper (`--reconfigure`-based), which is safe on a running lab.
+
+---
+
+## Requirements
+
+Run the testbed inside the Ubuntu VM:
+
+* Ubuntu (Linux), Docker (daemon running), Containerlab,
+* build toolchain for the eBPF monitor: `clang`/`llvm`, `bpftool`, `libbpf`/`libelf`/`libz`, `make`,
+* `python3` with `pyyaml` (used for topology validation).
+
+`install.sh` checks all of these and prints per-item `[OK]/[WARN]/[FAIL]`; fix any
+`[FAIL]`, then re-run it. It does **not** install system packages — only reports them.
+
+Artifacts:
+
+```text
+ebpf/xdp_monitor          built by `make -C ebpf` (installed/run inside the sensor)
 ```
 
 ---
 
-## 3. Project Structure
-
-The important testbed files are:
+## Project Structure
 
 ```text
 ipsec-testbed/
-├── .gitignore
-├── README.md
-├── gateway-image/
-│   └── Dockerfile
-├── host-image/
-│   └── Dockerfile
-├── configs/
-│   ├── gw-a/
-│   │   └── swanctl/
-│   └── gw-b/
-│       └── swanctl/
+├── ebpf/
+│   └── xdp_monitor.c ...          # eBPF/XDP monitor (CLI: <iface> [--json])
+├── gateway-image/   host-image/   transport-host-image/    # Dockerfiles
+├── configs/gw-a/swanctl           configs/gw-b/swanctl     # strongSwan
+├── topology/
+│   ├── tunnel/ipsec.clab.yml      # verified tunnel architecture
+│   └── transport/ipsec.clab.yml   # transport (host-d) topology
 ├── scripts/
-│   └── gw-entrypoint.sh
-└── topology/
-    └── ipsec.clab.yml
+│   ├── install.sh                 # one-step preparation
+│   ├── run.sh                     # deploy + verify
+│   ├── status.sh                  # health report
+│   ├── stop.sh                    # teardown
+│   ├── gateway-entrypoint wrappers (gw-entrypoint.sh, audit-tap-setup.sh,
+│   │                              transport-entrypoint.sh)
+│   └── deploy-ipsec.sh            # authoritative deploy/destroy wrapper (br-wan + clab)
+└── README.md
 ```
 
-Containerlab-generated directories such as:
-
-```text
-topology/clab-ipsec/
-```
-
-are generated during deployment and are ignored by Git.
+Containerlab-generated state (`topology/*/clab-*/`) is git-ignored.
 
 ---
 
-## 4. Build the Container Images
-
-### Host image
-
-The host image provides basic networking tools such as `ip` and `ping`.
-
-Build it with:
+## Building the Images (done by install.sh)
 
 ```bash
-docker build -t ipsec-test-host:24.04 ./host-image
+docker build -t ipsec-test-gateway:6.0.3  ./gateway-image
+docker build -t ipsec-test-host:24.04     ./host-image
+docker build -t ipsec-transport-host:24.04 ./transport-host-image
 ```
 
-### Gateway image
-
-The gateway image is based on:
-
-```text
-openeuler/strongswan:6.0.3-oe2403sp4
-```
-
-and includes additional diagnostic tools such as `tcpdump`.
-
-Build it with:
-
-```bash
-docker build -t ipsec-test-gateway:6.0.3 ./gateway-image
-```
-
-Verify the images:
-
-```bash
-docker images | grep -E 'ipsec-test-(host|gateway)'
-```
+The gateway image is based on `openeuler/strongswan:6.0.3-oe2403sp4` and adds `tcpdump`,
+`tshark`, and the observation helpers.
 
 ---
 
-## 5. Deploy the Testbed
+## How the Sensor/Monitoring Works
 
-From the repository root:
-
-```bash
-containerlab deploy -t topology/ipsec.clab.yml
-```
-
-The topology creates:
+On GW-A the container entrypoint provisions the observation path:
 
 ```text
-clab-ipsec-host-a
-clab-ipsec-gw-a
-clab-ipsec-gw-b
-clab-ipsec-host-b
+gw-a eth2 (ingress + egress) ── tc mirred (mirror-dev, 2 chained actions)
+        ├──> bridge tap "audit-tap0"           (tshark -i audit-tap0)
+        └──> eth3 ── veth ──> sensor eth1       (tcpdump, eBPF/XDP)
 ```
 
-Verify:
+Verify the mirror filters (they live on the `ingress`/`egress` parents of `eth2`):
 
 ```bash
-docker ps --format 'table {{.Names}}\t{{.Status}}'
+docker exec clab-ipsec-gw-a tc filter show dev eth2 ingress | grep mirred
+docker exec clab-ipsec-gw-a tc filter show dev eth2 egress  | grep mirred
 ```
 
-All four containers should be running.
+> Trap: the bare `tc filter show dev eth2` form lists the root qdisc only and returns
+> nothing for clsact mirrors. Always check `... ingress` and `... egress` explicitly.
+> (`run.sh`/`status.sh` already implement this correctly.)
+
+### cBPF/audit tap readout (in gw-a)
+
+```bash
+docker exec clab-ipsec-gw-a tshark -i audit-tap0 -c 20        # ESP frames live
+docker exec clab-ipsec-host-a  ping -c 3 10.10.2.10 &          # generate traffic
+```
+
+### eBPF/XDP monitor on the sensor
+
+The sensor runs `xdp_monitor` (non-terminating, JSON events per packet). The veth/MTU
+combination rejects **native (driver)** XDP (`veth: Peer MTU is too large to set XDP`);
+the monitor automatically falls back and runs in **generic (SKB) mode**, which is verified
+working on this testbed. `install.sh` never fails on this limitation.
+
+```bash
+docker cp ebpf/xdp_monitor clab-ipsec-sensor:/usr/sbin/xdp_monitor
+docker exec clab-ipsec-sensor /usr/sbin/xdp_monitor eth1 --json   # live stream
+```
+
+Useful XDP fields: `type` (`ESP`/`AH`/`IKE`/`IKE-NAT-T`/`OTHER`), `spi`, `seq`, `src`/`dst`.
 
 ---
 
-## 6. Verify Network Configuration
+## IPsec Configuration
 
-### GW-A
+```text
+IKE v2, PSK (shared), GW-A ID gw-a, GW-B ID gw-b
+TS GW-A local 10.10.1.0/24, remote 10.10.2.0/24
+CHILD_SA: lan-a-to-lan-b — TUNNEL, ESP:AES_GCM_16-256
+```
+
+Initiate/re-establish from GW-A:
 
 ```bash
-docker exec clab-ipsec-gw-a ip addr show eth1
-docker exec clab-ipsec-gw-a ip addr show eth2
-docker exec clab-ipsec-gw-a ip route
+docker exec clab-ipsec-gw-a swanctl --initiate --child lan-a-to-lan-b
 ```
 
-Expected addresses:
-
-```text
-eth1: 10.10.1.1/24
-eth2: 192.168.100.1/24
-```
-
-Expected cross-LAN route:
-
-```text
-10.10.2.0/24 via 192.168.100.2
-```
-
-### GW-B
-
-```bash
-docker exec clab-ipsec-gw-b ip addr show eth1
-docker exec clab-ipsec-gw-b ip addr show eth2
-docker exec clab-ipsec-gw-b ip route
-```
-
-Expected:
-
-```text
-eth1: 10.10.2.1/24
-eth2: 192.168.100.2/24
-```
-
-Expected cross-LAN route:
-
-```text
-10.10.1.0/24 via 192.168.100.1
-```
+`run.sh` does this automatically and waits for `ESTABLISHED`.
 
 ---
 
-## 7. Verify Automatic strongSwan Startup
+## Verification Reference (what run.sh checks)
 
-The gateway entrypoint automatically:
+1. **Nodes**: all five containers running.
+2. **Interfaces**: `gw-a eth1/eth2/eth3`, `audit-tap0`, `sensor eth1`.
+3. **Observation mirror**: ≥1 `mirred` action per direction on `gw-a eth2`.
+4. **IPsec**: `swanctl --list-sas` → `ESTABLISHED` + CHILD `lan-a-to-lan-b`.
+5. **XFRM**: ESP states present, outbound tunnel policy installed.
+6. **Connectivity**:
 
-1. Starts `charon`.
-2. Waits for VICI to become available.
-3. Loads the strongSwan configuration.
-4. Keeps the container running.
+   ```bash
+   docker exec clab-ipsec-host-a ping -c 5 10.10.2.10          # expect 0% loss
+   docker exec clab-ipsec-host-b ping -c 5 10.10.1.10          # reverse direction
+   ```
 
-Verify `charon`:
+7. **Sensor mirror**: live capture during a ping burst — `gw-a eth2` and `sensor eth1`
+   counts match (high watermark, then stable).
+8. **Audit tap**: live `tshark` sample on `audit-tap0` sees ESP.
+9. **Sensor posture**: `ip_forward=0`; sensor not on `br-wan` (`br-wan` members remain
+   exactly the two gateway `eth2`s).
+10. **XDP (optional, non-fatal)**: `xdp_monitor` on `sensor eth1` receives ESP events in
+    generic/SKB mode.
 
-```bash
-docker exec clab-ipsec-gw-a pgrep -a charon
-docker exec clab-ipsec-gw-b pgrep -a charon
-```
+### Known dataplane quirk (by design)
 
-Expected:
-
-```text
-/usr/local/libexec/ipsec/charon
-```
-
-Verify the loaded connection:
-
-```bash
-docker exec clab-ipsec-gw-a swanctl --list-conns
-```
-
-Expected connection:
-
-```text
-gw-a-to-gw-b
-```
+Both gateways forward LAN traffic through the tunnel **and** drop a plaintext copy onto
+the WAN (static `main`-table routes coexist with strongSwan's policy-route table 220).
+Receivers discard the plaintext at XFRM ingress, so ping stays exact. It is faithfully
+mirrored to the sensor (appears as `OTHER` in XDP when ICMP) and is **not** caused by —
+and must not be "fixed" by — the observation work.
 
 ---
 
-## 8. IPsec Configuration
+## Teardown / Recovery
 
-The gateways use:
-
-```text
-IKE version:       IKEv2
-Authentication:    Pre-shared key
-GW-A ID:           gw-a
-GW-B ID:           gw-b
+```bash
+sudo ./scripts/stop.sh        # destroys the lab and removes br-wan (via the wrapper)
+./scripts/run.sh              # redeploy + full re-verify any time
 ```
 
-The IPsec traffic selectors are:
-
-```text
-GW-A local:        10.10.1.0/24
-GW-A remote:       10.10.2.0/24
-
-GW-B local:        10.10.2.0/24
-GW-B remote:       10.10.1.0/24
-```
-
-IKE proposal:
-
-```text
-AES-256
-SHA-256
-MODP-2048
-```
-
-ESP proposal:
-
-```text
-AES-GCM-256
-```
-
-The lab uses a shared PSK configured in the gateway `swanctl` configuration.
+Recovery rule of thumb inherited from the wrapper: to recreate the Containerlab dataplane
+links, use the wrapper's `destroy`/`deploy` (a bare `docker restart` does not restore
+`eth1/eth2/eth3`). Health checks and first-run provisioning live in `deploy-ipsec.sh`.
 
 ---
 
-## 9. Establish the IPsec Tunnel
-
-Initiate the tunnel from GW-A:
-
-```bash
-docker exec clab-ipsec-gw-a \
-  swanctl --initiate --child lan-a-to-lan-b
-```
-
-Successful establishment should report:
+## Final Validation Checklist
 
 ```text
-IKE_SA ... established
-CHILD_SA ... established
-initiate completed successfully
+[ ] install.sh exits 0 (idempotent across re-runs)
+[ ] five containers running
+[ ] GW-A observation ready: eth2 ing+eg mirror -> audit-tap0 + eth3 -> sensor
+[ ] br-wan members = gw-a eth2, gw-b eth2 (sensor NOT a member)
+[ ] sensor ip_forward=0
+[ ] charon running on both gateways, configs loaded
+[ ] IKEv2 SA + CHILD_SA lan-a-to-lan-b ESTABLISHED (ESP:AES_GCM_16-256)
+[ ] XFRM state/policy present, counters advance
+[ ] Host-A → Host-B ping 0% packet loss (and reverse)
+[ ] ESP mirrored 1:1 from gw-a eth2 to sensor eth1
+[ ] audit-tap0 sees ESP in gw-a
+[ ] xdp_monitor captures ESP on sensor eth1 (generic/SKB mode)
+[ ] run.sh on an already-healthy lab converges (no blind redeploy)
+[ ] stop.sh tears down cleanly; next run.sh redeploys and passes fully
 ```
 
----
-
-## 10. Verify the IPsec Security Association
-
-Run:
-
-```bash
-docker exec clab-ipsec-gw-a swanctl --list-sas
-```
-
-Expected state:
-
-```text
-ESTABLISHED, IKEv2
-CHILD_SA ... TUNNEL
-```
-
-The CHILD_SA should show:
-
-```text
-10.10.1.0/24 === 10.10.2.0/24
-```
-
----
-
-## 11. Test LAN-to-LAN Traffic
-
-From Host-A:
-
-```bash
-docker exec clab-ipsec-host-a ping -c 5 10.10.2.10
-```
-
-Expected:
-
-```text
-5 packets transmitted, 5 received, 0% packet loss
-```
-
-Reverse traffic can be tested with:
-
-```bash
-docker exec clab-ipsec-host-b ping -c 5 10.10.1.10
-```
-
----
-
-## 12. Verify XFRM/IPsec Processing
-
-On GW-A:
-
-```bash
-docker exec clab-ipsec-gw-a ip -s xfrm state
-```
-
-Also inspect policies:
-
-```bash
-docker exec clab-ipsec-gw-a ip -s xfrm policy
-```
-
-After traffic has passed through the tunnel, packet and byte counters should be non-zero.
-
-The same checks can be performed on GW-B:
-
-```bash
-docker exec clab-ipsec-gw-b ip -s xfrm state
-docker exec clab-ipsec-gw-b ip -s xfrm policy
-```
-
----
-
-## 13. Verify ESP on the WAN
-
-The gateway image includes `tcpdump`.
-
-On GW-A:
-
-```bash
-docker exec clab-ipsec-gw-a \
-  tcpdump -ni any 'host 192.168.100.2' -c 10
-```
-
-After generating traffic, the WAN capture should show ESP packets:
-
-```text
-192.168.100.1 > 192.168.100.2: ESP
-192.168.100.2 > 192.168.100.1: ESP
-```
-
-This verifies that LAN traffic is being carried through the IPsec ESP tunnel across the WAN.
-
----
-
-# 14. Tunnel Lifecycle Test
-
-Terminate the existing tunnel:
-
-```bash
-docker exec clab-ipsec-gw-a \
-  swanctl --terminate --ike gw-a-to-gw-b
-```
-
-Verify:
-
-```bash
-docker exec clab-ipsec-gw-a swanctl --list-sas
-```
-
-Re-establish:
-
-```bash
-docker exec clab-ipsec-gw-a \
-  swanctl --initiate --child lan-a-to-lan-b
-```
-
-Then verify traffic:
-
-```bash
-docker exec clab-ipsec-host-a ping -c 5 10.10.2.10
-```
-
-Expected:
-
-```text
-5 packets transmitted, 5 received, 0% packet loss
-```
-
----
-
-# 15. Negative Test — Wrong PSK
-
-The testbed has been validated with an intentionally incorrect PSK.
-
-Procedure:
-
-1. Establish the tunnel with the correct PSK.
-2. Temporarily change the PSK on one gateway.
-3. Terminate the existing SA.
-4. Reload the credentials/configuration.
-5. Attempt to initiate the tunnel.
-6. Verify that authentication fails.
-7. Verify that no CHILD_SA is established.
-8. Restore the correct PSK.
-9. Reload the configuration.
-10. Re-establish the tunnel.
-11. Verify LAN traffic again.
-
-Expected result with the wrong PSK:
-
-```text
-IKE authentication fails
-CHILD_SA is not established
-LAN traffic does not pass
-```
-
-After restoring the correct PSK:
-
-```text
-IKE authentication succeeds
-CHILD_SA establishes
-LAN traffic recovers
-```
-
----
-
-# 16. Gateway Recovery
-
-A direct Docker restart of a Containerlab node does **not** recreate the Containerlab dataplane links.
-
-For example:
-
-```bash
-docker restart clab-ipsec-gw-a
-```
-
-may leave the container without the Containerlab-created `eth1` and `eth2` interfaces.
-
-Therefore, the supported recovery procedure for this testbed is to recreate the Containerlab topology:
-
-```bash
-containerlab destroy -t topology/ipsec.clab.yml
-```
-
-Then:
-
-```bash
-containerlab deploy -t topology/ipsec.clab.yml
-```
-
-This recreates:
-
-```text
-eth1
-eth2
-IP addresses
-routes
-Containerlab links
-```
-
-The gateway entrypoint then automatically starts `charon` and loads the strongSwan configuration.
-
-Re-establish the tunnel:
-
-```bash
-docker exec clab-ipsec-gw-a \
-  swanctl --initiate --child lan-a-to-lan-b
-```
-
-Verify traffic:
-
-```bash
-docker exec clab-ipsec-host-a ping -c 5 10.10.2.10
-```
-
-Expected:
-
-```text
-5 packets transmitted, 5 received, 0% packet loss
-```
-
-This recovery sequence has been successfully validated.
-
----
-
-# 17. Clean Shutdown
-
-To remove the complete testbed:
-
-```bash
-containerlab destroy -t topology/ipsec.clab.yml
-```
-
-Verify:
-
-```bash
-docker ps --format 'table {{.Names}}\t{{.Status}}'
-```
-
-Containerlab-generated files should remain excluded by `.gitignore`.
-
----
-
-# 18. Final Validation Checklist
-
-A deployment is considered successful when all of the following pass:
-
-```text
-[ ] Four containers running
-[ ] Host-A LAN address configured
-[ ] GW-A LAN/WAN addresses configured
-[ ] GW-B WAN/LAN addresses configured
-[ ] Host-B LAN address configured
-[ ] Cross-LAN routes present
-[ ] IPv4 forwarding enabled
-[ ] charon running on both gateways
-[ ] VICI available
-[ ] swanctl configuration loaded
-[ ] IKEv2 SA established
-[ ] CHILD_SA established
-[ ] Correct traffic selectors installed
-[ ] XFRM state/policy present
-[ ] ESP observed on WAN
-[ ] Host-A → Host-B ping successful
-[ ] Host-B → Host-A ping successful
-[ ] Tunnel terminate/re-establish successful
-[ ] Wrong-PSK test fails as expected
-[ ] Correct PSK restoration succeeds
-[ ] Containerlab recreation restores the testbed
-[ ] Traffic recovers after recreation
-```
-
----
-
-# 19. Result
-
-The testbed provides a reproducible four-node environment for IPsec experimentation:
-
-```text
-Host-A
-  |
-  | 10.10.1.0/24
-  |
-GW-A
-  |
-  | 192.168.100.0/24
-  |       IPsec / ESP
-  |
-GW-B
-  |
-  | 10.10.2.0/24
-  |
-Host-B
-```
-
-The validated baseline demonstrates:
-
-```text
-Containerlab deployment
-        ↓
-Network configuration
-        ↓
-Automatic strongSwan startup
-        ↓
-VICI readiness
-        ↓
-Configuration loading
-        ↓
-IKEv2 negotiation
-        ↓
-PSK authentication
-        ↓
-CHILD_SA establishment
-        ↓
-XFRM policy/state
-        ↓
-ESP-protected traffic
-        ↓
-Bidirectional LAN connectivity
-        ↓
-Lifecycle recovery
-        ↓
-Negative authentication testing
-        ↓
-Topology recreation and recovery
-```
-
-This is the baseline IPsec testbed for the project.
+This is the validated observation-aware IPsec testbed for the project.

@@ -1,0 +1,16 @@
+# Build context root .dockerignore - keeps image build contexts small and
+# prevents secrets/large output artifacts from being sent to the Docker daemon.
+# Kept intentionally minimal: ebpf/ (its build artifacts the transport image
+# needs) and the three image build dirs must remain in the context.
+.git
+.venv
+results
+__pycache__
+*.pyc
+core
+nodes
+.gitlab-ci.yml
+.gitignore
+.DS_Store
+topology/*/clab-state
+topology/*/.clab
