@@ -159,6 +159,49 @@ reconstructs XDP events from real captures and asserts exact equality with
 `extract_features` for all 59 features (fixture plus every capture of the
 completed run `dataset-20260916-231246`).
 
+## ML result record (adapter output, JSONL)
+
+`controller/ml_inference.py` reduces a live v2 record to the exactly-57 ML
+features in `results/ml/feature_schema_v2.json` order (after checking the full
+59-column v2 schema and dropping the two verified constants
+`burst_packet_ratio` / `ike_packet_count`), scores them with
+`results/ml/model_traffic_rf_v1.joblib`, and emits one ML result per input
+record:
+
+```json
+{
+  "model_version": "traffic_rf_v1",
+  "feature_schema_version": "v2",
+  "window_id": "7648000000000-7760200000000",
+  "timestamp": "2026-09-24T14:15:00+00:00",
+  "traffic_profile": "voip",
+  "probabilities": {"voip": 0.9, "video": 0.0, "messaging": 0.05,
+                    "email": 0.01, "web": 0.03, "icmp": 0.01}
+}
+```
+
+Semantics:
+
+- `model_version` and `feature_schema_version` identify the transform +
+  model contract so a downstream correlator can reject stale/mismatched
+  artifacts.
+- `window_id` echoes the live window identity
+  (`window_start_ns`-`window_end_ns`); the pipeline's window geometry is
+  kernel-monotonic, not wall-clock, so `timestamp` is the UTC wall-clock time
+  the ML result was generated.
+- `traffic_profile` is exactly one of the six classes; `probabilities` lists
+  all six in `target_classes` order and sums to 1.
+- The record is machine-readable classification output **only**: no risk
+  score, no security decision, no policy action.
+
+Validation is strict and repairs nothing: exactly 57 features in exact
+`feature_schema_v2.json` order; missing/extra/duplicate/unknown names and
+NaN/inf/bool/non-numeric values are rejected with `ValueError`. SHAP
+explanations are on-demand only (`--explain`) and observational; every
+explanation records a non-interference check proving the model outputs are
+unchanged. CLI: `python -m controller.ml_inference --events <jsonl> --output -
+--capture-ip 192.168.100.1`.
+
 ## metadata.jsonl record
 
 One JSON object per line, one per successful sample. Shape:

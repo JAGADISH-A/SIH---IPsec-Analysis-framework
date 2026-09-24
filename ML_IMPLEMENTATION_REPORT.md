@@ -25,9 +25,9 @@ partition, and produces observational SHAP explanations.
   (`posture_of_config`), not an ML target — no posture classifier, no
   label merging.
 - Anomaly detection is NOT implemented (no anomaly labels exist; out of scope).
-- Live/run-time inference is NOT implemented; the live path
-  (`live_features.py`) is unchanged. The "one record per 100 ms window"
-  live-inference gap is a deployment concern, not a dataset concern.
+- Live/run-time inference IS implemented via the adapter
+  (`controller/ml_inference.py`, see "Live 100-ms inference adapter" below);
+  the live path (`live_features.py`) remains unchanged.
 - The two protected datasets were only read, never written.
 
 ## Dataset and features
@@ -94,15 +94,76 @@ test were never touched during selection (Tabular default controls).
 
 ## Verification
 
-- 38 ML-layer tests pass
+- 38 offline ML-layer tests pass
   (`controller/test_dataset_loader.py`, `test_grouped_split.py`,
   `test_ml_model.py`, `test_shap.py`; SHAP non-interference and
   representation handling covered).
-- Sibling repo tests unaffected (one pre-existing timing/lock-sensitive
-  acceptance test in `test_dataset_api.py` is flaky independent of this
-  work; it passes in isolation).
+- 37 adapter tests pass (`controller/test_ml_inference.py`: strict 57-feature
+  schema rejection, ML result contract, offline==live parity at the 57-vector
+  boundary, `predict_many` batch == sequential, SHAP non-interference,
+  100-ms window grouping, CLI). Combined ML suite: **75 passed**.
+- Full `pytest -q`: **549 passed, 15 skipped, 0 failed**
+  (576 subtests). No unrelated test changed; the pre-existing
+  `test_dataset_api.py` acceptance/timing flake is unchanged and unmodified.
 - Dataset integrity re-verified: protected datasets unchanged
   (`features.parquet` sha256 `6d4df9c8...878a`, `aaee80ff...eef3`).
+
+## 2026-09-24 — live 100-ms inference adapter
+
+`controller/ml_inference.py` connects the live v2 feature producer
+(`controller/live_features.py`) to the trained Random Forest without touching
+either side.
+
+- **Input** (`predict`): a live v2 record
+  `{feature_schema_version, window_start_ns, window_end_ns, features{59}}` or a
+  bare 57-feature mapping. Live records are checked against the full 59-column
+  v2 schema, then the two verified constants (`burst_packet_ratio`=1.0,
+  `ike_packet_count`=4, single-valued across all 300 samples) are dropped.
+- **Feature vector**: exactly 57 features, ordered by
+  `results/ml/feature_schema_v2.json`; `feature_order()` asserts the schema
+  file agrees with `dataset_loader.feature_names()` and the artifact
+  `feature_names`. Validation is strict and repairs nothing: 57 count, exact
+  names (missing/extra/unknown rejected), duplicates rejected, and every value
+  must be a finite number (NaN/inf/bool/non-numeric rejected, `ValueError`).
+- **Output contract**: `{model_version, feature_schema_version, window_id,
+  timestamp, traffic_profile, probabilities{6}}` — the six-class prediction
+  plus confidence, echoing the window identity; no risk score, no security
+  decision, no policy action.
+- **SHAP**: on demand only (`--explain` / `explain()`), observational; every
+  explanation carries a non-interference check.
+- **Throughput**: the estimator was trained with `n_jobs=-1` (frozen), so a
+  single-sample `predict_proba` pays joblib's full pool spawn/teardown
+  (~283 ms). `predict_many` batch-scores N windows in one `predict_proba`
+  call with identical results (1.55 ms/window) and is used by the CLI
+  `--events` path.
+- **CLI**: `python -m controller.ml_inference --events <events.jsonl> --output -`
+  buckets the event stream into real 100-ms windows and emits one ML result
+  per window; `--records` consumes pre-windowed v2 records; `--explain`
+  attaches on-demand SHAP.
+
+### Testbed rehearsal (six profiles → 100-ms windows → ML)
+
+The privileged lab (`sudo -n` over Containerlab/XDP/tcpdump) is unavailable in
+this environment, so every held-out TEST-split capture (46 samples, all six
+profiles, never used in training) was replayed read-only through the real
+observation path — events → `LiveFeatureExtractor` → v2 record → adapter → RF:
+
+- **30-s aggregate path** (mirrors the offline eval): accuracy **1.0** across
+  all 46 held-out samples; the live v2 record reproduces the stored training
+  57-vector byte-exact on 45/46 (the single deviation is one 3-decimal field,
+  `bytes_per_second` ±0.003, from the documented ns→s timestamp
+  sub-rounding; prediction unaffected). Evidence: `results/ml/live_bridge/`.
+- **Real 100-ms window path** per profile (correct fraction across windows):
+  icmp 1.000, voip 0.984, video 0.980, email 0.915, web 0.896, messaging
+  0.462. Confidence rises with window packet count (for 20+ packets/window:
+  video/web 1.0, voip 0.997, email 0.5(→ larger windows better), messaging
+  0.504). **Messaging is genuinely equivocal at 100-ms granularity** and is
+  flagged rather than hidden — at the 30-s aggregate the same captures
+  classify 7/7, so the aggregation window is what disambiguates it. Two known
+  limitations, reported honestly: the held-out split contains tunnel-mode
+  captures only (no transport-mode test samples), and the RF was trained on
+  30-s aggregates, so sparse 100-ms windows are sparse-feature windows, not
+  confident verdicts.
 
 ## 2026-09-24 limitation — synthetic data
 
@@ -116,6 +177,9 @@ production classifier.
 
 ## Excluded (explicitly out of scope)
 
-- security-posture classification, anomaly detection, live/inference
-  integration, hyperparameter search, and any modification of the two
-  protected datasets or the live capture path.
+- security-posture classification, anomaly detection, hyperparameter search,
+  a live correlation/response engine, and any modification of the two
+  protected datasets or the live capture path. Live 100-ms inference itself
+  IS implemented (adapter above); an always-on scoring daemon and the
+  ML→correlation wiring are deployment/downstream phases, not part of this
+  ML layer.
