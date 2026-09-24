@@ -1,0 +1,234 @@
+from pathlib import Path
+from threading import Lock, Thread
+from uuid import uuid4
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from .dataset_api import (
+    DEFAULT_MAX_TARGET_SAMPLES,
+    create_dataset_router,
+)
+from .executor import run_experiment
+from .testbed_lock import EXPERIMENT, TESTBED_LOCK
+from .traffic import (
+    PROFILES,
+    DEFAULT_DURATION,
+    DURATION_RANGE,
+)
+
+FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+
+app = FastAPI(
+    title="IPsec Testbed API",
+    description="API for running configurable IPsec VPN experiments",
+    version="1.0.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+
+# Dataset Run API (Module 6): user-controlled sample count on the SAME
+# FastAPI app.  It shares the single testbed reservation registry with the
+# manual experiment endpoints so the two can never run concurrently.
+app.include_router(
+    create_dataset_router(
+        results_root="results",
+        max_target_samples=DEFAULT_MAX_TARGET_SAMPLES,
+        lock=TESTBED_LOCK,
+    )
+)
+
+
+class IKEConfig(BaseModel):
+    version: int = 2
+    encryption: str
+    integrity: str
+    dh_group: str
+
+
+class ESPConfig(BaseModel):
+    encryption: str
+    integrity: str | None = None
+    dh_group: str
+    pfs: bool
+
+
+class TrafficConfig(BaseModel):
+    profile: str
+    duration: int = DEFAULT_DURATION
+
+
+class ExperimentConfig(BaseModel):
+    mode: str
+    address_family: str = "ipv4"
+    ike: IKEConfig
+    esp: ESPConfig
+    traffic: TrafficConfig | None = None
+
+
+jobs = {}
+jobs_lock = Lock()
+active_job_id = None
+
+
+@app.get("/", include_in_schema=False)
+def root():
+    return FileResponse(FRONTEND_DIR / "index.html")
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+@app.get("/experiments/configurations")
+def get_configurations():
+    return {
+        "modes": ["tunnel", "transport"],
+        "address_families": ["ipv4", "ipv6"],
+        "ike": {
+            "version": 2,
+            "encryption": ["aes128", "aes256"],
+            "integrity": ["sha256", "sha384", "sha512"],
+            "dh_groups": ["modp2048", "modp3072", "modp4096"],
+        },
+       "esp": {
+            "encryption": ["aes128gcm16", "aes256gcm16", "aes128cbc", "aes256cbc"],
+            "integrity": ["sha256", "sha384", "sha512"],
+            "dh_groups": ["modp2048", "modp3072", "modp4096"],
+            "pfs": [True, False],
+        },
+        "traffic": {
+            "profiles": sorted(PROFILES),
+            "duration": {
+                "min": DURATION_RANGE[0],
+                "max": DURATION_RANGE[1],
+                "default": DEFAULT_DURATION,
+            },
+        },
+    }
+
+
+PIPELINE_STAGES = ("DEPLOY", "IPSEC", "CONNECTIVITY", "TRAFFIC")
+
+
+def execute_job(job_id, config):
+    global active_job_id
+
+    with jobs_lock:
+        jobs[job_id]["status"] = "RUNNING"
+        jobs[job_id]["stage"] = "RUNNING"
+
+    def report_stage(stage):
+        with jobs_lock:
+            jobs[job_id]["stage"] = stage
+
+    try:
+        result = run_experiment(config, on_stage=report_stage)
+
+        with jobs_lock:
+            jobs[job_id]["status"] = "COMPLETED"
+            jobs[job_id]["stage"] = "COMPLETED"
+            jobs[job_id]["result"] = result
+
+    except ValueError as e:
+        with jobs_lock:
+            jobs[job_id]["status"] = "FAILED"
+            jobs[job_id]["stage"] = "CONFIGURATION"
+            jobs[job_id]["error"] = str(e)
+
+    except Exception as e:
+        with jobs_lock:
+            failed_stage = jobs[job_id]["stage"]
+            if failed_stage not in PIPELINE_STAGES:
+                failed_stage = "EXPERIMENT"
+            jobs[job_id]["status"] = "FAILED"
+            jobs[job_id]["stage"] = failed_stage
+            jobs[job_id]["error"] = str(e)
+
+    finally:
+        with jobs_lock:
+            active_job_id = None
+        TESTBED_LOCK.release(EXPERIMENT, job_id)
+
+
+@app.post("/experiments")
+def create_experiment(config: ExperimentConfig):
+    global active_job_id
+
+    config_data = config.model_dump()
+
+    with jobs_lock:
+        if active_job_id is not None:
+            active = jobs.get(active_job_id)
+
+            if active and active["status"] == "RUNNING":
+                raise HTTPException(
+                    status_code=409,
+                    detail="Another experiment is already running.",
+                )
+
+            active_job_id = None
+
+        job_id = str(uuid4())
+
+        # Shared testbed: a dataset run and a manual experiment can never use
+        # the testbed at the same time.
+        reserved, owner = TESTBED_LOCK.try_reserve(EXPERIMENT, job_id)
+        if not reserved:
+            kind, owner_id = owner
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"The shared testbed is in use by {kind} '{owner_id}'; "
+                    "a manual experiment cannot start now."
+                ),
+            )
+
+        jobs[job_id] = {
+            "status": "QUEUED",
+            "stage": "QUEUED",
+            "result": None,
+            "error": None,
+        }
+
+        active_job_id = job_id
+
+    thread = Thread(
+        target=execute_job,
+        args=(job_id, config_data),
+        daemon=True,
+    )
+    thread.start()
+
+    return {
+        "job_id": job_id,
+        "status": "QUEUED",
+    }
+
+
+@app.get("/experiments/{job_id}")
+def get_experiment(job_id: str):
+    with jobs_lock:
+        job = jobs.get(job_id)
+
+        if job is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Experiment job not found.",
+            )
+
+        return {
+            "job_id": job_id,
+            **job,
+        }

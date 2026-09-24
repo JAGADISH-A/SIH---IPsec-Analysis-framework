@@ -1,0 +1,29 @@
+{
+  "run_id": "acc-camp-01",
+  "experiments": [
+    {
+      "mode": "tunnel", "address_family": "ipv4",
+      "ike": {"version": 2, "encryption": "aes256", "integrity": "sha256", "dh_group": "modp2048"},
+      "esp": {"encryption": "aes256cbc", "integrity": "sha256", "dh_group": "modp2048", "pfs": true},
+      "traffic": {"profile": "web", "duration": 20}
+    },
+    {
+      "mode": "tunnel", "address_family": "ipv6",
+      "ike": {"version": 2, "encryption": "aes256", "integrity": "sha256", "dh_group": "modp2048"},
+      "esp": {"encryption": "aes256cbc", "integrity": "sha256", "dh_group": "modp2048", "pfs": true},
+      "traffic": {"profile": "video", "duration": 20}
+    },
+    {
+      "mode": "transport", "address_family": "ipv4",
+      "ike": {"version": 2, "encryption": "aes256", "integrity": "sha256", "dh_group": "modp2048"},
+      "esp": {"encryption": "aes256cbc", "integrity": "sha256", "dh_group": "modp2048", "pfs": true},
+      "traffic": {"profile": "messaging", "duration": 20}
+    },
+    {
+      "mode": "transport", "address_family": "ipv6",
+      "ike": {"version": 2, "encryption": "aes256", "integrity": "sha256", "dh_group": "modp2048"},
+      "esp": {"encryption": "aes256cbc", "integrity": "sha256", "dh_group": "modp2048", "pfs": true},
+      "traffic": {"profile": "voip", "duration": 20}
+    }
+  ]
+}

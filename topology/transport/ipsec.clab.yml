@@ -1,0 +1,36 @@
+name: ipsec-transport
+
+topology:
+  nodes:
+
+    host-c:
+      kind: linux
+      image: ipsec-transport-host:24.04
+      privileged: true
+      cmd: /bin/sh -c "/usr/local/bin/transport-entrypoint.sh"
+      binds:
+        - ../../scripts/transport-entrypoint.sh:/usr/local/bin/transport-entrypoint.sh
+        - ../../configs/transport/host-c/swanctl:/etc/swanctl
+      exec:
+        - ip addr add 10.20.1.10/24 dev eth1
+        - ip route add 10.20.1.20/32 dev eth1
+        - ip -6 addr add 2001:db8:20::10/64 dev eth1 nodad
+        - ip -6 route add 2001:db8:20::20/128 dev eth1
+
+    host-d:
+      kind: linux
+      image: ipsec-transport-host:24.04
+      privileged: true
+      cmd: /bin/sh -c "/usr/local/bin/transport-entrypoint.sh"
+      binds:
+        - ../../scripts/transport-entrypoint.sh:/usr/local/bin/transport-entrypoint.sh
+        - ../../configs/transport/host-d/swanctl:/etc/swanctl
+      exec:
+        - ip addr add 10.20.1.20/24 dev eth1
+        - ip route add 10.20.1.10/32 dev eth1
+        - ip -6 addr add 2001:db8:20::20/64 dev eth1 nodad
+        - ip -6 route add 2001:db8:20::10/128 dev eth1
+
+  links:
+
+    - endpoints: ["host-c:eth1", "host-d:eth1"]

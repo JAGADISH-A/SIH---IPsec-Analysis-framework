@@ -1,0 +1,35 @@
+D-ITG 2.8.1 (revision 1023)
+Source : https://github.com/jbucar/ditg (fork of the official D-ITG platform)
+Built  : from <repo>/ditg-src (see below), g++ 15, Ubuntu 25.04 host, glibc 2.43
+
+Compatibility
+-------------
+The binaries are dynamically linked and only require glibc >= 2.38 /
+GLIBCXX >= 3.4.32, which the ubuntu:24.04 endpoint images provide, so they
+run inside the host-*/transport-host-* containers unchanged.
+
+Build fixes applied on top of the stock jbucar/ditg sources (gcc 15 rejects
+them as errors):
+  - src/ITGSend/traffic.cpp  : 'argv[h + 2] <= 0' pointer-vs-int in the
+                               bursty PS parser (2 sites) -> strtod() check
+  - src/ITGSend/ITGSend.cpp  : same class of bug in the -N / -n normal-mean
+                               checks (2 sites)
+  - src/ITGDec/ITGDecod.cpp  : bare global 'size' is ambiguous with C++17
+                               std::size -> renamed to g_size
+
+Rebuild
+-------
+  git clone https://github.com/jbucar/ditg /tmp/ditg
+  cd /tmp/ditg/src && make ITGSend ITGRecv   # plus 'make ITGDec' after
+                                              # applying the ITGDecod fix
+Binaries are produced under src/<component>/<component>.
+
+Verified CLI ground truth used by controller/traffic.py (ITGSend -h / the
+flowParser switch cases in ITGSend.cpp):
+  -t <duration_ms>, -a <dest_ip>, -rp <dest_port>, -T UDP|TCP|ICMP [type]
+  -C <rate> (const IDT pkts/s), -c <size> (const PS bytes)
+  -B <onDistro> <onParams> <offDistro> <offParams> (bursty: periods in ms)
+  -D (disable TCP Nagle), -s <seed> (double in (0,1)), -l <sender log>,
+  -x <receiver log>.  ITGRecv takes no mandatory options and listens for the
+  signalling channel on TCP 9000 (DEFAULT_PORT_SIGNALING); it binds the data
+  port specified by -rp only after flow negotiation.

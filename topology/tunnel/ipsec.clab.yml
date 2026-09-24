@@ -1,0 +1,95 @@
+name: ipsec
+
+topology:
+  nodes:
+
+    host-a:
+      kind: linux
+      image: ipsec-test-host:24.04
+      exec:
+        - ip addr add 10.10.1.10/24 dev eth1
+        - ip addr add 2001:db8:1::10/64 dev eth1
+        - ip route add 10.10.2.0/24 via 10.10.1.1
+        - ip -6 route add 2001:db8:2::/64 via 2001:db8:1::1
+
+    gw-a:
+      kind: linux
+      image: ipsec-test-gateway:6.0.3
+      privileged: true
+      env:
+        AUDIT_TAP_IFACE: "eth2"
+        # GW-A is the authoritative observation point.  Inside gw-a the
+        # entrypoint mirrors eth2 (WAN/IPsec side: IKE + ESP) into the
+        # in-container tap (audit-tap0) AND copy-only into eth3, which is a
+        # direct veth feed to the passive sensor (sensor:eth1).  The sensor is
+        # an observation sink, never an inline member of the WAN segment.
+        AUDIT_TAP_TARGET: "eth3"
+      cmd: /bin/sh -c "/usr/local/bin/gw-entrypoint.sh"
+      binds:
+        - ../../scripts/gw-entrypoint.sh:/usr/local/bin/gw-entrypoint.sh
+        - ../../scripts/audit-tap-setup.sh:/usr/local/bin/audit-tap-setup.sh
+        - ../../configs/gw-a/swanctl:/usr/local/etc/swanctl
+      exec:
+        - ip addr add 10.10.1.1/24 dev eth1
+        - ip addr add 2001:db8:1::1/64 dev eth1
+        - ip addr add 192.168.100.1/24 dev eth2
+        - ip route add 10.10.2.0/24 via 192.168.100.2
+        - sysctl -w net.ipv4.ip_forward=1
+        - sysctl -w net.ipv6.conf.all.forwarding=1
+
+    gw-b:
+      kind: linux
+      image: ipsec-test-gateway:6.0.3
+      privileged: true
+      cmd: /bin/sh -c "/usr/local/bin/gw-entrypoint.sh"
+      binds:
+        - ../../scripts/gw-entrypoint.sh:/usr/local/bin/gw-entrypoint.sh
+        - ../../configs/gw-b/swanctl:/usr/local/etc/swanctl
+      exec:
+        - ip addr add 192.168.100.2/24 dev eth2
+        - ip addr add 10.10.2.1/24 dev eth1
+        - ip addr add 2001:db8:2::1/64 dev eth1
+        - ip route add 10.10.1.0/24 via 192.168.100.1
+        - sysctl -w net.ipv4.ip_forward=1
+        - sysctl -w net.ipv6.conf.all.forwarding=1
+
+    br-wan:
+      kind: bridge
+
+    sensor:
+      kind: linux
+      image: ipsec-test-gateway:6.0.3
+      cmd: /bin/sh -c "sleep infinity"
+      exec:
+        - sysctl -w net.ipv4.ip_forward=0
+        - sysctl -w net.ipv6.conf.all.forwarding=0
+
+    host-b:
+      kind: linux
+      image: ipsec-test-host:24.04
+      exec:
+        - ip addr add 10.10.2.10/24 dev eth1
+        - ip addr add 2001:db8:2::10/64 dev eth1
+        - ip route add 10.10.1.0/24 via 10.10.2.1
+        - ip -6 route add 2001:db8:1::/64 via 2001:db8:2::1
+
+  links:
+
+    # LAN-A
+    - endpoints: ["host-a:eth1", "gw-a:eth1"]
+
+    # WAN: transparent L2 segment (bridge br-wan, root netns) - IPsec/ESP
+    # dataplane only.  br-wan carries exactly the two gateway members; it is
+    # NOT a monitoring/tap component and has no sensor member.
+    #   eth1 <- gw-a:eth2 (192.168.100.1)
+    #   eth2 <- gw-b:eth2 (192.168.100.2)
+    - endpoints: ["gw-a:eth2", "br-wan:eth1"]
+    - endpoints: ["gw-b:eth2", "br-wan:eth2"]
+
+    # GW-A -> sensor passive observation feed (direct veth, NOT in the WAN
+    # path).  gw-a mirrors eth2 (IKE + ESP) copy-only into eth3; the sensor
+    # receives the mirrored stream on eth1 (no IP, no forwarding, sink only).
+    - endpoints: ["gw-a:eth3", "sensor:eth1"]
+
+    # LAN-B
+    - endpoints: ["gw-b:eth1", "host-b:eth1"]

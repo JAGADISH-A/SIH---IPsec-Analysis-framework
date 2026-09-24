@@ -1,0 +1,14 @@
+# Runtime dependencies for the IPsec testbed controller (web API + dataset pipeline).
+# Exact versions validated in the project environment (Python 3.14.4).
+fastapi==0.141.1
+pydantic==2.13.5
+pyarrow==25.0.1
+uvicorn==0.52.4
+
+# ML layer (traffic-profile classification + SHAP explainability).
+# Pinned from the validated Python 3.14.4 environment, 2026-09-24.
+numpy==2.5.3
+scikit-learn==1.9.1
+joblib==1.6.0
+shap==0.52.0
+matplotlib==3.11.2
