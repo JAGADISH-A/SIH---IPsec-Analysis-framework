@@ -1,0 +1,121 @@
+# Traffic Classification ML Layer — Implementation Report
+
+Status: `ML = Traffic Type Classification` implemented and verified.
+
+## Scope
+
+Implemented the traffic-profile classification layer designed in
+`DATASET_ML_ANALYSIS.md` on the 300 protected samples (200 from
+`dataset-20260923-221430`, 100 from `dataset-20260924-003710`). The layer
+reads the two feature v2 parquets, builds a 57-feature matrix, applies a
+deterministic grouped/stratified split, trains a scikit-learn
+`RandomForestClassifier`, evaluates strictly on the untouched test
+partition, and produces observational SHAP explanations.
+
+## Architecture verification
+
+- Random forest is the traffic-classifier (`traffic_profile`), per the
+  audited architecture (`ML_IMPLEMENTATION_AUDIT.md`).
+- SHAP is explainability only: it never predicts, never overrides, never
+  mutates the model. Verified at runtime: `predictions_equal: true`,
+  `probabilities_equal: true`. SHAP output representation is detected and
+  recorded verbatim (`ndarray (n_samples, n_features, n_classes)`, shap
+  0.52.0).
+- `security_posture` is a configuration-derived label
+  (`posture_of_config`), not an ML target — no posture classifier, no
+  label merging.
+- Anomaly detection is NOT implemented (no anomaly labels exist; out of scope).
+- Live/run-time inference is NOT implemented; the live path
+  (`live_features.py`) is unchanged. The "one record per 100 ms window"
+  live-inference gap is a deployment concern, not a dataset concern.
+- The two protected datasets were only read, never written.
+
+## Dataset and features
+
+- Feature schema v2, 59 declared features minus 2 verified constants
+  (`burst_packet_ratio` = 1.0, `ike_packet_count` = 4) = 57 used features.
+- `X` is strictly the 57 features; `groups` = `configuration_id`; labels
+  stay separate. Leakage columns (posture, configuration, identifiers,
+  timestamps, schema version) are never in `X`.
+- No nulls, no non-finite rows, declared int32/double types validated.
+- `feature_schema_v2.json` persists the used-feature list for
+  reproducibility.
+
+## Split
+
+- Strategy: `grouped_stratified_greedy_by_configuration_id`, greedy and
+  fully deterministic (seed 7, no shuffling). A configuration group never
+  spans splits.
+- Actual split: train 212 / validation 42 / test 46 (ratios 70/15/15).
+- Verification persisted in `split_v1.json`: `group_isolation_ok: true`,
+  `every_sample_once: true`, no spanning groups. All 6 classes present in
+  every partition (train e.g. voip 35, video 38, ..., icmp 35).
+- `split_hash` (
+  `fbf04c326bb68d3579c4792dea76fb0baf68fcbd4f384f04487d92ccc2b233d4`) is
+  embedded in the model artifact and cross-checked at evaluation.
+
+## Model and hyperparameters
+
+`RandomForestClassifier(n_estimators=500, max_features="sqrt",
+min_samples_leaf=2, max_depth=None, class_weight="balanced_subsample",
+oob_score=True, random_state=7, n_jobs=-1)`. Model selection used
+`StratifiedGroupKFold(5)` on the train partition only; validation and
+test were never touched during selection (Tabular default controls).
+
+## Results (test partition, 46 samples)
+
+- accuracy: 1.0000, macro P/R/F1: 1.0000 / 1.0000 / 1.0000,
+  weighted P/R/F1: 1.0000 / 1.0000 / 1.0000.
+- Per class (precision/recall/f1 all 1.0000): voip (7), video (7),
+  messaging (7), email (10), web (8), icmp (7).
+- OOB (train): 1.0. Train-only CV (5 folds): accuracy mean 1.0 (std 0.0),
+  macro-F1 mean 1.0 (std 0.0).
+
+## SHAP explainability
+
+- Global top features (mean |SHAP|): `packets_per_second`, `packet_size_p99`,
+  `packet_count`, `outbound_packets_per_second`, `outbound_packet_size_p95` —
+  rate and size distribution, consistent with the model's separation of
+  traffic profiles.
+- Per-class and per-sample (`top 10 contributions`) importance recorded in
+  `shap_importances.json`; plots under `results/ml/shap/`.
+
+## Reproducibility
+
+- Commit: `28beb6d245534cc14d96e8013c15053e96d8ba96`
+- Python 3.14.4; numpy 2.5.3, scikit-learn 1.9.1, joblib 1.6.0, shap
+  0.52.0, matplotlib 3.11.2 (pinned in `requirements.txt`).
+- Input fingerprints (`features.parquet` sha256) recorded in
+  `split_v1.json`, the model artifact, `train_report.json`,
+  `eval_report.json`, and `shap_importances.json`.
+- Pipeline order: `controller.dataset_loader` -> `controller.grouped_split`
+  -> `controller.train_random_forest` -> `controller.evaluate_model` ->
+  `controller.shap_analysis`.
+
+## Verification
+
+- 38 ML-layer tests pass
+  (`controller/test_dataset_loader.py`, `test_grouped_split.py`,
+  `test_ml_model.py`, `test_shap.py`; SHAP non-interference and
+  representation handling covered).
+- Sibling repo tests unaffected (one pre-existing timing/lock-sensitive
+  acceptance test in `test_dataset_api.py` is flaky independent of this
+  work; it passes in isolation).
+- Dataset integrity re-verified: protected datasets unchanged
+  (`features.parquet` sha256 `6d4df9c8...878a`, `aaee80ff...eef3`).
+
+## 2026-09-24 limitation — synthetic data
+
+The dataset is generated by a deterministic traffic generator, so every
+partition is trivially separable: all scores are 1.0. These numbers
+demonstrate the pipeline end-to-end but do **NOT** establish that
+generalization to real, noisy, live traffic holds. Before any production
+use the model must be re-trained and validated on real captured traffic
+and held-out data; these artifacts are the baseline scaffold, not a
+production classifier.
+
+## Excluded (explicitly out of scope)
+
+- security-posture classification, anomaly detection, live/inference
+  integration, hyperparameter search, and any modification of the two
+  protected datasets or the live capture path.
