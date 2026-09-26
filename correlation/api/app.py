@@ -14,9 +14,10 @@ any backend domain object and ports no decision logic.
 
 Phase 10 adds the observable-only ``/api/v1`` surface (health, Prometheus
 metrics, traffic-generator status, evidence/PCAP metadata) behind
-:func:`handle_combined`. The dashboard stays READ-ONLY: v1 accepts no action,
-approval or target inputs and enforcement remains behind the two-layer
-gateway. Run with ``--phase10`` to attach a live ``Phase10Context``.
+:func:`handle_combined`. The dashboard stays READ-ONLY and PASSIVE-ONLY: v1
+accepts no action, approval or target inputs, and no XDP enforcement action is
+wired into the deployed application. Run with ``--phase10`` to attach a live
+``Phase10Context``.
 
 A FastAPI deployment could reuse ``handle_get`` unchanged (it is transport
 agnostic); the JSON contract is documented in PHASE_8_DASHBOARD_REPORT.md.
@@ -28,7 +29,7 @@ import os
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Optional, Tuple
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote
 
 from .pcap import PcapService
 from .routes import ApiError, handle_get, serializable
@@ -66,13 +67,18 @@ def parse_assessment_id_for_url(assessment_id: str) -> Tuple[Optional[tuple], Op
     return None, None  # (kept for symmetry; real check is inside routes)
 
 
-def handle_combined(store, context, path: str) -> Any:
-    """Dispatch /api (phase 8) or /api/v1 (phase 10) without file I/O here."""
+def handle_combined(store, context, path: str, params: Optional[dict] = None) -> Any:
+    """Dispatch /api (phase 8) or /api/v1 (phase 10) without file I/O here.
+
+    ``params`` is the parsed query string; it is forwarded to the /api/v1
+    handlers (the audit routes filter on it). The Phase-8 contract is path-only
+    and is unaffected.
+    """
     if is_v1_path(path):
         if context is None:
             raise ApiError(503, "phase10_unavailable",
                            "/api/v1 requires --phase10 (live context not attached)")
-        return handle_v1_get(context, path)
+        return handle_v1_get(context, path, params)
     return handle_get(store, path)
 
 
@@ -80,7 +86,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
     server_version = "SIHColayerPhase8"
 
     def do_GET(self) -> None:  # noqa: N802
-        path = unquote(self.path.split("?", 1)[0])
+        raw = unquote(self.path)
+        path, _, query = raw.partition("?")
+        self._query = parse_qs(query, keep_blank_values=True) if query else {}
         if path.startswith("/api/"):
             self._api(path)
         else:
@@ -114,6 +122,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self._send(200, "application/json", to_json_bytes(payload))
 
     def _api_v1(self, path: str, context) -> None:
+        params = getattr(self, "_query", {}) or {}
+        # parse_qs yields lists; collapse the common single-value case so
+        # handlers see scalars, and keep repeated params as lists.
+        collapsed = {
+            key: (values[0] if len(values) == 1 else values)
+            for key, values in params.items()
+        }
         try:
             if "/pcap" in path and path.startswith("/api/v1/evidence/"):
                 descriptor = handle_v1_pcap(context, path.split("/api/v1/evidence/")[1].split("/")[0])
@@ -125,7 +140,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                                    f"no capture available for {evidence_id!r}")
                 self._send(200, CONTENT_TYPE_PCAP, data)
                 return
-            content, content_type = handle_v1_get(context, path)
+            content, content_type = handle_v1_get(context, path, collapsed)
         except ApiError as error:
             self._send(error.status, "application/json", to_json_bytes(error.payload()))
             return
@@ -201,6 +216,10 @@ def main(argv=None) -> None:
                         help="also write the full static snapshot to this path")
     parser.add_argument("--phase10", action="store_true",
                         help="attach the read-only /api/v1 live surface")
+    parser.add_argument("--audit-journal", default=None,
+                        help="expose this analysis audit journal (JSONL written "
+                             "by correlation.audit.AuditJournal) read-only at "
+                             "/api/v1/audit/*; the file is never written here")
     args = parser.parse_args(argv)
 
     store = build_store(args.plan) if args.plan else build_store()
@@ -208,12 +227,29 @@ def main(argv=None) -> None:
           f"(deterministic, score/severity from Phase-6 RiskAssessment)")
 
     phase10 = None
-    if args.phase10:
+    if args.phase10 or args.audit_journal:
         from .live import Phase10Context
         phase10 = Phase10Context()
-        print(f"[phase10] live /api/v1 surface attached "
-              f"(execution mode {phase10.execution.settings.effective_mode.name}; "
-              "dashboard remains read-only)")
+        print("[phase10] passive-observation /api/v1 surface attached "
+              "(no XDP enforcement action; dashboard remains read-only)")
+
+    if args.audit_journal:
+        from .audit_store import AuditJournalUnreadable, AuditStore
+
+        audit_store = AuditStore(args.audit_journal)
+        try:
+            count = len(audit_store)
+        except AuditJournalUnreadable as error:
+            raise SystemExit(
+                f"[phase8] refusing to serve {args.audit_journal}: {error}"
+            ) from None
+        phase10.attach_audit_store(audit_store)
+        print(f"[phase8] audit journal attached: {args.audit_journal} "
+              f"({count} analysis audit event(s), read-only)")
+        if not audit_store.available:
+            print("[phase8] warning: journal path does not exist; audit routes "
+                  "will report zero events (nothing will be fabricated)",
+                  file=sys.stderr)
 
     if args.snapshot:
         path = snapshot(store, args.snapshot)

@@ -24,6 +24,13 @@ from .adapters import (  # noqa: F401
     risk_to_view,
     xai_to_view,
 )
+from .audit_store import (  # noqa: F401
+    AUDIT_STAGE_ORDER,
+    EVENT_STAGE,
+    AuditJournalUnreadable,
+    AuditQuery,
+    AuditStore,
+)
 from .routes import ApiError, handle_get, serializable  # noqa: F401
 from .store import AssessmentStore, build_store  # noqa: F401
 
@@ -48,4 +55,9 @@ __all__ = [
     "serializable",
     "AssessmentStore",
     "build_store",
+    "AUDIT_STAGE_ORDER",
+    "EVENT_STAGE",
+    "AuditJournalUnreadable",
+    "AuditQuery",
+    "AuditStore",
 ]

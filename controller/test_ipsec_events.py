@@ -136,6 +136,53 @@ _TCP_PKT_V6 = {
 
 WAN_IP_V6 = "2001:db8:20::10"
 
+# Regression fixture: identical to _IKE_SA_INIT_PKT except ``isakmp.length`` is
+# absent, which is the case that previously raised ``NameError: name 'ip' is
+# not defined`` (line 143 referenced the ``ip`` dict bound only inside
+# _outer_addrs).  Every other required field is retained.
+_IKE_SA_INIT_PKT_NO_ISAKMP_LENGTH = {
+    "_source": {
+        "layers": {
+            "frame": {
+                "frame.number": "1",
+                "frame.len": "512",
+                "frame.time_epoch": "2026-09-16T19:37:20.500000000Z",
+                "frame.protocols": "eth:ethertype:ip:udp:isakmp",
+            },
+            "ip": {"ip.src": "192.168.100.1", "ip.dst": "192.168.100.2",
+                   "ip.proto": "17", "ip.len": "498"},
+            "udp": {"udp.srcport": "500", "udp.dstport": "500",
+                    "udp.length": "478"},
+            "isakmp": {
+                "isakmp.exchangetype": "34",
+                "isakmp.messageid": "0x00000000",
+            },
+        }
+    }
+}
+
+# Same, with the IPv4 total length also absent: nothing in the packet supports
+# a length, so ``packet_length`` must be None rather than fabricated.
+_IKE_SA_INIT_PKT_NO_LENGTH_EVIDENCE = {
+    "_source": {
+        "layers": {
+            "frame": {
+                "frame.number": "2",
+                "frame.len": "300",
+                "frame.time_epoch": "2026-09-16T19:37:21.000000000Z",
+                "frame.protocols": "eth:ethertype:ip:udp:isakmp",
+            },
+            "ip": {"ip.src": "192.168.100.1", "ip.dst": "192.168.100.2",
+                   "ip.proto": "17"},
+            "udp": {"udp.srcport": "500", "udp.dstport": "500"},
+            "isakmp": {
+                "isakmp.exchangetype": "36",
+                "isakmp.messageid": "0x00000002",
+            },
+        }
+    }
+}
+
 
 class TestNormalizeEsp(unittest.TestCase):
     def test_esp_metadata_and_direction(self):
@@ -179,6 +226,77 @@ class TestNormalizeIke(unittest.TestCase):
         self.assertEqual(event["ike_exchange_type"], 35)
         self.assertEqual(event["ike_exchange_name"], "IKE_AUTH")
         self.assertEqual(event["direction"], "inbound")
+
+
+class TestNormalizeIkeMissingIsakmpLength(unittest.TestCase):
+    """Regression: ``isakmp.length`` absent must not crash normalization.
+
+    Previously line 143 evaluated ``ip.get("ip.len")`` where ``ip`` was bound
+    only inside :func:`_outer_addrs`, so any IKE packet without
+    ``isakmp.length`` raised ``NameError`` and aborted the whole observation
+    run.  Existing fixtures all carried ``isakmp.length`` and hid the defect.
+    """
+
+    def test_missing_isakmp_length_falls_back_to_ipv4_total_length(self):
+        event = events_mod.normalize_ike_event(
+            _IKE_SA_INIT_PKT_NO_ISAKMP_LENGTH["_source"]["layers"], WAN_IP
+        )
+        # No NameError: a normalized event is returned.
+        self.assertIsInstance(event, dict)
+        # All pre-existing metadata is preserved and correct.
+        self.assertEqual(event["source_ip"], "192.168.100.1")
+        self.assertEqual(event["destination_ip"], "192.168.100.2")
+        self.assertEqual(event["source_port"], 500)
+        self.assertEqual(event["destination_port"], 500)
+        self.assertEqual(event["ike_exchange_type"], 34)
+        self.assertEqual(event["ike_exchange_name"], "IKE_SA_INIT")
+        self.assertEqual(event["message_id"], "0x00000000")
+        self.assertEqual(event["frame_number"], 1)
+        self.assertEqual(event["timestamp"], "2026-09-16T19:37:20.500000000Z")
+        self.assertEqual(event["direction"], "outbound")
+        # The fallback uses the length already present in the packet.
+        self.assertEqual(event["packet_length"], 498)
+
+    def test_no_length_evidence_yields_none_and_invents_nothing(self):
+        event = events_mod.normalize_ike_event(
+            _IKE_SA_INIT_PKT_NO_LENGTH_EVIDENCE["_source"]["layers"], WAN_IP
+        )
+        self.assertIsInstance(event, dict)
+        self.assertIsNone(event["packet_length"])
+        # No length is derived from the frame size or any other field.
+        self.assertNotEqual(event["packet_length"], 300)
+        # Remaining metadata is still correct.
+        self.assertEqual(event["ike_exchange_type"], 36)
+        self.assertEqual(event["ike_exchange_name"], "CREATE_CHILD_SA")
+        self.assertEqual(event["message_id"], "0x00000002")
+        self.assertEqual(event["source_port"], 500)
+        self.assertEqual(event["direction"], "outbound")
+
+    def test_isakmp_length_present_still_takes_precedence(self):
+        # Unchanged behavior when isakmp.length exists: it wins over ip.len.
+        event = events_mod.normalize_ike_event(
+            _IKE_SA_INIT_PKT["_source"]["layers"], WAN_IP
+        )
+        self.assertEqual(event["packet_length"], 478)
+        self.assertEqual(event["ike_exchange_name"], "IKE_SA_INIT")
+
+    def test_ipv6_ike_without_isakmp_length_does_not_crash(self):
+        pkt = json.loads(json.dumps(_IKE_SA_INIT_PKT_V6))
+        del pkt["_source"]["layers"]["isakmp"]["isakmp.length"]
+        event = events_mod.normalize_ike_event(pkt["_source"]["layers"], WAN_IP_V6)
+        self.assertIsInstance(event, dict)
+        self.assertIsNone(event["packet_length"])
+        self.assertEqual(event["ike_exchange_name"], "IKE_SA_INIT")
+        self.assertEqual(event["source_ip"], "2001:db8:20::10")
+
+    def test_parse_tshark_json_survives_missing_isakmp_length(self):
+        text = json.dumps([_IKE_SA_INIT_PKT_NO_ISAKMP_LENGTH,
+                           _IKE_SA_INIT_PKT_NO_LENGTH_EVIDENCE])
+        esp_events, ike_events = events_mod.parse_tshark_json(text, WAN_IP)
+        self.assertEqual(esp_events, [])
+        self.assertEqual(len(ike_events), 2)
+        self.assertEqual(ike_events[0]["packet_length"], 498)
+        self.assertIsNone(ike_events[1]["packet_length"])
 
 
 class TestNormalizeEspV6(unittest.TestCase):

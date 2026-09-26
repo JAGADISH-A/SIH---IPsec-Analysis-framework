@@ -7,14 +7,23 @@ Complements the Phase-8 contract WITHOUT touching it:
     GET /api/v1/traffic-generator           -> traffic generator status
     GET /api/v1/evidence/{evidence_id}      -> evidence metadata
     GET /api/v1/evidence/{evidence_id}/pcap -> binary PCAP download (or 404)
+    GET /api/v1/audit/events[/{event_id}]   -> analysis audit journal (read-only)
+    GET /api/v1/audit/runs                  -> per-run audit summaries
+    GET /api/v1/runs/{run_id}/audit         -> ordered audit trail for a run
+
+The audit surface is a QUERY layer over the existing
+``correlation.audit.AuditJournal``: it reads persisted records and returns them
+verbatim, so the frontend reads the same authoritative evidence the analysis
+pipeline wrote. See ``audit_routes`` for the integrity rules.
 
 The dashboard remains read-only: NO endpoint accepts an action, an approval
 or a target; enforcement stays behind the two-layer gateway.
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional
 
+from .audit_routes import handle_audit_get, is_audit_path
 from .pcap import PcapService
 from .routes import ApiError
 
@@ -91,14 +100,32 @@ def handle_v1_pcap(context, evidence_id: str) -> Dict[str, Any]:
     return {"evidence_id": evidence_id}
 
 
-def handle_v1_get(context, path: str):
-    """Dispatch one /api/v1 path; returns (content, content_type) or raises."""
+def handle_v1_audit(context, path: str, params: Optional[Mapping[str, Any]] = None):
+    """Read-only audit queries. 503 when no journal is wired, never invented."""
+    store = getattr(context, "audit_store", None)
+    if store is None:
+        raise ApiError(
+            503, "audit_unavailable",
+            "no analysis audit journal is attached; start the server with "
+            "--audit-journal <path> (or --phase10) to expose audit evidence",
+        )
+    return handle_audit_get(store, path, dict(params or {}))
+
+
+def handle_v1_get(context, path: str, params: Optional[Mapping[str, Any]] = None):
+    """Dispatch one /api/v1 path; returns (content, content_type) or raises.
+
+    ``params`` is the already-parsed query string. It is optional so existing
+    callers and the Phase-10 tests keep working unchanged.
+    """
     if path.startswith(HEALTH_PATH):
         return handle_v1_health(context.health), CONTENT_TYPE_JSON
     if path == METRICS_PATH:
         return handle_v1_metrics(context.metrics), CONTENT_TYPE_PROMETHEUS
     if path == TRAFFIC_GENERATOR_PATH:
         return handle_v1_traffic_generator(context.traffic_generator), CONTENT_TYPE_JSON
+    if is_audit_path(path):
+        return handle_v1_audit(context, path, params), CONTENT_TYPE_JSON
     if path.startswith(EVIDENCE_PREFIX):
         remainder = path[len(EVIDENCE_PREFIX):]
         if not remainder:

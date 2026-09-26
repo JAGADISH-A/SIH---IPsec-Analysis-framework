@@ -1,45 +1,43 @@
 """Phase 10 — /api/v1 handlers + live context tests (read-only surface)."""
 
-import tempfile
 import unittest
 
 from correlation.api import app, live, v1
 from correlation.api.pcap import PcapRegistry, PcapService
 from correlation.api.routes import ApiError
-from correlation.execution import ExecutionSettings
 from correlation.observability.health import healthy
 
 
 class TestPhase10Context(unittest.TestCase):
     def test_defaults_built(self):
         ctx = live.Phase10Context()
-        self.assertIsNotNone(ctx.execution)
         self.assertIsNotNone(ctx.pcap)
-        self.assertFalse(ctx.execution.settings.enable_production_execution)
-        self.assertEqual(ctx.execution.settings.mode, "DRY_RUN")
+        self.assertIsInstance(ctx.pcap, PcapService)
 
-    def test_from_settings(self):
-        settings = ExecutionSettings(mode="AUTHORIZED_TESTBED",
-                                     allowed_testbed_targets=("127.0.0.1/32",))
-        with tempfile.TemporaryDirectory() as root:
-            ctx = live.Phase10Context.from_settings(settings, root=root)
-            self.assertEqual(ctx.summary()["execution_mode"],
-                             "AUTHORIZED_TESTBED")
-            self.assertIsInstance(ctx.pcap.registry, PcapRegistry)
+    def test_context_is_passive_only(self):
+        """No execution/enforcement surface is exposed by the live context."""
+        ctx = live.Phase10Context()
+        self.assertFalse(hasattr(ctx, "execution"))
+        self.assertFalse(hasattr(live.Phase10Context, "from_settings"))
+        for key in ("execution_mode", "enable_production_execution",
+                    "executions_recorded"):
+            self.assertNotIn(key, ctx.summary())
 
     def test_summary_shape(self):
         ctx = live.Phase10Context()
         summary = ctx.summary()
-        for key in ("execution_mode", "health", "metrics_points",
+        for key in ("passive_only", "health", "metrics_points",
                     "registered_evidence", "pcap_downloads",
                     "traffic_generator"):
             self.assertIn(key, summary)
+        self.assertTrue(summary["passive_only"])
 
     def test_health_seeded_components(self):
         ctx = live.Phase10Context()
         names = {c.component for c in ctx.health.all()}
         self.assertIn("kafka", names)
-        self.assertIn("executor", names)
+        self.assertIn("xdp_sensor", names)
+        self.assertNotIn("executor", names)
 
     def test_health_can_be_injected(self):
         from correlation.observability import HealthRegistry

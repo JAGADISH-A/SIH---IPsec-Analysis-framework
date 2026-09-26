@@ -1,9 +1,22 @@
-"""Phase 10 — controlled production execution layer.
+"""Phase 10 — controlled production execution layer (TEST-ONLY / DEPRECATED).
 
-The two-layer enforcement gateway. Only APPROVED + AUTHORIZED Phase-9
-recommendations reach this layer; ML and risk score NEVER do directly. All
-operations are structured descriptors (no subprocess/shell/SSH); production is
-OFF until explicitly enabled, and success is never fabricated.
+.. warning::
+   This package is **not deployed** and has **no production caller**. The
+   application architecture is PASSIVE-ONLY: XDP/eBPF performs passive
+   observation via a non-inline sensor fed by mirrored/tapped traffic, and XDP
+   enforcement actions are not part of the deployed application. Nothing in
+   :mod:`correlation.api`, :mod:`correlation.streaming`, :mod:`correlation.risk`
+   or :mod:`correlation.response` constructs an
+   :class:`~correlation.execution.gates.ExecutionControlPlane` or calls an
+   executor. These modules are retained solely so the execution-semantics
+   tests (``tests/test_execution_*.py``,
+   ``tests/test_phase10_integration.py::TestControlledExecution``) can exercise
+   gates, idempotency and outcome accounting in isolation.
+
+Historical context — the two-layer enforcement gateway. Only APPROVED +
+AUTHORIZED Phase-9 recommendations reach this layer; ML and risk score NEVER do
+directly. All operations are structured descriptors (no subprocess/shell/SSH);
+production is OFF until explicitly enabled, and success is never fabricated.
 """
 
 from .base import (  # noqa: F401

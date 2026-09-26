@@ -14,8 +14,11 @@ Reuses the authoritative Phase 4-7 + Phase 9 engines without modification:
         -> ResponseEngine.plan   (Phase 9; recommendation events only --
                                   NO execution happens here)
 
-The pipeline NEVER executes network actions. Execution is the Phase 10
-``correlation.execution`` gateway's remit, gated by approval + authorization.
+The pipeline NEVER executes network actions. The deployed application is
+PASSIVE-ONLY: the Phase 10 ``correlation.execution`` package is retained
+TEST-ONLY and has no production caller, so there is no action path in the
+application to gate. XDP/eBPF is used for passive observation via a non-inline
+sensor fed by mirrored/tapped traffic.
 
 Determinism: the pipeline is fully deterministic given the injected clock and
 the inputs; no ``now()``/``random``/network calls.

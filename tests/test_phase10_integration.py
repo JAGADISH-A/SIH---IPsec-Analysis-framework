@@ -2,6 +2,7 @@
 
 import tempfile
 import unittest
+from pathlib import Path
 
 from tests.fixtures.risk.risk_fixtures import (
     build_identity,
@@ -241,7 +242,7 @@ class TestLiveApiSurface(unittest.TestCase):
             service = PcapService(registry)
             ctx = api_live.Phase10Context(pcap=service)
             meta, _ = v1.handle_v1_get(ctx, "/api/v1/evidence/ev-integration")
-            self.assertEqual(meta["served_from"].split("\\")[-1], "cap.pcap")
+            self.assertEqual(Path(meta["served_from"]).name, "cap.pcap")
             health, _ = v1.handle_v1_get(ctx, "/api/v1/health")
             self.assertIn("components", health)
             self.assertTrue(ctx.summary()["pcap_downloads"] >= 0)

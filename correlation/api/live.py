@@ -1,16 +1,23 @@
-"""Phase 10 — live API context (wires health, metrics, execution, PCAP,
-traffic generator) for the transport layer.
+"""Phase 10 — live API context (wires health, metrics, PCAP, traffic
+generator) for the transport layer — PASSIVE OBSERVATION ONLY.
 
 ``Phase10Context`` is a deterministic, explicit wiring point. It is
-constructed from ``ExecutionSettings`` (env-derived) + any registry/metrics
-instances; every component is replaceable for tests. It is READ-ONLY for the
-dashboard: no action/approval/target inputs are accepted here.
+constructed from any registry/metrics instances; every component is
+replaceable for tests. It is READ-ONLY for the dashboard: no
+action/approval/target inputs are accepted here.
+
+The deployed application is PASSIVE-ONLY. This context wires only
+observability surfaces (health, metrics, PCAP/evidence metadata, traffic
+generator status). The Phase-10 XDP execution/enforcement machinery
+(``correlation.execution``) is NOT wired here: XDP/eBPF is used for passive
+observation, the sensor is non-inline and receives mirrored/tapped traffic,
+and XDP enforcement actions are not part of the deployed passive application
+architecture.
 """
 
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional
 
-from ..execution import ExecutionControlPlane, ExecutionSettings
 from ..observability import Phase10Metrics, HealthRegistry, healthy, disabled, unavailable
 from .pcap import PcapRegistry, PcapService
 
@@ -44,26 +51,31 @@ class Phase10Context:
 
     metrics: Phase10Metrics = field(default_factory=Phase10Metrics)
     health: HealthRegistry = field(default_factory=HealthRegistry)
-    execution: Optional[ExecutionControlPlane] = None
     pcap: Optional[PcapService] = None
     traffic_generator: TrafficGeneratorMonitor = field(default_factory=TrafficGeneratorMonitor)
+    #: Optional read-only query layer over the analysis audit journal. When it
+    #: is None the audit routes report "no journal configured" rather than
+    #: inventing evidence; it is never written to from a request.
+    audit_store: Optional[Any] = None
 
     def __post_init__(self) -> None:
-        if self.execution is None:
-            self.execution = ExecutionControlPlane(settings=ExecutionSettings())
         if self.pcap is None:
             self.pcap = PcapService(PcapRegistry(root=""))
-        # seeded component health (standard components + phase-10 ones)
         self._seed_health()
+
+    def attach_audit_store(self, store) -> None:
+        """Wire the audit query layer. Explicit, like every other dependency."""
+        self.audit_store = store
 
     def _seed_health(self) -> None:
         if self.health._components:
             return
         self.health.set(healthy("kafka", "streaming contract wired (in-memory transport)"))
         self.health.set(
-            disabled(
-                "executor",
-                "production execution stays OFF unless explicitly enabled",
+            healthy(
+                "xdp_sensor",
+                "passive non-inline observation of mirrored/tapped traffic "
+                "(no XDP enforcement action)",
             )
         )
         self.health.set(
@@ -76,26 +88,13 @@ class Phase10Context:
             disabled("ml", "ML consumption depends on a configured model")
         )
 
-    @classmethod
-    def from_settings(
-        cls, settings: ExecutionSettings, *, root: str = "", **kwargs
-    ) -> "Phase10Context":
-        return cls(
-            execution=ExecutionControlPlane(settings=settings),
-            pcap=PcapService(PcapRegistry(root=root)),
-            **kwargs,
-        )
-
     def summary(self) -> Dict[str, Any]:
         return {
-            "execution_mode": self.execution.settings.effective_mode.name,
-            "enable_production_execution": (
-                self.execution.settings.enable_production_execution
-            ),
+            "passive_only": True,
             "health": self.health.overall.status,
             "metrics_points": len(self.metrics.collect_all()),
             "registered_evidence": len(self.pcap.registry._mapping),
-            "executions_recorded": self.execution.outcome_count,
             "pcap_downloads": self.pcap.download_count,
             "traffic_generator": self.traffic_generator.status(),
+            "audit_journal_configured": self.audit_store is not None,
         }

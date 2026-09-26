@@ -1,10 +1,16 @@
-"""Phase 10 — central configuration (aggregates streaming + execution + API).
+"""Phase 10 — central configuration (aggregates streaming + API + legacy execution).
 
 One deterministic place to read every operational knob. Each sub-package keeps
-its own, tighter config (``streaming.config.StreamingConfig``,
-``execution.settings.ExecutionSettings``); this module aggregates them plus
-the evidence root and API flags into a single ``ProductionConfig`` used by the
-live server. No secrets live here.
+its own, tighter config (``streaming.config.StreamingConfig``); this module
+aggregates it plus the evidence root and API flags into a single
+``ProductionConfig`` used by the live server. No secrets live here.
+
+.. note::
+   ``ProductionConfig.execution`` is **deprecated and test-only**. The deployed
+   application is passive-only: no module reads this field to construct an
+   execution plane, and XDP enforcement actions are not part of the deployed
+   architecture. It is retained only so ``tests/test_phase10_config.py`` and the
+   isolated ``correlation/execution`` semantics tests keep working.
 """
 
 import os
@@ -35,7 +41,7 @@ class ProductionConfig:
 
     schema_version: str = CONFIG_SCHEMA_VERSION
     streaming: StreamingConfig = field(default_factory=StreamingConfig)
-    execution: ExecutionSettings = field(default_factory=ExecutionSettings)
+    execution: ExecutionSettings = field(default_factory=ExecutionSettings)  # noqa: E501  # deprecated: test-only, never read by the app
     evidence_root: str = ""
     api_host: str = "127.0.0.1"
     api_port: int = 8000

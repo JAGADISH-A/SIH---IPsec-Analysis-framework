@@ -105,6 +105,16 @@ def _outer_addrs(layers):
     return src, dst, proto
 
 
+def _ip_total_length(layers):
+    """IPv4 total length from the outer header, or None when absent.
+
+    Used as the IKE ``packet_length`` fallback when TShark exposes no
+    ``isakmp.length``.  Only evidence already present in the packet is
+    returned; a length is never inferred or invented.
+    """
+    return _as_int(layers.get("ip", {}).get("ip.len"))
+
+
 def normalize_esp_event(layers, wan_ip):
     """Build a normalized ESP observation dict from one packet's layers."""
     frame = layers.get("frame", {})
@@ -140,7 +150,7 @@ def normalize_ike_event(layers, wan_ip):
         "ike_exchange_type": exchange_type,
         "ike_exchange_name": IKEV2_EXCHANGE_NAMES.get(exchange_type),
         "message_id": _as_str(isakmp.get("isakmp.messageid")),
-        "packet_length": _as_int(isakmp.get("isakmp.length")) or _as_int(ip.get("ip.len")),
+        "packet_length": _as_int(isakmp.get("isakmp.length")) or _ip_total_length(layers),
         "direction": "outbound" if src == wan_ip else "inbound",
     }
 
