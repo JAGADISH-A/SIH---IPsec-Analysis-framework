@@ -1,0 +1,1026 @@
+@import 'tailwindcss';
+@import './styles/theme.css';
+@import './styles/app.css';
+
+/* ============================================================
+   IPsec Sentinel — Design tokens
+
+   The palette below is the DARK instance of the semantic contract.
+   `styles/theme.css` re-points the very same custom properties for the
+   light theme, so components never branch on the active theme — they
+   only ever reference the semantic names.
+   ============================================================ */
+
+@theme {
+  /* --- Deep navy scale (app chrome & surfaces) --- */
+  --color-night-950: #05070d;
+  --color-night-900: #0a0e1a;
+  --color-night-850: #0d1424;
+  --color-night-800: #111930;
+  --color-night-700: #1b2742;
+  --color-night-600: #26395f;
+  --color-night-500: #33497a;
+
+  /* --- Borders / rules --- */
+  --color-edge: #1a2440;
+  --color-edge-strong: #273a63;
+
+  /* --- Accent: emerald / cyan-green --- */
+  --color-accent-300: #7df3cf;
+  --color-accent-400: #3ce0ae;
+  --color-accent-500: #1ec792;
+  --color-accent-600: #0fa773;
+  --color-accent-dim: rgb(60 224 174 / 0.1);
+
+  /* --- Status semantics --- */
+  --color-info: #54acff;
+  --color-success: #38d39f;
+  --color-warning: #f4b740;
+  --color-danger: #ff5d6c;
+  --color-critical: #ff3b52;
+  --color-info-dim: rgb(84 172 255 / 0.14);
+  --color-success-dim: rgb(56 211 159 / 0.14);
+  --color-warning-dim: rgb(244 183 64 / 0.14);
+  --color-danger-dim: rgb(255 93 108 / 0.14);
+  --color-critical-dim: rgb(255 59 82 / 0.14);
+
+  /* --- Text on night --- */
+  --color-mist: #dfe6f3;
+  --color-mist-dim: #96a1b8;
+  --color-mist-faint: #64708c;
+
+  /* --- Light-gray content surface (hex dumps, paper details) --- */
+  --color-paper: #edf1f8;
+  --color-paper-text: #182236;
+  --color-paper-muted: #5b6a85;
+  --color-paper-edge: #d4dcea;
+
+  /* --- Analyzer workspace ---------------------------------------------
+     The application chrome stays deep navy, but the analysis workspace
+     itself is a light, high-density surface (like a desktop packet
+     analyzer) so packet values, hex bytes and risk colours stay legible
+     and the eye can scan rows quickly.                          */
+  --color-ws: #eef2f8; /* page base behind the panels */
+  --color-ws-panel: #ffffff; /* table + panel surface */
+  --color-ws-sunken: #e9eef6; /* toolbars, filter bar, sub-headers */
+  --color-ws-head: #dee5f0; /* table head strip */
+  --color-ws-line: #d2dbe8; /* structural border */
+  --color-ws-line-soft: #e6ecf4; /* row divider */
+  --color-ws-line-strong: #b4c2d6; /* emphasised border */
+  --color-ws-text: #131e38; /* primary text */
+  --color-ws-dim: #465671; /* secondary text */
+  --color-ws-faint: #78879f; /* tertiary text, column heads */
+  --color-ws-hover: #eaf1f9; /* row hover */
+  --color-ws-zebra: #f9fbfd; /* zebra stripe */
+  --color-ws-sel: #d5efe6; /* selected row */
+  --color-ws-accent: #0b8f6b; /* emerald accent on light */
+  --color-ws-accent-ink: #04503b; /* text on accent fills */
+  --color-ws-accent-dim: #ddf3ec;
+
+  /* Risk palette (light) — restrained, no neon. */
+  --color-ws-critical: #b3122f;
+  --color-ws-critical-dim: #fbe6e9;
+  --color-ws-high: #b0402f;
+  --color-ws-high-dim: #fbeae6;
+  --color-ws-medium: #8a5d00;
+  --color-ws-medium-dim: #fbf0d8;
+  --color-ws-low: #1c629e;
+  --color-ws-low-dim: #e4eefa;
+  --color-ws-none: #6b7a92;
+  --color-ws-none-dim: #edf1f7;
+
+  /* Protocol tag colours (light). */
+  --color-ws-ike: #1c629e;
+  --color-ws-ike-dim: #e4eefa;
+  --color-ws-esp: #0b8f6b;
+  --color-ws-esp-dim: #ddf3ec;
+  --color-ws-ah: #8a5d00;
+  --color-ws-ah-dim: #fbf0d8;
+
+  /* --- Typography --- */
+  --font-sans:
+    'Inter', 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Arial,
+    sans-serif;
+  --font-mono:
+    'JetBrains Mono', 'Cascadia Code', 'SFMono-Regular', ui-monospace, Menlo,
+    Consolas, monospace;
+
+  /* --- Shapes --- */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  /* --- Restrained depth --- */
+  --shadow-panel: 0 10px 30px -12px rgb(0 0 0 / 0.55);
+  --shadow-popover: 0 16px 40px -12px rgb(0 0 0 / 0.65);
+  --shadow-accent-glow: 0 0 0 1px rgb(60 224 174 / 0.35), 0 8px 24px -8px rgb(28 199 146 / 0.4);
+
+  /* --- Subtle motion --- */
+  --animate-pulse-dot: pulse-dot 1.8s ease-in-out infinite;
+  --animate-panel-in: panel-in 0.18s ease-out both;
+  --animate-fade-in: fade-in 0.15s ease-out both;
+  --animate-drop-in: drop-in 0.2s cubic-bezier(0.22, 1, 0.36, 1) both;
+
+  @keyframes pulse-dot {
+    0%,
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.55;
+      transform: scale(0.82);
+    }
+  }
+
+  @keyframes panel-in {
+    from {
+      opacity: 0;
+      transform: translateX(16px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(2px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes drop-in {
+    from {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.99);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  /* Filter / side panels expand from a zero-height grid track, so the
+     surrounding workspace reflows smoothly in both directions. */
+  @keyframes ws-rise {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
+
+/* ============================================================
+   Base
+   ============================================================ */
+
+@layer base {
+  * {
+    border-color: var(--color-edge);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-night-950);
+    color: var(--color-mist);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    color-scheme: dark;
+    font-feature-settings: 'cv02', 'cv03';
+  }
+
+  ::selection {
+    background-color: rgb(60 224 174 / 0.28);
+    color: #ffffff;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    color: var(--color-mist);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  button {
+    font-family: inherit;
+  }
+
+  /* Keyboard focus visibility — inputs/selects handle focus via `.field`. */
+  :where(button, a, [tabindex], summary):focus-visible {
+    outline: 2px solid var(--color-accent-500);
+    outline-offset: 2px;
+  }
+
+  /* Slim, technical scrollbars */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scroll-thumb) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 9px;
+    height: 9px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--scroll-thumb);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scroll-thumb-hover);
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+/* ============================================================
+   Components
+   ============================================================ */
+
+@layer components {
+  .focus-ring {
+    outline: none;
+  }
+  .focus-ring:focus-visible {
+    box-shadow:
+      0 0 0 1px var(--color-night-950),
+      0 0 0 2px var(--color-accent-500);
+  }
+
+  /* --- Panels & surfaces --- */
+  .panel {
+    background: var(--color-night-900);
+    border: 1px solid var(--color-edge);
+    border-radius: var(--radius-md);
+  }
+  .panel-raised {
+    background: var(--color-night-800);
+    border: 1px solid var(--color-edge-strong);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-panel);
+  }
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--color-edge);
+  }
+  .panel-title {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-mist-dim);
+  }
+
+  /* --- Buttons --- */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 32px;
+    padding: 0 12px;
+    border: 1px solid var(--color-edge-strong);
+    border-radius: var(--radius-sm);
+    background: var(--color-night-800);
+    color: var(--color-mist);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition:
+      background-color 0.12s ease,
+      border-color 0.12s ease,
+      color 0.12s ease;
+    white-space: nowrap;
+  }
+  .btn:hover {
+    background: var(--color-night-700);
+    border-color: var(--color-night-500);
+  }
+  .btn:active {
+    transform: translateY(0.5px);
+  }
+  .btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  .btn-primary {
+    background: var(--color-accent-500);
+    border-color: transparent;
+    color: var(--color-on-accent);
+    font-weight: 600;
+  }
+  .btn-primary:hover {
+    background: var(--color-accent-600);
+    color: var(--color-on-accent);
+    border-color: transparent;
+  }
+  .btn-ghost {
+    background: transparent;
+    border-color: transparent;
+    color: var(--color-mist-dim);
+  }
+  .btn-ghost:hover {
+    background: var(--color-night-800);
+    color: var(--color-mist);
+    border-color: transparent;
+  }
+  .btn-danger {
+    background: transparent;
+    border-color: var(--color-danger);
+    color: var(--color-danger);
+  }
+  .btn-danger:hover {
+    background: var(--color-danger-dim);
+  }
+  .btn-sm {
+    height: 26px;
+    padding: 0 9px;
+    font-size: 12px;
+    border-radius: var(--radius-xs);
+  }
+  .btn-icon {
+    width: 32px;
+    padding: 0;
+  }
+  .btn-icon.btn-sm {
+    width: 26px;
+  }
+  .btn-active {
+    background: var(--color-night-700);
+    border-color: var(--color-accent-500);
+    color: var(--color-accent-300);
+  }
+  .btn-ghost.btn-active {
+    background: var(--color-accent-dim);
+    color: var(--color-accent-300);
+  }
+
+  /* --- Nav items --- */
+
+  /* --- Inputs --- */
+  .field {
+    width: 100%;
+    height: 32px;
+    padding: 0 11px;
+    border: 1px solid var(--color-edge-strong);
+    border-radius: var(--radius-sm);
+    background: var(--color-night-950);
+    color: var(--color-mist);
+    font-size: 13px;
+    transition:
+      border-color 0.12s ease,
+      box-shadow 0.12s ease;
+  }
+  .field::placeholder {
+    color: var(--color-mist-faint);
+  }
+  .field:focus {
+    outline: none;
+    border-color: var(--color-accent-500);
+    box-shadow: 0 0 0 2px rgb(60 224 174 / 0.18);
+  }
+
+  /* --- Labels & chips --- */
+  .label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-mist-faint);
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 20px;
+    padding: 0 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    background: var(--color-night-800);
+    color: var(--color-mist-dim);
+    border: 1px solid var(--color-edge);
+  }
+
+  /* --- Monospace helpers --- */
+  .mono {
+    font-family: var(--font-mono);
+  }
+  .mono-tab {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+
+  /* --- Keyboard shortcut chip --- */
+  .kbd {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 18px;
+    padding: 0 6px;
+    border: 1px solid var(--color-edge-strong);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    background: var(--color-night-800);
+    color: var(--color-mist-faint);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  /* --- Vertical divider for nav clusters --- */
+  .divider-v {
+    width: 1px;
+    height: 20px;
+    background: var(--color-chrome-line);
+  }
+
+  /* Keyboard-selectable packet table rows */
+  tbody tr[tabindex] {
+    outline: none;
+  }
+  tbody tr[tabindex]:focus-visible {
+    outline: 2px solid var(--color-accent-500);
+    outline-offset: -2px;
+  }
+}
+
+/* ============================================================
+   Analyzer workspace
+   Dense, light analysis surface that sits under the navy chrome.
+   Everything here is intentionally compact: small type, 1px
+   rules, tabular numerals and no decorative depth.
+   ============================================================ */
+
+@layer components {
+  /* --- Root: flips native form controls to the light scheme --- */
+  .ws {
+    color-scheme: light;
+    background: var(--color-ws);
+    color: var(--color-ws-text);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+  .ws ::selection {
+    background: rgb(11 143 107 / 0.22);
+    color: var(--color-ws-text);
+  }
+
+  /* --- Horizontal strips: capture toolbar, filter bar, sub-headers --- */
+  .ws-bar {
+    display: flex;
+    align-items: center;
+    flex: none;
+    gap: 8px;
+    min-height: 38px;
+    padding: 0 10px;
+    background: var(--color-ws-sunken);
+    border-bottom: 1px solid var(--color-ws-line);
+  }
+  .ws-bar-tight {
+    min-height: 30px;
+    gap: 6px;
+  }
+  .ws-bar-raised {
+    border-bottom-color: var(--color-ws-line-strong);
+  }
+  .ws-bar-title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-ws-dim);
+    white-space: nowrap;
+  }
+
+  /* --- Collapsible regions (0fr -> 1fr animates both ways) --- */
+  .ws-collapse {
+    display: grid;
+    grid-template-rows: 0fr;
+    flex: none;
+    transition: grid-template-rows 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .ws-collapse[data-open='true'] {
+    grid-template-rows: 1fr;
+  }
+  .ws-collapse > * {
+    overflow: hidden;
+    min-height: 0;
+  }
+  .ws-collapse[data-open='true'] > * {
+    animation: ws-rise 0.16s ease-out both;
+  }
+
+  /* --- Statistics readout: label above value, inline in the toolbar --- */
+  .ws-stat {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-width: 0;
+    padding: 0 9px;
+    border-left: 1px solid var(--color-ws-line);
+    line-height: 1.2;
+  }
+  .ws-stat-label {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--color-ws-faint);
+    white-space: nowrap;
+  }
+  .ws-stat-value {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--color-ws-text);
+    white-space: nowrap;
+  }
+  .ws-stat-value[data-tone='critical'] {
+    color: var(--color-ws-critical);
+  }
+  .ws-stat-value[data-tone='high'] {
+    color: var(--color-ws-high);
+  }
+  .ws-stat-value[data-tone='medium'] {
+    color: var(--color-ws-medium);
+  }
+  .ws-stat-value[data-tone='accent'] {
+    color: var(--color-ws-accent);
+  }
+
+  /* --- Buttons --- */
+  .ws-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    height: 26px;
+    padding: 0 9px;
+    flex: none;
+    border: 1px solid var(--color-ws-line-strong);
+    border-radius: 3px;
+    background: var(--color-ws-panel);
+    color: var(--color-ws-text);
+    font-size: 11.5px;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+      background-color 0.1s ease,
+      border-color 0.1s ease,
+      color 0.1s ease;
+  }
+  .ws-btn:hover:not(:disabled) {
+    background: var(--color-ws-hover);
+    border-color: var(--color-ws-faint);
+  }
+  .ws-btn:active:not(:disabled) {
+    background: var(--color-ws-sunken);
+  }
+  .ws-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  .ws-btn-primary {
+    background: var(--color-ws-accent);
+    border-color: var(--color-ws-accent);
+    color: var(--ws-on-accent, #ffffff);
+  }
+  .ws-btn-primary:hover:not(:disabled) {
+    background: #0a7d5e;
+    border-color: #0a7d5e;
+  }
+  .ws-btn-danger {
+    background: var(--color-ws-panel);
+    border-color: #d8a6a6;
+    color: var(--color-ws-critical);
+  }
+  .ws-btn-danger:hover:not(:disabled) {
+    background: var(--color-ws-critical-dim);
+    border-color: var(--color-ws-critical);
+  }
+  .ws-btn-ghost {
+    background: transparent;
+    border-color: transparent;
+    color: var(--color-ws-dim);
+  }
+  .ws-btn-ghost:hover:not(:disabled) {
+    background: rgb(19 30 56 / 0.06);
+    border-color: transparent;
+  }
+  .ws-btn-active {
+    background: var(--color-ws-accent-dim);
+    border-color: var(--color-ws-accent);
+    color: var(--color-ws-accent-ink);
+  }
+  .ws-btn-icon {
+    width: 26px;
+    padding: 0;
+  }
+
+  /* --- Inputs / selects --- */
+  .ws-input {
+    width: 100%;
+    height: 26px;
+    padding: 0 8px;
+    border: 1px solid var(--color-ws-line-strong);
+    border-radius: 3px;
+    background: var(--color-ws-panel);
+    color: var(--color-ws-text);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    transition:
+      border-color 0.1s ease,
+      box-shadow 0.1s ease;
+  }
+  .ws-input::placeholder {
+    color: var(--color-ws-faint);
+    font-family: var(--font-sans);
+  }
+  .ws-input:focus {
+    outline: none;
+    border-color: var(--color-ws-accent);
+    box-shadow: 0 0 0 2px rgb(11 143 107 / 0.16);
+  }
+  .ws-select {
+    width: 100%;
+    height: 26px;
+    padding: 0 24px 0 8px;
+    border: 1px solid var(--color-ws-line-strong);
+    border-radius: 3px;
+    background: var(--color-ws-panel);
+    color: var(--color-ws-text);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    appearance: none;
+    cursor: pointer;
+  }
+  .ws-select:focus {
+    outline: none;
+    border-color: var(--color-ws-accent);
+    box-shadow: 0 0 0 2px rgb(11 143 107 / 0.16);
+  }
+
+  /* --- Panel / section chrome --- */
+  .ws-panel {
+    background: var(--color-ws-panel);
+    border: 1px solid var(--color-ws-line);
+    border-radius: 3px;
+  }
+  .ws-section {
+    border: 1px solid var(--color-ws-line);
+    border-radius: 3px;
+    background: var(--color-ws-panel);
+  }
+  .ws-section-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 26px;
+    padding: 0 8px;
+    background: var(--color-ws-sunken);
+    border-bottom: 1px solid var(--color-ws-line);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--color-ws-dim);
+  }
+  .ws-section-body {
+    padding: 8px 10px;
+  }
+
+  /* --- Packet table --- */
+  .ws-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+  .ws-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 6;
+    height: 26px;
+    padding: 0 8px;
+    background: var(--color-ws-head);
+    border-bottom: 1px solid var(--color-ws-line-strong);
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--color-ws-dim);
+    text-align: left;
+    white-space: nowrap;
+    user-select: none;
+  }
+  .ws-table tbody td {
+    height: 23px;
+    padding: 0 8px;
+    border-bottom: 1px solid var(--color-ws-line-soft);
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+  .ws-row {
+    cursor: pointer;
+  }
+  .ws-row:nth-child(even) {
+    background: var(--color-ws-zebra);
+  }
+  .ws-row:hover {
+    background: var(--color-ws-hover);
+  }
+  .ws-row[data-selected='true'] {
+    background: var(--color-ws-sel);
+  }
+  .ws-row[data-selected='true']:hover {
+    background: var(--color-ws-sel-hover);
+  }
+  .ws-row[data-selected='true'] td:first-child {
+    box-shadow: inset 2px 0 0 var(--color-ws-accent);
+  }
+  .ws-row:focus-visible {
+    outline: 2px solid var(--color-ws-accent);
+    outline-offset: -2px;
+  }
+  /* Row that holds an expanded detail block. */
+  .ws-detail-row > td {
+    padding: 0;
+    height: auto;
+    background: var(--color-ws-detail);
+    border-bottom: 1px solid var(--color-ws-line-strong);
+    border-top: 1px solid var(--color-ws-line);
+    white-space: normal;
+  }
+
+  /* --- Tags --- */
+  .ws-proto {
+    display: inline-flex;
+    align-items: center;
+    height: 16px;
+    padding: 0 5px;
+    border: 1px solid;
+    border-radius: 2px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+  }
+  .ws-risk {
+    display: inline-flex;
+    align-items: center;
+    height: 16px;
+    padding: 0 6px;
+    border: 1px solid;
+    border-radius: 2px;
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .ws-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 19px;
+    padding: 0 7px;
+    border: 1px solid var(--color-ws-line);
+    border-radius: 3px;
+    background: var(--color-ws-panel);
+    color: var(--color-ws-dim);
+    font-size: 10.5px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  /* --- Key/value grids inside the packet detail block --- */
+  .ws-kv {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
+    gap: 5px 16px;
+  }
+  .ws-kv > div {
+    min-width: 0;
+  }
+  .ws-kv dt {
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--color-ws-faint);
+  }
+  .ws-kv dd {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 11.5px;
+    color: var(--color-ws-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ws-kv dd[data-tone='muted'] {
+    color: var(--color-ws-dim);
+  }
+  .ws-kv-note {
+    font-family: var(--font-sans);
+    font-size: 10px;
+    color: var(--color-ws-faint);
+  }
+
+  /* --- Packet detail tabs --- */
+  .ws-tabs {
+    display: flex;
+    gap: 0;
+    overflow-x: auto;
+  }
+  .ws-tab {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    height: 27px;
+    padding: 0 11px;
+    flex: none;
+    border: none;
+    border-right: 1px solid var(--color-ws-line);
+    background: var(--color-ws-sunken);
+    color: var(--color-ws-dim);
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+      background-color 0.1s ease,
+      color 0.1s ease;
+  }
+  .ws-tab:hover {
+    background: var(--color-ws-hover);
+    color: var(--color-ws-text);
+  }
+  .ws-tab[aria-selected='true'] {
+    background: var(--color-ws-panel);
+    color: var(--color-ws-accent-ink);
+  }
+  .ws-tab[aria-selected='true']::after {
+    content: '';
+    position: absolute;
+    inset: auto 0 0 0;
+    height: 2px;
+    background: var(--color-ws-accent);
+  }
+  .ws-tab:focus-visible {
+    outline: 2px solid var(--color-ws-accent);
+    outline-offset: -2px;
+  }
+
+  /* --- Hex viewer --- */
+  .ws-hex {
+    background: var(--color-ws-hex);
+    border: 1px solid var(--color-ws-line);
+    border-radius: 3px;
+    padding: 6px 0;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+    line-height: 1.5;
+  }
+  .ws-hex-row {
+    display: flex;
+    gap: 14px;
+    padding: 0 10px;
+  }
+  .ws-hex-row:hover {
+    background: var(--color-ws-hover);
+  }
+  .ws-hex-offset {
+    flex: none;
+    width: 4ch;
+    text-align: right;
+    color: var(--color-ws-faint);
+  }
+  .ws-hex-bytes {
+    flex: none;
+    color: var(--color-ws-text);
+    white-space: pre;
+  }
+  .ws-hex-ascii {
+    flex: none;
+    color: var(--color-ws-accent);
+    white-space: pre;
+  }
+
+  /* --- Layer tree (protocol dissection) --- */
+  .ws-layer {
+    border-left: 2px solid var(--color-ws-line);
+    padding: 0 0 0 9px;
+  }
+  .ws-layer-head {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+  }
+  .ws-layer-name {
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--color-ws-text);
+  }
+  .ws-layer-sum {
+    font-size: 10.5px;
+    color: var(--color-ws-faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ws-layer-abbr {
+    display: inline-flex;
+    align-items: center;
+    height: 15px;
+    padding: 0 5px;
+    border: 1px solid var(--color-ws-line-strong);
+    border-radius: 2px;
+    background: var(--color-ws-sunken);
+    color: var(--color-ws-dim);
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    font-weight: 700;
+  }
+
+  /* --- Findings / callout blocks --- */
+  .ws-finding {
+    border: 1px solid var(--color-ws-line);
+    border-left-width: 3px;
+    border-radius: 3px;
+    background: var(--color-ws-panel);
+    padding: 7px 9px;
+  }
+  .ws-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 7px;
+    padding: 5px 9px;
+    border-bottom: 1px solid var(--color-ws-line);
+    font-size: 11px;
+    color: var(--color-ws-dim);
+  }
+  .ws-note[data-tone='error'] {
+    background: var(--color-ws-critical-dim);
+    color: var(--color-ws-critical);
+  }
+  .ws-note[data-tone='warn'] {
+    background: var(--color-ws-medium-dim);
+    color: var(--color-ws-medium);
+  }
+  .ws-note[data-tone='info'] {
+    background: var(--color-ws-low-dim);
+    color: var(--color-ws-low);
+  }
+
+  /* --- Spacer / scroll helpers --- */
+  .ws-scroll {
+    overflow: auto;
+    scrollbar-color: var(--color-ws-line-strong) transparent;
+  }
+  .ws-float-pill {
+    box-shadow:
+      0 1px 2px rgb(13 20 36 / 0.14),
+      0 6px 18px -6px rgb(13 20 36 / 0.32);
+  }
+}

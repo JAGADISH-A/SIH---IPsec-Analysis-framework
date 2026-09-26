@@ -1,0 +1,231 @@
+/* ==================================================================
+   IPsec Sentinel — application layout primitives
+   Theme-aware (uses the semantic palette from theme.css, never a raw hex)
+   so every page follows the active theme without component-level branching.
+   ================================================================== */
+
+@layer components {
+  /* --- Document scroll region used by every workspace page ---------- */
+  .app-scroll {
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
+  /* --- Page container ---------------------------------------------- */
+  .page {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    width: 100%;
+    min-height: 100%;
+    padding: 14px 16px 28px;
+  }
+  .page-wide {
+    padding: 14px 20px 28px;
+  }
+
+  /* --- Section heading used inside a page --------------------------- */
+  .section-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-mist-dim);
+  }
+
+  /* --- Dense, theme-aware data table ------------------------------- */
+  .dt {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 12px;
+  }
+  .dt thead th {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    height: 30px;
+    padding: 0 10px;
+    background: var(--color-night-800);
+    border-bottom: 1px solid var(--color-edge);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--color-mist-faint);
+    text-align: left;
+    white-space: nowrap;
+    user-select: none;
+  }
+  .dt thead th[aria-sort] {
+    cursor: pointer;
+  }
+  .dt thead th[aria-sort]:hover {
+    color: var(--color-mist);
+  }
+  .dt tbody td {
+    padding: 0 10px;
+    height: 34px;
+    border-bottom: 1px solid var(--color-edge);
+    color: var(--color-mist-dim);
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+  .dt tbody tr:hover td {
+    background: var(--color-night-800);
+  }
+  .dt tbody tr[data-interactive='true'] {
+    cursor: pointer;
+  }
+  .dt tbody tr:focus-visible {
+    outline: 2px solid var(--color-accent-500);
+    outline-offset: -2px;
+  }
+  .dt-zebra tbody tr:nth-child(even) td {
+    background: var(--color-night-850);
+  }
+  .dt-zebra tbody tr:nth-child(even):hover td {
+    background: var(--color-night-800);
+  }
+  .dt-compact tbody td {
+    height: 28px;
+  }
+  .dt-relaxed tbody td {
+    height: 42px;
+  }
+
+  /* --- Key/value grid ---------------------------------------------- */
+  .kv {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap: 10px 20px;
+  }
+  .kv > div {
+    min-width: 0;
+  }
+  .kv dt {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-mist-faint);
+  }
+  .kv dd {
+    margin: 2px 0 0;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 12.5px;
+    color: var(--color-mist);
+    overflow-wrap: anywhere;
+  }
+  .kv dd[data-unknown='true'] {
+    font-family: var(--font-sans);
+    font-style: italic;
+    color: var(--color-mist-faint);
+  }
+
+  /* --- Toolbar strip ----------------------------------------------- */
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 40px;
+    padding: 5px 12px;
+    background: var(--color-night-900);
+    border-bottom: 1px solid var(--color-edge);
+  }
+
+  /* --- Table shell -------------------------------------------------- */
+  .table-shell {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--color-night-900);
+    border: 1px solid var(--color-edge);
+    border-radius: var(--radius-md);
+  }
+
+  /* --- Chart frame --------------------------------------------------- */
+  .chart-grid-line {
+    stroke: var(--color-edge);
+    stroke-width: 1;
+  }
+  .chart-axis-text {
+    fill: var(--color-mist-faint);
+    font-size: 9.5px;
+    font-family: var(--font-mono);
+  }
+  .chart-value-text {
+    fill: var(--color-mist-dim);
+    font-size: 10px;
+    font-family: var(--font-mono);
+  }
+  .chart-value-text-strong {
+    fill: var(--color-mist);
+    font-size: 10.5px;
+    font-weight: 600;
+    font-family: var(--font-mono);
+  }
+
+  /* --- JSON viewer --------------------------------------------------- */
+  .json-tree {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  .json-key {
+    color: var(--color-info);
+  }
+  .json-string {
+    color: var(--color-success);
+  }
+  .json-number {
+    color: var(--color-accent-400);
+  }
+  .json-boolean {
+    color: var(--color-warning);
+  }
+  .json-null {
+    color: var(--color-mist-faint);
+  }
+  .json-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    border: none;
+    background: transparent;
+    color: var(--color-mist-dim);
+    cursor: pointer;
+    padding: 0;
+    font: inherit;
+  }
+  .json-toggle:hover {
+    color: var(--color-mist);
+  }
+
+  /* --- Prose block used by documentation ---------------------------- */
+  .prose-block {
+    color: var(--color-mist-dim);
+    font-size: 13.5px;
+    line-height: 1.65;
+  }
+  .prose-block p + p {
+    margin-top: 10px;
+  }
+  .prose-block code {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: var(--color-night-800);
+    color: var(--color-mist);
+  }
+  .prose-block strong {
+    color: var(--color-mist);
+    font-weight: 600;
+  }
+}
