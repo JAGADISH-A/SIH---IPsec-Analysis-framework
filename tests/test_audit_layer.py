@@ -37,6 +37,7 @@ from correlation.audit import (
     AUDIT_SOURCES,
     EVENT_COMPARISON,
     EVENT_EXPECTED_STATE,
+    EVENT_EVIDENCE,
     EVENT_EXPLANATION,
     EVENT_ML_FAILURE,
     EVENT_ML_RESULT,
@@ -46,6 +47,7 @@ from correlation.audit import (
     EVENT_SOURCE,
     SOURCE_AUTHORITATIVE,
     SOURCE_COMPARISON,
+    SOURCE_EVIDENCE,
     SOURCE_EXPECTED,
     SOURCE_EXPLAINABILITY,
     SOURCE_ML,
@@ -899,7 +901,38 @@ class TestRealDataLifecycle(unittest.TestCase):
             ],
             types,
         )
-        self.assertEqual(len(run.results) * 6, len(events))
+        # Evidence references are recorded as their own stage, so a window with
+        # evidence produces 7 events and one without produces 6.
+        self.assertEqual(len(run.results) * 7, len(events))
+        self.assertEqual(
+            len(run.results),
+            sum(1 for e in events if e.event_type == EVENT_EVIDENCE),
+        )
+
+    def test_evidence_events_never_claim_authority(self):
+        run = _run()
+        events = audit_run(
+            run,
+            recorded_at="2026-09-26T00:00:00+00:00",
+            evidence_refs=[
+                EvidenceRef(
+                    audit_event_reference="audit://events.jsonl#0",
+                    source="audit_tap",
+                )
+            ],
+        )
+        evidence_events = [e for e in events if e.event_type == EVENT_EVIDENCE]
+        self.assertTrue(evidence_events)
+        for event in evidence_events:
+            self.assertEqual(SOURCE_EVIDENCE, event.source)
+            self.assertFalse(
+                event.authoritative,
+                "a captured artifact is not an authoritative protocol conclusion",
+            )
+            # References only: no artifact payload anywhere in the record.
+            self.assertNotIn("pcap_bytes", event.to_dict())
+            self.assertNotIn("packet_data", event.to_dict())
+            self.assertTrue(event.evidence_refs)
 
     def test_observed_state_event_reflects_real_observation(self):
         run = _run()
@@ -938,7 +971,43 @@ class TestRealDataLifecycle(unittest.TestCase):
             run, recorded_at="2026-09-26T00:00:00+00:00", evidence_refs=[ref]
         )
 
-        self.assertTrue(all(e.evidence_refs == (ref,) for e in events))
+        # Every stage keeps exactly one reference, and the identifying fields of
+        # the original reference survive the window binding unchanged.
+        for event in events:
+            self.assertEqual(len(event.evidence_refs), 1)
+            bound = event.evidence_refs[0]
+            self.assertEqual(bound.audit_event_reference, ref.audit_event_reference)
+            self.assertEqual(bound.source, ref.source)
+
+    def test_evidence_is_bound_to_the_window_that_produced_it(self):
+        """A flat ref must not be smears across every window unchanged.
+
+        The reference is re-bound per window, so window N and window N+1 carry
+        distinct, individually addressable references rather than one shared
+        unbound id that would let a response for N inherit N+1's evidence.
+        """
+        ref = EvidenceRef(
+            audit_event_reference="audit://events.jsonl#12", source="audit_tap"
+        )
+        run = _run()
+        events = audit_run(
+            run, recorded_at="2026-09-26T00:00:00+00:00", evidence_refs=[ref]
+        )
+
+        seen = {}
+        for event in events:
+            if event.event_type != EVENT_OBSERVED_STATE:
+                continue
+            bound = event.evidence_refs[0]
+            window = event.identity.window_index
+            seen.setdefault(window, set()).add(bound.evidence_id)
+            self.assertEqual(bound.window_index, window)
+
+        self.assertGreater(len(seen), 1, "the run must span multiple windows")
+        distinct = {next(iter(ids)) for ids in seen.values()}
+        self.assertEqual(
+            len(distinct), len(seen), "each window needs its own evidence identity"
+        )
 
     def test_an_insufficient_evidence_run_still_produces_a_valid_audit(self):
         """A run may legitimately stop at explanation with UNKNOWN comparison."""

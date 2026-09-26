@@ -16,7 +16,7 @@ Only samples the execution engine has *committed* may ever enter the final ML
 dataset.  Failed, interrupted, partial, abandoned or uncommitted attempts are
 never staged as successful.
 
-Data contract (all documented again in SCHEMA.md)
+Data contract (all documented again in docs/architecture/SCHEMA.md)
 --------------------------------------------------
 ``dataset_schema_version = "v1"``.  The feature table is the 59-column output
 of ``controller/features.py`` (the feature extraction authority) at

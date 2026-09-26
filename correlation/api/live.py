@@ -57,6 +57,15 @@ class Phase10Context:
     #: is None the audit routes report "no journal configured" rather than
     #: inventing evidence; it is never written to from a request.
     audit_store: Optional[Any] = None
+    #: Optional WRITE-side governance ledger. Unlike ``audit_store`` this one is
+    #: appended to: it is the durable home of the assessment/recommendation/
+    #: authorization/approval record. It is never written from a request
+    #: handler either -- it is handed to the response engine, which appends
+    #: through the ledger's own hash chain.
+    governance: Optional[Any] = None
+    #: Read-only link target: the observation journal the ledger's ``audit_tap``
+    #: evidence references point into.
+    observation_journal: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.pcap is None:
@@ -66,6 +75,46 @@ class Phase10Context:
     def attach_audit_store(self, store) -> None:
         """Wire the audit query layer. Explicit, like every other dependency."""
         self.audit_store = store
+
+    def note_evidence_registered(self, registered: int, root: str) -> None:
+        """Report the evidence registry's real state after registration.
+
+        The seeded ``evidence`` component says "no evidence registry
+        configured" until something is actually registered. This keeps that
+        line truthful in both directions: a populated registry is reported with
+        the count and root, an empty one stays unavailable. Nothing is invented
+        — a reference that was skipped by the caller is not counted here.
+        """
+        if registered > 0:
+            self.health.set(
+                healthy(
+                    "evidence",
+                    f"{registered} recorded evidence reference(s) under "
+                    f"{root} (read-only, id-addressed)",
+                    registered=registered,
+                )
+            )
+        else:
+            self.health.set(
+                unavailable(
+                    "evidence",
+                    "evidence registry configured but no recorded reference "
+                    "resolved under the evidence root",
+                    registered=0,
+                )
+            )
+
+    def attach_governance(self, ledger, observation_journal: Optional[str] = None) -> Dict[str, Any]:
+        """Wire the write-side governance ledger and its observation link.
+
+        The returned report states what the journal can be walked back to. An
+        unresolvable ``audit_tap`` reference is reported, never repaired.
+        """
+        self.governance = ledger
+        self.observation_journal = observation_journal
+        if observation_journal is None or ledger is None:
+            return {"events": 0, "referenced": 0, "resolved": 0, "unresolved": 0}
+        return ledger.verify_against(observation_journal)
 
     def _seed_health(self) -> None:
         if self.health._components:
@@ -97,4 +146,10 @@ class Phase10Context:
             "pcap_downloads": self.pcap.download_count,
             "traffic_generator": self.traffic_generator.status(),
             "audit_journal_configured": self.audit_store is not None,
+            "governance_journal": (
+                None if self.governance is None else str(self.governance.path)
+            ),
+            "governance_events": (
+                0 if self.governance is None else len(self.governance)
+            ),
         }

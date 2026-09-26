@@ -24,6 +24,10 @@ class _ServerTestCase(unittest.TestCase):
         cls.server.shutdown()
         cls.server.server_close()
 
+    def aid(self, slot):
+        return next(h["assessment_id"] for h in self.store.headers
+                    if h["slot"] == slot)
+
     def get(self, path):
         with urllib.request.urlopen(self.base + path, timeout=10) as response:
             return response.status, json.loads(response.read().decode("utf-8"))
@@ -40,26 +44,31 @@ class HttpContractTest(_ServerTestCase):
         status, payload = self.get("/api/assessments")
         self.assertEqual(status, 200)
         self.assertEqual(len(payload["headers"]), 12)
-        self.assertEqual(payload["overview"]["highest_risk"], 55)
+        self.assertEqual(payload["overview"]["highest_risk"],
+                         max(h["risk_score"] for h in payload["headers"]))
 
     def test_detail_with_url_encoded_id(self):
         import urllib.parse
 
-        aid = urllib.parse.quote("dataset-20260916-231246:5:worst-ml", safe="")
+        aid = urllib.parse.quote(self.aid("ml-mismatch"), safe="")
         status, payload = self.get(f"/api/assessments/{aid}")
         self.assertEqual(status, 200)
-        self.assertEqual(payload["risk"]["overall_score"], 55)
-        self.assertEqual(payload["risk"]["severity"], "CRITICAL")
+        self.assertEqual(payload["risk"]["severity"], "HIGH")
+        self.assertEqual(payload["risk"]["overall_score"],
+                         payload["xai"]["score_explanation"]["score"])
+        # the bundle names the recorded artifacts it was built from
+        self.assertTrue(payload["sources"])
 
     def test_sub_resource(self):
-        status, payload = self.get("/api/assessments/dataset-20260916-231246:1:strong-clean/risk")
+        status, payload = self.get(
+            f"/api/assessments/{self.aid('strong-clean')}/risk")
         self.assertEqual(status, 200)
         self.assertEqual(payload["data"]["overall_score"], 0)
         self.assertEqual(payload["data"]["severity"], "INFO")
 
     def test_missing_assessment_404(self):
         with self.assertRaisesRegex(urllib.error.HTTPError, "404") as ctx:
-            self.get("/api/assessments/dataset-20260916-231246:99:ghost")
+            self.get("/api/assessments/dataset-20260924-003710:99:ghost")
         body = json.loads(ctx.exception.read().decode("utf-8"))
         self.assertEqual(body["error"]["code"], "assessment_not_found")
 

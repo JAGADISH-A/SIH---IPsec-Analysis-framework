@@ -1,15 +1,17 @@
 """Phase 8 EXECUTE: run the dashboard store end-to-end (deterministic).
 
 Builds the dashboard assessment store by running the REAL Phase-3/4/5/6/7
-pipeline against the real plan fixture, verifies the whole pipeline is
-byte-identical across two runs (no time/random/network inputs), and writes the
-full static snapshot for the dashboard demo mode:
+pipeline over the REAL recorded artifacts (the Phase-3 plan, ipsec_state_builder
+snapshots, feature-schema-v2 windows and recorded RandomForest output), verifies
+the whole pipeline is byte-identical across two runs (no time/random/network
+inputs), and writes the full static snapshot for the dashboard demo mode:
 
     python -m correlation.tools.execute_phase8 [--plan <path>]
                                                [--output out/dashboard_snapshot.json]
 
 The snapshot contains overview + headers + every full assessment bundle
-(expected, observed, correlation, ml, risk, xai, evidence, ipsec-state).
+(expected, observed, correlation, ml, risk, xai, evidence, ipsec-state) plus the
+`sources` each assessment was built from, with each artifact's own digest.
 """
 
 import argparse

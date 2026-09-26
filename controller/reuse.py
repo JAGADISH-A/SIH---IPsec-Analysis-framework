@@ -110,7 +110,7 @@ class TopologyReuseManager:
                              before_initiate_fn=None):
         """In-place StrongSwan reset+rereinitiate with strong fallback.
 
-        Safe order (see MODULE9_DESIGN.md §4):
+        Safe order (see docs/architecture/MODULE9_DESIGN.md §4):
 
           1. terminate every active CHILD SA
           2. terminate the IKE SA (so no old proposal can survive)

@@ -97,13 +97,24 @@ ebpf/xdp_monitor          built by `make -C ebpf` (installed/run inside the sens
 
 ```text
 ipsec-testbed/
+├── controller/                    # sensor side: capture, deploy, dataset, features, RF
+├── correlation/                   # analysis side: state, comparison, risk, XAI, audit, API
 ├── ebpf/
 │   └── xdp_monitor.c ...          # eBPF/XDP monitor (CLI: <iface> [--json])
+├── frontend/                      # static dashboard assets
+├── tests/                         # analysis-side test suite + committed fixtures
+├── docs/                          # all documentation (see docs/README.md)
+│   ├── architecture/              # schema, design, boundary contracts
+│   ├── verification/              # verification reports + final verification report
+│   ├── reports/                   # implementation/change reports
+│   └── development/               # repository guide
 ├── gateway-image/   host-image/   transport-host-image/    # Dockerfiles
 ├── configs/gw-a/swanctl           configs/gw-b/swanctl     # strongSwan
 ├── topology/
 │   ├── tunnel/ipsec.clab.yml      # verified tunnel architecture
 │   └── transport/ipsec.clab.yml   # transport (host-d) topology
+├── campaigns/                     # named experiment plans (--campaign)
+├── campaign.json  campaign-quality.json                   # default campaign inputs
 ├── scripts/
 │   ├── install.sh                 # one-step preparation
 │   ├── run.sh                     # deploy + verify
@@ -112,10 +123,20 @@ ipsec-testbed/
 │   ├── gateway-entrypoint wrappers (gw-entrypoint.sh, audit-tap-setup.sh,
 │   │                              transport-entrypoint.sh)
 │   └── deploy-ipsec.sh            # authoritative deploy/destroy wrapper (br-wan + clab)
+├── results/                       # LOCAL generated evidence — not committed
 └── README.md
 ```
 
-Containerlab-generated state (`topology/*/clab-*/`) is git-ignored.
+Git-ignored: `results/` and `out/` (local generated evidence), `topology/*/clab-*/`
+(Containerlab state), `controller/generated/`, Python caches, `.env`.
+The one committed capture is `controller/testdata/*.pcap`, which three test modules
+require — see [docs/development/REPOSITORY_GUIDE.md](docs/development/REPOSITORY_GUIDE.md).
+
+## Documentation
+
+Start with **[docs/verification/FINAL_VERIFICATION_REPORT.md](docs/verification/FINAL_VERIFICATION_REPORT.md)**
+for current scope, architecture, what was verified, and known limitations.
+The full documentation index is [docs/README.md](docs/README.md).
 
 ---
 

@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import numbers
 import sys
@@ -160,6 +161,29 @@ def validate_artifact(artifact: dict) -> None:
         raise ValueError(
             "model artifact label_encoder does not match target_classes order"
         )
+
+
+@lru_cache(maxsize=1)
+def model_provenance() -> dict:
+    """Deterministic provenance of the committed RF artifact itself.
+
+    ``train_report.json`` already records the artifact digest, but that record
+    is not carried by a live result, so a result naming only
+    ``model_version`` cannot be tied to a specific file.  This surfaces the
+    digest of the artifact actually loaded plus the training facts the artifact
+    already carries, so every result is traceable to one exact file.  Cached:
+    the digest is computed once per process.
+    """
+    digest = hashlib.sha256(MODEL_PATH.read_bytes()).hexdigest()
+    metadata = dict(load_artifact(MODEL_PATH).get("metadata") or {})
+    return {
+        "model_artifact_sha256": digest,
+        "model_trained_git_commit": str(metadata.get("git_commit") or "") or None,
+        "model_training_datasets": [
+            str(run_id) for run_id in (metadata.get("dataset_run_ids") or ())
+        ],
+        "model_trained_at": str(metadata.get("created_at") or "") or None,
+    }
 
 
 def _is_finite_number(value) -> bool:
@@ -282,6 +306,7 @@ def predict(record, *, artifact: dict | None = None, timestamp: str | None = Non
     return {
         "model_version": MODEL_VERSION,
         "feature_schema_version": str(artifact["feature_schema_version"]),
+        **model_provenance(),
         "window_id": window_id,
         "timestamp": timestamp,
         "traffic_profile": str(classes[class_index]),
@@ -320,12 +345,14 @@ def predict_many(records, *, artifact: dict | None = None,
     proba = artifact["estimator"].predict_proba(np.vstack(vectors))
     classes = artifact["target_classes"]
     schema_version = str(artifact["feature_schema_version"])
+    provenance = model_provenance()
     results = []
     for row, window_id in zip(proba, window_ids):
         class_index = int(np.argmax(row))
         results.append({
             "model_version": MODEL_VERSION,
             "feature_schema_version": schema_version,
+            **provenance,
             "window_id": window_id,
             "timestamp": timestamp,
             "traffic_profile": str(classes[class_index]),
@@ -381,6 +408,7 @@ def explain(record, *, artifact: dict | None = None, top_k: int = 10) -> dict:
     return {
         "model_version": MODEL_VERSION,
         "feature_schema_version": str(artifact["feature_schema_version"]),
+        **model_provenance(),
         "window_id": window_id,
         "traffic_profile": str(classes[class_index]),
         "n_features": len(feature_order()),

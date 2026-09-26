@@ -86,6 +86,7 @@ def _summary(event) -> Dict[str, Any]:
         "ml_failure": "ml",
         "risk_assessment": "risk",
         "explanation": "explanation",
+        "evidence": "evidence",
         "response_proposal": "response",
     }.get(event.event_type)
     return {

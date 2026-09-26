@@ -220,6 +220,20 @@ def main(argv=None) -> None:
                         help="expose this analysis audit journal (JSONL written "
                              "by correlation.audit.AuditJournal) read-only at "
                              "/api/v1/audit/*; the file is never written here")
+    parser.add_argument("--evidence-root", default=os.getcwd(),
+                        help="root directory that evidence references must "
+                             "resolve inside before they are served as metadata "
+                             "at /api/v1/evidence/* (default: the current "
+                             "working directory)")
+    parser.add_argument("--governance-journal", default=None,
+                        help="write-side governance journal (append-only JSONL) "
+                             "for assessment/recommendation/authorization/"
+                             "approval events; an existing chain is verified and "
+                             "continued, never rewritten")
+    parser.add_argument("--observation-journal", default=None,
+                        help="the observation journal the governance ledger's "
+                             "audit_tap evidence references point into "
+                             "(default: results/audit/events.jsonl)")
     args = parser.parse_args(argv)
 
     store = build_store(args.plan) if args.plan else build_store()
@@ -227,7 +241,7 @@ def main(argv=None) -> None:
           f"(deterministic, score/severity from Phase-6 RiskAssessment)")
 
     phase10 = None
-    if args.phase10 or args.audit_journal:
+    if args.phase10 or args.audit_journal or args.governance_journal:
         from .live import Phase10Context
         phase10 = Phase10Context()
         print("[phase10] passive-observation /api/v1 surface attached "
@@ -250,6 +264,54 @@ def main(argv=None) -> None:
             print("[phase8] warning: journal path does not exist; audit routes "
                   "will report zero events (nothing will be fabricated)",
                   file=sys.stderr)
+
+    if phase10 is not None and args.evidence_root:
+        from .evidence_routes import register_journal_evidence
+
+        phase10.pcap.registry.root = os.path.abspath(args.evidence_root)
+        if phase10.audit_store is not None:
+            summary = register_journal_evidence(
+                phase10.audit_store, phase10.pcap.registry,
+                root=phase10.pcap.registry.root,
+            )
+            print(f"[phase8] evidence registry: {summary['registered']} "
+                  f"reference(s) from the journal are served as metadata "
+                  f"under {phase10.pcap.registry.root} (read-only)")
+            phase10.note_evidence_registered(
+                summary["registered"], phase10.pcap.registry.root)
+            for entry in summary["skipped"]:
+                print(f"[phase8] warning: evidence {entry['evidence_id']} not "
+                      f"served ({entry['reason']})", file=sys.stderr)
+
+    if phase10 is not None and args.governance_journal:
+        from ..response.audit import (
+            DEFAULT_OBSERVATION_JOURNAL,
+            AuditIntegrityError,
+            AuditLedger,
+        )
+
+        observation = args.observation_journal or DEFAULT_OBSERVATION_JOURNAL
+        try:
+            ledger = AuditLedger.open(args.governance_journal)
+        except (AuditIntegrityError, ValueError) as error:
+            raise SystemExit(
+                f"[phase9] refusing to use governance journal "
+                f"{args.governance_journal}: {error}"
+            ) from None
+        report = phase10.attach_governance(ledger, observation)
+        if phase10.audit_store is not None:
+            # The persisted ledger is what makes /api/v1/responses/<id>/evidence
+            # resolvable: until it is attached the store reports the absence.
+            phase10.audit_store.response_ledger = ledger
+        print(f"[phase9] governance journal attached: {args.governance_journal} "
+              f"({len(ledger)} event(s), chain verified, append-only)")
+        print(f"[phase9] observation link: {report['referenced']} audit_tap "
+              f"reference(s) -> {report['resolved']} resolved, "
+              f"{report['unresolved']} unresolved in {observation}")
+        if report["unresolved"]:
+            print("[phase9] warning: some governance evidence references do "
+                  "not resolve in the observation journal; they are reported, "
+                  "not repaired", file=sys.stderr)
 
     if args.snapshot:
         path = snapshot(store, args.snapshot)

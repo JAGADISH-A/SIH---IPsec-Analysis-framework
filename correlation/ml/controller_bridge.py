@@ -25,6 +25,10 @@ Scope boundaries (all enforced here, none changed elsewhere):
 * ``anomaly`` / ``anomaly_score`` stay ``None`` (the model has no anomaly
   capability).  No anomaly logic is added.
 * The full probability vector is preserved verbatim in ``extras``.
+* Optional artifact provenance (``model_artifact_sha256``, the training commit
+  and dataset run ids) is passed through verbatim when the producer supplies
+  it, so a result is traceable to one exact model file.  It is never derived or
+  invented by this module.
 * Protocol comparison lists and ``result.status`` come exclusively from the
   existing ComparisonEngine; ML outcomes are attached as source-labeled
   metadata and never merged into them.
@@ -72,6 +76,16 @@ CANONICAL_TRAFFIC_PROFILES = tuple(ALLOWED_TRAFFIC_PROFILES)
 #: Tolerance for the six-class probability sum (sklearn predict_proba sums to 1
 #: within floating-point error).
 _PROBABILITY_SUM_TOLERANCE = 1e-6
+
+#: Optional artifact-provenance fields a controller result may carry.  They are
+#: passed through verbatim and never derived or invented by the bridge, so a
+#: result is traceable to the exact model file that produced it.
+OPTIONAL_PROVENANCE_KEYS = (
+    "model_artifact_sha256",
+    "model_trained_git_commit",
+    "model_training_datasets",
+    "model_trained_at",
+)
 
 
 def require_controller_result(result: Mapping[str, Any]) -> Dict[str, Any]:
@@ -143,7 +157,7 @@ def require_controller_result(result: Mapping[str, Any]) -> Dict[str, Any]:
             f"{sum(normalized.values())!r}"
         )
 
-    return {
+    normalized_out = {
         "model_version": result["model_version"],
         "feature_schema_version": result["feature_schema_version"],
         "window_id": result["window_id"],
@@ -151,6 +165,15 @@ def require_controller_result(result: Mapping[str, Any]) -> Dict[str, Any]:
         "traffic_profile": profile,
         "probabilities": normalized,
     }
+    # Artifact provenance is optional: it is carried only when the producer
+    # supplied it, so a result can be tied to one exact model file.  Recorded
+    # results written before provenance existed carry none, and none is
+    # invented here.
+    for key in OPTIONAL_PROVENANCE_KEYS:
+        value = result.get(key)
+        if value not in (None, "", [], {}):
+            normalized_out[key] = value
+    return normalized_out
 
 
 def controller_result_to_ml_result(result: Mapping[str, Any]) -> MLResult:
@@ -165,7 +188,8 @@ def controller_result_to_ml_result(result: Mapping[str, Any]) -> MLResult:
     * ``anomaly_score``        -> ``None``
     * ``extras``               -> ``source="ml"`` plus the full controller
        contract preserved verbatim (model_version, feature_schema_version,
-       window_id, timestamp, traffic_profile, probabilities).
+       window_id, timestamp, traffic_profile, probabilities) and any optional
+       artifact provenance the result carried.
 
     Expected state is never consulted; the full probability vector is never
     discarded.
@@ -183,6 +207,10 @@ def controller_result_to_ml_result(result: Mapping[str, Any]) -> MLResult:
         "traffic_profile": traffic_class,
         "probabilities": dict(validated["probabilities"]),
     }
+    extras.update({
+        key: validated[key] for key in OPTIONAL_PROVENANCE_KEYS
+        if key in validated
+    })
     return MLResult(
         model_version=validated["model_version"],
         traffic_class=traffic_class,

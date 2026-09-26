@@ -44,25 +44,50 @@ class AssessmentsListTest(_RoutesTestCase):
             sum(payload["overview"]["severity_counts"].values()),
             payload["overview"]["total_assessments"],
         )
-        self.assertEqual(payload["overview"]["highest_risk"], 55)
-        self.assertEqual(payload["overview"]["highest_severity"], "CRITICAL")
+        self.assertEqual(payload["overview"]["highest_risk"],
+                         max(h["risk_score"] for h in payload["headers"]))
+        from correlation.risk.models import SEVERITY_RANK
+
+        self.assertEqual(
+            payload["overview"]["highest_severity"],
+            max((h["severity"] for h in payload["headers"]),
+                key=lambda severity: SEVERITY_RANK[severity]))
+        # the store reports the real run it was built from, not a fixture label
+        self.assertEqual(payload["overview"]["dataset_run_id"],
+                         self.store.overview["dataset_run_id"])
+
+    def test_overview_reports_no_anomalies_but_real_disagreements(self):
+        payload = handle_get(self.store, "/api/assessments")
+        self.assertEqual(payload["overview"]["ml_anomalies"], 0)
+        self.assertEqual(payload["overview"]["ml_classification_disagreements"], 1)
 
 
 class AssessmentDetailTest(_RoutesTestCase):
-    AID = "dataset-20260916-231246:5:worst-ml"
+    def aid(self):
+        return next(h["assessment_id"] for h in self.store.headers
+                    if h["slot"] == "ml-mismatch")
 
     def test_full_bundle_sections(self):
-        payload = handle_get(self.store, f"/api/assessments/{self.AID}")
+        aid = self.aid()
+        payload = handle_get(self.store, f"/api/assessments/{aid}")
         for section in ("identity", "expected", "observed", "correlation",
                         "ml", "risk", "xai", "evidence", "ipsec_state"):
             self.assertIn(section, payload, f"missing {section}")
-        self.assertEqual(payload["risk"]["overall_score"], 55)
-        self.assertEqual(payload["risk"]["severity"], "CRITICAL")
-        self.assertEqual(payload["xai"]["score_explanation"]["score"], 55)
+        header = next(h for h in self.store.headers
+                      if h["assessment_id"] == aid)
+        self.assertEqual(payload["risk"]["overall_score"], header["risk_score"])
+        self.assertEqual(payload["risk"]["severity"], header["severity"])
+        self.assertEqual(payload["xai"]["score_explanation"]["score"],
+                         header["risk_score"])
+        self.assertEqual(payload["ml"]["anomaly"], None)
+        # the bundle names the recorded artifacts it came from
+        self.assertTrue(payload["sources"])
+        for source in payload["sources"]:
+            self.assertTrue(source["path"].startswith("results/"))
 
     def test_missing_assessment_404(self):
         with self.assertRaises(ApiError) as ctx:
-            handle_get(self.store, "/api/assessments/dataset-20260916-231246:9:ghost")
+            handle_get(self.store, "/api/assessments/dataset-20260924-003710:9:ghost")
         self.assertEqual(ctx.exception.status, 404)
         self.assertEqual(ctx.exception.code, "assessment_not_found")
 
@@ -74,29 +99,33 @@ class AssessmentDetailTest(_RoutesTestCase):
 
     def test_unknown_sub_resource_404(self):
         with self.assertRaises(ApiError) as ctx:
-            handle_get(self.store, f"/api/assessments/{self.AID}/crypto")
+            handle_get(self.store, f"/api/assessments/{self.aid()}/crypto")
         self.assertEqual(ctx.exception.status, 404)
         self.assertEqual(ctx.exception.code, "unknown_resource")
 
 
 class SubResourceTest(_RoutesTestCase):
-    AID = "dataset-20260916-231246:2:unknown"
+    def aid(self):
+        return next(h["assessment_id"] for h in self.store.headers
+                    if h["slot"] == "unknown")
 
     def test_each_sub_resource(self):
+        aid = self.aid()
         for resource in ("expected", "observed", "correlation", "risk", "xai",
                          "ml", "evidence", "ipsec-state"):
-            payload = handle_get(self.store, f"/api/assessments/{self.AID}/{resource}")
+            payload = handle_get(self.store, f"/api/assessments/{aid}/{resource}")
             self.assertEqual(payload["resource"], resource)
-            self.assertEqual(payload["assessment_id"], self.AID)
+            self.assertEqual(payload["assessment_id"], aid)
             self.assertIn("data", payload)
 
     def test_ipsec_state_equals_observed(self):
-        payload = handle_get(self.store, f"/api/assessments/{self.AID}/ipsec-state")
-        observed = handle_get(self.store, f"/api/assessments/{self.AID}/observed")
+        aid = self.aid()
+        payload = handle_get(self.store, f"/api/assessments/{aid}/ipsec-state")
+        observed = handle_get(self.store, f"/api/assessments/{aid}/observed")
         self.assertEqual(payload["data"], observed["data"])
 
     def test_unknown_status_preserved(self):
-        payload = handle_get(self.store, f"/api/assessments/{self.AID}/correlation")
+        payload = handle_get(self.store, f"/api/assessments/{self.aid()}/correlation")
         self.assertEqual(payload["data"]["status"], "UNKNOWN")
         unknown_rows = [r for r in payload["data"]["rows"] if r["status"] == "UNKNOWN"]
         self.assertTrue(unknown_rows)

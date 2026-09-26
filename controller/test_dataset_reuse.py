@@ -1,6 +1,7 @@
 """Module-10 tests for the additive topology-reuse seam.
 
-Covers MODULE9_DESIGN.md §14 cases A–M with a fake clock + a scripted
+Covers docs/architecture/MODULE9_DESIGN.md §14 cases A–M with a fake clock
++ a scripted
 executor-runtime stub.  No containerlab, no strongSwan, no wall-clock: every
 assertion is on the *decision* table and the *sequence of operations* the
 manager requests, which is exactly what the dataset pipeline will consume.

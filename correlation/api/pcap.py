@@ -73,6 +73,7 @@ class PcapRegistry:
 
     root: str
     _mapping: Dict[str, str] = field(default_factory=dict)
+    _references: Dict[str, Any] = field(default_factory=dict)
 
     def register(self, evidence_id: str, filename: str) -> str:
         validate_evidence_id(evidence_id)
@@ -88,6 +89,35 @@ class PcapRegistry:
             )
         self._mapping[evidence_id] = filename
         return filename
+
+    def register_reference(self, ref: Any) -> str:
+        """Register an ``EvidenceRef`` for metadata/verification lookups.
+
+        This is deliberately separate from :meth:`register`: a reference is
+        metadata about an artifact, not a path, so it is not accepted as a
+        download source. The bytes served by :meth:`PcapService.download` still
+        come only from the hardened ``register`` mapping.
+        """
+        from ..models.evidence import EvidenceRef
+
+        if not isinstance(ref, EvidenceRef):
+            raise TypeError("register_reference expects an EvidenceRef")
+        # A registered reference must itself be a safe, id-addressed entry so
+        # the metadata API cannot become a path oracle.
+        validate_evidence_id(ref.evidence_id)
+        self._references[ref.evidence_id] = ref
+        return ref.evidence_id
+
+    def reference(self, evidence_id: str) -> Optional[Any]:
+        """The registered ``EvidenceRef`` for an id, or None."""
+        try:
+            validate_evidence_id(evidence_id)
+        except ValueError:
+            return None
+        return self._references.get(evidence_id)
+
+    def references(self) -> Dict[str, Any]:
+        return dict(self._references)
 
     def resolve(self, evidence_id: str) -> Optional[str]:
         """Resolve + harden; returns an absolute path or None (404/deny)."""
@@ -121,6 +151,7 @@ class PcapRegistry:
         return {
             "root": os.path.abspath(self.root),
             "registered": sorted(self._mapping),
+            "references": sorted(self._references),
         }
 
 
@@ -144,6 +175,18 @@ class PcapService:
             {"evidence_id": evidence_id, "bytes": len(data), "resolved_path": path}
         )
         return data
+
+    def verify(self, evidence_id: str) -> Optional[Any]:
+        """Read-only integrity report for a registered reference.
+
+        Returns None when no reference is registered for the id. The bytes are
+        never returned here and the artifact is never repaired: a changed
+        artifact is reported as ``invalid``.
+        """
+        ref = self.registry.reference(evidence_id)
+        if ref is None:
+            return None
+        return ref.verify(self.registry.root or None)
 
     def recent_downloads(self, limit: int = 20) -> List[Dict[str, Any]]:
         return list(self._downloads)[-limit:]

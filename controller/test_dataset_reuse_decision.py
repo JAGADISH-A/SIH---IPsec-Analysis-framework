@@ -1,6 +1,7 @@
 """Additive Module-10 tests for the StrongSwan reuse DECISION seam.
 
-Scope: the ``TopologyReuseManager`` decision table from MODULE9_DESIGN.md
+Scope: the ``TopologyReuseManager`` decision table from
+docs/architecture/MODULE9_DESIGN.md
 (§4 reuse conditions, §13 fallback) plus the campaign seam
 ``reset_and_deploy_or_reuse``.  Uses a fake clock + fake recorder only;
 NO testbed, NO containerlab, NO wall clock.  Asserts exactly that:

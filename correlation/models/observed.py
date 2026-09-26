@@ -135,10 +135,22 @@ class TransitionObservation(JsonModel):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TransitionObservation":
+        # The eBPF state builder (``ebpf/ipsec_state_builder.py``) writes the
+        # transition name under "type" and keeps any extra payload as sibling
+        # keys; this model calls the same value "name" and collects the payload
+        # into "details". Accept both spellings so a real snapshot can be read
+        # without a translation layer that could quietly drop a field.
+        if "name" not in data and "type" not in data:
+            raise KeyError("transition requires 'name' (or the state builder's 'type')")
+        details = dict(data.get("details") or {})
+        for key, value in data.items():
+            if key in ("name", "type", "timestamp_ns", "details"):
+                continue
+            details.setdefault(key, value)
         return cls(
-            name=data["name"],
+            name=data.get("name") or data["type"],
             timestamp_ns=data["timestamp_ns"],
-            details=data.get("details") or {},
+            details=details,
         )
 
 

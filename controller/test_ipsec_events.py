@@ -1,7 +1,9 @@
 """Unit tests for the TShark JSON -> audit-event parser (ipsec_events.py)."""
 
 import json
+import os
 import unittest
+from pathlib import Path
 
 from controller import ipsec_events as events_mod
 
@@ -184,6 +186,29 @@ _IKE_SA_INIT_PKT_NO_LENGTH_EVIDENCE = {
 }
 
 
+def _with_frame_number(packet, number):
+    """A copy of ``packet`` at a distinct frame number.
+
+    ``_dedupe`` keys on ``(frame_number, spi or message id)``, so a fixture pair
+    that differs only in one field would collapse into a single event in a mixed
+    feed.  Mixed-feed tests renumber their packets to keep both.
+    """
+    clone = json.loads(json.dumps(packet))
+    clone["_source"]["layers"]["frame"]["frame.number"] = str(number)
+    return clone
+
+
+# ``isakmp.length`` present but zero: a malformed header the field *is* exposed
+# for.  ``_as_int`` returns 0, which is falsy, so this reaches the same
+# ``or``-fallback branch as an absent field and crashed identically before the fix.
+_IKE_SA_INIT_PKT_ZERO_ISAKMP_LENGTH = json.loads(
+    json.dumps(_IKE_SA_INIT_PKT_NO_ISAKMP_LENGTH)
+)
+_IKE_SA_INIT_PKT_ZERO_ISAKMP_LENGTH["_source"]["layers"]["isakmp"][
+    "isakmp.length"
+] = "0"
+
+
 class TestNormalizeEsp(unittest.TestCase):
     def test_esp_metadata_and_direction(self):
         event = events_mod.normalize_esp_event(
@@ -297,6 +322,157 @@ class TestNormalizeIkeMissingIsakmpLength(unittest.TestCase):
         self.assertEqual(len(ike_events), 2)
         self.assertEqual(ike_events[0]["packet_length"], 498)
         self.assertIsNone(ike_events[1]["packet_length"])
+
+    def test_zero_isakmp_length_takes_the_fallback_without_crashing(self):
+        """A present-but-zero length is falsy and hit the same defect."""
+        event = events_mod.normalize_ike_event(
+            _IKE_SA_INIT_PKT_ZERO_ISAKMP_LENGTH["_source"]["layers"], WAN_IP
+        )
+        self.assertIsInstance(event, dict)
+        self.assertEqual(event["packet_length"], 498)
+        self.assertEqual(event["ike_exchange_name"], "IKE_SA_INIT")
+
+    def test_valid_packets_are_untouched_by_a_neighbouring_bad_one(self):
+        """A malformed packet in the same feed changes nothing about a good one."""
+        # Distinct frame numbers: ``_dedupe`` keys on (frame_number, message id),
+        # so identical frame numbers would collapse the two packets on purpose.
+        feed = [_IKE_SA_INIT_PKT,
+                _with_frame_number(_IKE_SA_INIT_PKT_NO_ISAKMP_LENGTH, 2),
+                _with_frame_number(_IKE_SA_INIT_PKT_NO_LENGTH_EVIDENCE, 3),
+                _ESP_PKT]
+        esp_events, ike_events = events_mod.parse_tshark_json(
+            json.dumps(feed), WAN_IP)
+        self.assertEqual(len(esp_events), 1)
+        self.assertEqual(len(ike_events), 3)
+        alone = events_mod.normalize_ike_event(
+            _IKE_SA_INIT_PKT["_source"]["layers"], WAN_IP)
+        self.assertEqual(ike_events[0], alone)
+        self.assertEqual([e["packet_length"] for e in ike_events], [478, 498, None])
+
+
+class TestRecordedTsharkArtifacts(unittest.TestCase):
+    """The recorded TShark artifacts must keep parsing exactly as they did.
+
+    Every recorded ``isakmp`` frame carries ``isakmp.length`` (16 frames across
+    the four committed parser taps), which is precisely why the defect stayed
+    latent: no fixture nor recorded input ever took the fallback branch.  These
+    tests pin that the real corpus is unaffected by the fix.
+    """
+
+    ARTIFACTS = (
+        "results/e2e-verification/transport/v6_parser_tap.json",
+        "results/e2e-verification/transport/icmp_parser_tap.json",
+        "results/e2e-verification/transport/ipv6-parser-rerun/v6_parser_tap_fixed.json",
+        "results/e2e-verification/transport/ipv6-parser-rerun/v4_icmp_raw.json",
+    )
+
+    def test_recorded_ike_events_are_unchanged_and_never_none(self):
+        root = Path(__file__).resolve().parent.parent
+        checked = 0
+        for name in self.ARTIFACTS:
+            path = root / name
+            if not path.is_file():
+                self.skipTest(f"recorded artifact not present: {name}")
+            _esp_events, ike_events = events_mod.parse_tshark_json(
+                path.read_text(encoding="utf-8"), WAN_IP)
+            self.assertEqual(len(ike_events), 4, name)
+            for event in ike_events:
+                checked += 1
+                # isakmp.length is present in the recorded corpus, so the
+                # fallback is not consulted and the values are the originals.
+                self.assertIsInstance(event["packet_length"], int)
+                self.assertGreater(event["packet_length"], 0)
+                self.assertIn(event["ike_exchange_name"],
+                              events_mod.IKEV2_EXCHANGE_NAMES.values())
+                self.assertNotEqual(event["source_ip"], "None")
+                self.assertNotEqual(event["destination_ip"], "None")
+        self.assertEqual(checked, 16)
+
+
+class TestLiveObservationPathWithMissingIsakmpLength(unittest.TestCase):
+    """The audit/live path must survive a length-less IKE packet end to end.
+
+    ``observe_live`` is the only production entry point: provision -> TShark ->
+    parse -> ``record_event``.  The TShark and provisioning calls are the only
+    parts stubbed here; the parse and the audit recording are the real code, so
+    this proves a malformed IKE frame cannot abort a live observation run.  The
+    audit sink is redirected to a temporary file: the committed
+    ``results/audit/events.jsonl`` is never written by a test.
+    """
+
+    def _run(self, packets):
+        import tempfile
+
+        from controller import audit as audit_mod
+        from controller import observation as observation_mod
+
+        payloads = {}
+        originals = (
+            events_mod.run_tshark_on_tap,
+            observation_mod.provision_observation,
+            observation_mod.observation_target,
+            audit_mod.default_events_path,
+        )
+        events_mod.run_tshark_on_tap = (
+            lambda container, tap, wan_ip, seconds, out: (
+                open(out, "w", encoding="utf-8").write(json.dumps(packets)),
+                str(out),
+            )[1]
+        )
+        observation_mod.provision_observation = lambda *a, **k: {
+            "container": "clab-ipsec-sensor", "mirror_interface": "eth1",
+        }
+        observation_mod.observation_target = lambda *a, **k: (None, WAN_IP)
+        handle = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+        handle.close()
+        events = tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False)
+        events.close()
+        audit_mod.default_events_path = lambda: Path(events.name)
+        try:
+            result = events_mod.observe_live(
+                "tunnel", "ipv4", 1, events_out=handle.name, record=True)
+        finally:
+            (events_mod.run_tshark_on_tap,
+             observation_mod.provision_observation,
+             observation_mod.observation_target,
+             audit_mod.default_events_path) = originals
+        self.addCleanup(os.unlink, handle.name)
+        self.addCleanup(os.unlink, events.name)
+        return result, Path(events.name)
+
+    def test_live_run_records_the_packet_and_keeps_going(self):
+        result, events_path = self._run([
+            _IKE_SA_INIT_PKT,
+            _with_frame_number(_IKE_SA_INIT_PKT_NO_ISAKMP_LENGTH, 2),
+            _with_frame_number(_IKE_SA_INIT_PKT_NO_LENGTH_EVIDENCE, 3),
+            _ESP_PKT,
+        ])
+        # The run completed: no NameError, no abort, the summary is real.
+        self.assertEqual(result["summary"]["esp_packets"], 1)
+        self.assertEqual(result["summary"]["ike_packets"], 3)
+        self.assertEqual(result["summary"]["ike_exchanges"],
+                         {"IKE_SA_INIT": 2, "CREATE_CHILD_SA": 1})
+
+        recorded = [json.loads(line) for line in
+                    events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        ike = [r for r in recorded if r["event_type"] == events_mod.audit_mod.EVENT_IKE_PACKET]
+        self.assertEqual(len(ike), 3)
+        # In feed order: isakmp.length present, then the ip.len fallback, then
+        # no length evidence at all.
+        self.assertEqual([r["data"]["packet_length"] for r in ike],
+                         [478, 498, None])
+        for record in ike:
+            data = record["data"]
+            self.assertIn("packet_length", data)
+            if data["packet_length"] is None:
+                # No length is derived from the frame size or any other field.
+                self.assertNotEqual(data["packet_length"], 300)
+            # An IKE observation is metadata only: no payload ever appears.
+            self.assertFalse([k for k in data if "payload" in k or k == "data"])
+        # The complete run still wrote its session boundaries.
+        types = [r["event_type"] for r in recorded]
+        self.assertIn(events_mod.audit_mod.EVENT_OBSERVATION_SESSION_START, types)
+        self.assertIn(events_mod.audit_mod.EVENT_OBSERVATION_SESSION_END, types)
 
 
 class TestNormalizeEspV6(unittest.TestCase):

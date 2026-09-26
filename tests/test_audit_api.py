@@ -45,6 +45,7 @@ from correlation.api.v1 import handle_v1_audit, handle_v1_get
 from correlation.audit import (
     EVENT_COMPARISON,
     EVENT_EXPECTED_STATE,
+    EVENT_EVIDENCE,
     EVENT_EXPLANATION,
     EVENT_ML_FAILURE,
     EVENT_ML_RESULT,
@@ -52,6 +53,7 @@ from correlation.audit import (
     EVENT_RESPONSE_PROPOSAL,
     EVENT_RISK_ASSESSMENT,
     SOURCE_COMPARISON,
+    SOURCE_EVIDENCE,
     SOURCE_EXPLAINABILITY,
     SOURCE_EXPECTED,
     SOURCE_ML,
@@ -64,6 +66,22 @@ from correlation.audit import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 HEALTHY_JOURNAL = REPO_ROOT / "tests/fixtures/audit/analysis_events_acc-eng-02.jsonl"
+
+
+def _journal_event_count(path: Path) -> int:
+    """Count records in a fixture journal (blank lines are not records)."""
+    with open(path, "r", encoding="utf-8") as handle:
+        return sum(1 for line in handle if line.strip())
+
+
+#: Derived from the fixture rather than hard-coded, so regenerating the journal
+#: with an added stage does not silently invalidate every count assertion.
+#: The real run is 44 windows x 7 stages (expected, observed, comparison, ml,
+#: risk, explanation, evidence) = 308 events. HEALTHY_STAGE_COUNT is derived so
+#: per-window/per-stage arithmetic below can never drift from the fixture.
+HEALTHY_EVENT_COUNT = _journal_event_count(HEALTHY_JOURNAL)
+HEALTHY_WINDOW_COUNT = 44
+HEALTHY_STAGE_COUNT = HEALTHY_EVENT_COUNT // HEALTHY_WINDOW_COUNT
 ML_FAILURE_JOURNAL = REPO_ROOT / "tests/fixtures/audit/analysis_events_ml_failure.jsonl"
 OBSERVATION_JOURNAL = REPO_ROOT / "results/e2e-verification/audit/events.jsonl"
 
@@ -81,6 +99,7 @@ EXPECTED_PROVENANCE = {
     EVENT_ML_FAILURE: (SOURCE_ML, False),
     EVENT_RISK_ASSESSMENT: (SOURCE_RISK, False),
     EVENT_EXPLANATION: (SOURCE_EXPLAINABILITY, False),
+    EVENT_EVIDENCE: (SOURCE_EVIDENCE, False),
     EVENT_RESPONSE_PROPOSAL: (SOURCE_RESPONSE_RECOMMENDATION, False),
 }
 
@@ -103,13 +122,13 @@ class _StoreTestCase(unittest.TestCase):
 
 class TestAuditStoreQueries(_StoreTestCase):
     def test_journal_is_read_in_full(self):
-        self.assertEqual(264, len(self.store))
-        self.assertEqual(264, len(self.events))
+        self.assertEqual(HEALTHY_EVENT_COUNT, len(self.store))
+        self.assertEqual(HEALTHY_EVENT_COUNT, len(self.events))
         self.assertTrue(self.store.available)
 
     def test_listing_returns_existing_events(self):
         payload = _get(self.store, AUDIT_EVENTS_PATH)
-        self.assertEqual(264, payload["total"])
+        self.assertEqual(HEALTHY_EVENT_COUNT, payload["total"])
         self.assertEqual(200, payload["count"])          # DEFAULT_LIMIT
         self.assertTrue(payload["read_only"])
         for row in payload["events"]:
@@ -125,8 +144,8 @@ class TestAuditStoreQueries(_StoreTestCase):
     def test_paging_reports_total_and_never_duplicates(self):
         first = _get(self.store, AUDIT_EVENTS_PATH, limit=10, offset=0)
         second = _get(self.store, AUDIT_EVENTS_PATH, limit=10, offset=10)
-        self.assertEqual(264, first["total"])
-        self.assertEqual(264, second["total"])
+        self.assertEqual(HEALTHY_EVENT_COUNT, first["total"])
+        self.assertEqual(HEALTHY_EVENT_COUNT, second["total"])
         ids = {row["event_id"] for row in first["events"]}
         ids |= {row["event_id"] for row in second["events"]}
         self.assertEqual(20, len(ids), "pages must not overlap")
@@ -134,23 +153,23 @@ class TestAuditStoreQueries(_StoreTestCase):
     def test_offset_past_the_end_is_empty_not_an_error(self):
         payload = _get(self.store, AUDIT_EVENTS_PATH, limit=10, offset=9_999)
         self.assertEqual(0, payload["count"])
-        self.assertEqual(264, payload["total"])
+        self.assertEqual(HEALTHY_EVENT_COUNT, payload["total"])
 
     def test_filter_by_run_id(self):
         payload = _get(self.store, AUDIT_EVENTS_PATH, run_id=RUN_ID, limit=500)
-        self.assertEqual(264, payload["total"])
-        self.assertEqual(264, len(payload["events"]))
+        self.assertEqual(HEALTHY_EVENT_COUNT, payload["total"])
+        self.assertEqual(HEALTHY_EVENT_COUNT, len(payload["events"]))
         other = _get(self.store, AUDIT_EVENTS_PATH, run_id="no-such-run")
         self.assertEqual(0, other["total"])
 
     def test_filter_by_experiment_id(self):
         payload = _get(self.store, AUDIT_EVENTS_PATH, experiment_id=EXPERIMENT_ID, limit=500)
-        self.assertEqual(264, payload["total"])
+        self.assertEqual(HEALTHY_EVENT_COUNT, payload["total"])
         self.assertEqual(0, _get(self.store, AUDIT_EVENTS_PATH, experiment_id="other")["total"])
 
     def test_filter_by_sequence(self):
         payload = _get(self.store, AUDIT_EVENTS_PATH, sequence=SEQUENCE, limit=500)
-        self.assertEqual(264, payload["total"])
+        self.assertEqual(HEALTHY_EVENT_COUNT, payload["total"])
         self.assertEqual(0, _get(self.store, AUDIT_EVENTS_PATH, sequence=99)["total"])
 
     def test_filter_by_event_type(self):
@@ -177,13 +196,15 @@ class TestAuditStoreQueries(_StoreTestCase):
     def test_filter_by_authoritative(self):
         authoritative = _get(self.store, AUDIT_EVENTS_PATH, authoritative="true", limit=500)
         advisory = _get(self.store, AUDIT_EVENTS_PATH, authoritative="false", limit=500)
-        self.assertEqual(44, authoritative["total"])
-        self.assertEqual(220, advisory["total"])
-        self.assertEqual(264, authoritative["total"] + advisory["total"])
+        self.assertEqual(HEALTHY_WINDOW_COUNT, authoritative["total"])
+        self.assertEqual(
+            HEALTHY_EVENT_COUNT - HEALTHY_WINDOW_COUNT, advisory["total"]
+        )
+        self.assertEqual(HEALTHY_EVENT_COUNT, authoritative["total"] + advisory["total"])
 
     def test_filter_by_window_index(self):
         payload = _get(self.store, AUDIT_EVENTS_PATH, window_index=0, limit=500)
-        self.assertEqual(6, payload["total"])
+        self.assertEqual(HEALTHY_STAGE_COUNT, payload["total"])
         self.assertTrue(all(r["window_index"] == 0 for r in payload["events"]))
 
     def test_filter_by_window_range(self):
@@ -199,32 +220,36 @@ class TestAuditStoreQueries(_StoreTestCase):
         first = _get(self.store, AUDIT_EVENTS_PATH, window_index=0, limit=1)
         start_ns = first["events"][0]["window_start_ns"]
         inside = _get(self.store, AUDIT_EVENTS_PATH, window_from_ns=start_ns, limit=500)
-        self.assertEqual(252, inside["total"])
+        self.assertEqual(
+            (HEALTHY_WINDOW_COUNT - 2) * HEALTHY_STAGE_COUNT, inside["total"]
+        )
         self.assertTrue(
             all(row["window_start_ns"] >= start_ns for row in inside["events"])
         )
 
         beyond = _get(self.store, AUDIT_EVENTS_PATH, window_to_ns=start_ns - 1, limit=500)
-        self.assertEqual(12, beyond["total"])   # the two zero-stamped windows
+        # the two zero-stamped windows, times the stages recorded in each
+        self.assertEqual(2 * HEALTHY_STAGE_COUNT, beyond["total"])
 
         # an inclusive range from zero reaches every event in the journal
         everything = _get(self.store, AUDIT_EVENTS_PATH, window_from_ns=0, limit=500)
-        self.assertEqual(264, everything["total"])
+        self.assertEqual(HEALTHY_EVENT_COUNT, everything["total"])
 
     def test_zero_stamped_windows_are_reported_not_repaired(self):
         """Empty windows keep their real (zero) timestamp; nothing is invented."""
         zero_stamped = [
             e for e in self.events if e.identity.window_start_ns == 0
         ]
-        self.assertEqual(12, len(zero_stamped))
         self.assertEqual({17, 23}, {e.identity.window_index for e in zero_stamped})
+        self.assertEqual(2 * HEALTHY_STAGE_COUNT, len(zero_stamped))
 
         payload = _get(self.store, "/api/v1/runs/acc-eng-02/audit", window_index=17)
         window = payload["windows"][0]
         self.assertEqual(0, window["window_start_ns"])
         self.assertEqual(0, window["window_end_ns"])
         self.assertEqual(
-            ["expected", "observed", "comparison", "ml", "risk", "explanation"],
+            ["expected", "observed", "comparison", "ml", "risk", "explanation",
+             "evidence"],
             window["stage_names"],
         )
 
@@ -238,7 +263,7 @@ class TestAuditStoreQueries(_StoreTestCase):
         self.assertEqual(1, payload["total"])
         run = payload["runs"][0]
         self.assertEqual(RUN_ID, run["run_id"])
-        self.assertEqual(264, run["event_count"])
+        self.assertEqual(HEALTHY_EVENT_COUNT, run["event_count"])
         self.assertEqual(44, run["window_count"])
         self.assertEqual(0, run["window_index_min"])
         self.assertEqual(43, run["window_index_max"])
@@ -287,7 +312,7 @@ class TestAuditStoreIntegrity(_StoreTestCase):
 
     def test_unknown_event_id_is_a_miss_not_a_new_record(self):
         self.assertIsNone(self.store.get_event("audit-0000000000000000000000000000"))
-        self.assertEqual(len(self.store), 264)
+        self.assertEqual(len(self.store), HEALTHY_EVENT_COUNT)
 
     def test_reading_twice_yields_identical_identity_and_payload(self):
         event = self.events[5]
@@ -380,7 +405,7 @@ class TestAuditStoreIntegrity(_StoreTestCase):
             path = Path(tmp) / "journal.jsonl"
             path.write_text(HEALTHY_JOURNAL.read_text(encoding="utf-8"), encoding="utf-8")
             store = AuditStore(str(path))
-            self.assertEqual(264, len(store))
+            self.assertEqual(HEALTHY_EVENT_COUNT, len(store))
 
             path.write_text("{broken\n", encoding="utf-8")
             os.utime(path, (0, 0))  # force a detectable change
@@ -400,9 +425,10 @@ class TestAuditStoreTrail(_StoreTestCase):
         trail = self.store.run_trail(RUN_ID)
         self.assertIsNotNone(trail)
         self.assertEqual(44, trail["window_count"])
-        self.assertEqual(264, trail["event_count"])
+        self.assertEqual(HEALTHY_EVENT_COUNT, trail["event_count"])
         self.assertEqual(
-            ["expected", "observed", "comparison", "ml", "risk", "explanation"],
+            ["expected", "observed", "comparison", "ml", "risk", "explanation",
+             "evidence"],
             trail["windows"][0].stage_names(),
         )
 
@@ -512,7 +538,8 @@ class TestAuditApiRoutes(_StoreTestCase):
         window = payload["windows"][0]
         self.assertEqual(3, window["window_index"])
         self.assertEqual(
-            ["expected", "observed", "comparison", "ml", "risk", "explanation"],
+            ["expected", "observed", "comparison", "ml", "risk", "explanation",
+             "evidence"],
             window["stage_names"],
         )
         for stage in window["stages"]:
@@ -555,7 +582,7 @@ class TestAuditApiRoutes(_StoreTestCase):
         content, content_type = handle_v1_get(_Ctx(), AUDIT_EVENTS_PATH, {"limit": 2})
         self.assertEqual("application/json", content_type)
         self.assertEqual(2, content["count"])
-        self.assertEqual(264, content["total"])
+        self.assertEqual(HEALTHY_EVENT_COUNT, content["total"])
 
 
 # ---------------------------------------------------------------------------
@@ -585,7 +612,7 @@ class TestAuditApiProvenance(_StoreTestCase):
                 self.assertIn(row["source"], {
                     SOURCE_EXPECTED, SOURCE_OBSERVED, SOURCE_COMPARISON,
                     SOURCE_ML, SOURCE_RISK, SOURCE_EXPLAINABILITY,
-                    SOURCE_RESPONSE_RECOMMENDATION,
+                    SOURCE_RESPONSE_RECOMMENDATION, SOURCE_EVIDENCE,
                 })
                 expected = EXPECTED_PROVENANCE[row["event_type"]][1]
                 self.assertEqual(expected, row["authoritative"])
@@ -662,7 +689,8 @@ class TestAuditApiMlFailure(unittest.TestCase):
         trail = self.store.run_trail(RUN_ID)
         self.assertEqual(44, trail["window_count"])
         self.assertEqual(
-            ["expected", "observed", "comparison", "ml", "risk", "explanation"],
+            ["expected", "observed", "comparison", "ml", "risk", "explanation",
+             "evidence"],
             trail["windows"][0].stage_names(),
         )
         self.assertIn("ml", trail["stages_present"])
@@ -765,7 +793,7 @@ class TestAuditApiRealEvidence(unittest.TestCase):
         with self.assertRaises(AuditJournalUnreadable) as ctx:
             AuditStore(str(OBSERVATION_JOURNAL))
         self.assertIn("authoritative", str(ctx.exception))
-        self.assertEqual(264, len(AuditStore(str(HEALTHY_JOURNAL))))
+        self.assertEqual(HEALTHY_EVENT_COUNT, len(AuditStore(str(HEALTHY_JOURNAL))))
 
     def test_observation_journal_is_untouched_by_analysis_reads(self):
         before = OBSERVATION_JOURNAL.read_bytes()

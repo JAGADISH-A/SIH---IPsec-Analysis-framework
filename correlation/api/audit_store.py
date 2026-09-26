@@ -51,6 +51,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from ..audit import (
     EVENT_COMPARISON,
+    EVENT_EVIDENCE,
     EVENT_EXPECTED_STATE,
     EVENT_EXPLANATION,
     EVENT_ML_FAILURE,
@@ -72,6 +73,7 @@ AUDIT_STAGE_ORDER: Tuple[str, ...] = (
     "ml",
     "risk",
     "explanation",
+    "evidence",
     "response",
     "authorization",
     "execution",
@@ -88,6 +90,7 @@ EVENT_STAGE: Dict[str, str] = {
     EVENT_ML_FAILURE: "ml",
     EVENT_RISK_ASSESSMENT: "risk",
     EVENT_EXPLANATION: "explanation",
+    EVENT_EVIDENCE: "evidence",
     EVENT_RESPONSE_PROPOSAL: "response",
 }
 
@@ -397,6 +400,37 @@ class AuditStore:
             })
         return sorted(summaries, key=lambda item: item["run_id"])
 
+    def window(self, run_id: str, window_index: int) -> Optional[Dict[str, Any]]:
+        """The recorded window bounds for one run/window, or None.
+
+        Read-only: returns exactly what the journal recorded so a downstream
+        consumer (e.g. evidence packet-coverage) can compare a real analysis
+        window against a capture interval instead of inventing bounds.
+        """
+        self.reload()
+        events = self._runs.get(run_id)
+        if not events:
+            return None
+        for event in events:
+            if event.identity.window_index == window_index:
+                return {
+                    "run_id": run_id,
+                    "experiment_id": event.identity.experiment_id,
+                    "sequence": event.identity.sequence,
+                    "attempt_number": event.identity.attempt_number,
+                    "window_index": window_index,
+                    "window_start_ns": event.identity.window_start_ns,
+                    "window_end_ns": event.identity.window_end_ns,
+                }
+        return None
+
+    def evidence_for_event(self, event_id: str) -> Tuple[Tuple[Any, ...], ...]:
+        """The evidence references recorded on one event, as stored."""
+        event = self.get_event(event_id)
+        if event is None:
+            return ()
+        return tuple(event.evidence_refs)
+
     def run_trail(
         self, run_id: str, query: Optional[AuditQuery] = None
     ) -> Optional[Dict[str, Any]]:
@@ -472,10 +506,11 @@ class AuditStore:
         this recommendation?" via ``for_recommendation``, so this is a join
         over existing records, not a new event source.
 
-        When no ledger is attached -- which is the normal case, because the
-        response ledger is in-memory and is not persisted anywhere in this
-        repository -- the result reports the real absence. It never guesses a
-        status, and it never creates an authorization or execution event.
+        The ledger is attached by the application (``--governance-journal``),
+        which is the write side that persists assessment/recommendation/
+        authorization/approval events to disk. When none is attached the result
+        reports the real absence. It never guesses a status, and it never
+        creates an authorization or execution event.
         """
         if not recommendation_id:
             return {
@@ -491,9 +526,9 @@ class AuditStore:
                 "available": False,
                 "recommendation_id": recommendation_id,
                 "reason": (
-                    "no response audit ledger is attached to this store; the "
-                    "response layer does not persist its ledger to disk, so "
-                    "authorization/execution cannot be resolved here"
+                    "no response audit ledger is attached to this store; attach "
+                    "one with --governance-journal <path> to resolve "
+                    "authorization/execution from the persisted ledger"
                 ),
                 "stages": [],
                 "events": [],

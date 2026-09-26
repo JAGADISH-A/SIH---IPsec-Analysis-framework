@@ -8,6 +8,10 @@ private/
 #packet captures
 *.pcap
 *.pcapng 
+# ...except the committed test fixture, which 3 test modules require.
+# A fresh clone must be able to run `controller/test_features.py`,
+# `controller/test_live_features.py` and `controller/test_ml_inference.py`.
+!controller/testdata/*.pcap
 
 #logs
 logs/
@@ -16,22 +20,35 @@ logs/
 #generated experiment results 
 results/
 
+#generated dashboard snapshot (default target of correlation.tools.execute_phase8
+# and `python -m correlation.api.app --snapshot`)
+out/
+
 #python
 __pycache__/
 *.py[cod]
 .venv/
 venv/
 
+#test / tooling caches
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
 
 #OS / editor files 
 
 .DS_Store
 Thumbs.db 
 *.swp
+.idea/
+.vscode/
 
 # Containerlab generated files
 topology/**/clab-*/
 
 # Generated controller configurations
 controller/generated/
-

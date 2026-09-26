@@ -105,7 +105,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from .models._base import JsonModel
 from .models.evidence import EvidenceRef
@@ -138,6 +138,12 @@ EVENT_EXPLANATION = "explanation"
 #: This module never records authorization or execution -- see
 #: ``correlation/response/audit.py``.
 EVENT_RESPONSE_PROPOSAL = "response_proposal"
+#: A registered evidence reference (typically a PCAP artifact) that supports the
+#: recorded stage. Carries metadata, a digest and an interval -- never artifact
+#: bytes. Deliberately NOT authoritative: a capture proves bytes were observed,
+#: never that an interpretation is correct; authority stays with
+#: :data:`SOURCE_OBSERVED`.
+EVENT_EVIDENCE = "evidence"
 
 ANALYSIS_EVENT_TYPES: Tuple[str, ...] = (
     EVENT_EXPECTED_STATE,
@@ -148,6 +154,7 @@ ANALYSIS_EVENT_TYPES: Tuple[str, ...] = (
     EVENT_RISK_ASSESSMENT,
     EVENT_EXPLANATION,
     EVENT_RESPONSE_PROPOSAL,
+    EVENT_EVIDENCE,
 )
 
 # -- source vocabulary -------------------------------------------------------
@@ -176,6 +183,12 @@ SOURCE_RESPONSE_RECOMMENDATION = "response-recommendation"
 #: ``observed_value_authoritative`` pair, so the real observation provenance
 #: survives even though the comparison event itself does not claim authority.
 SOURCE_COMPARISON = "comparison-engine"
+#: The evidence registry (``correlation.evidence_linkage`` / ``correlation.api.
+#: pcap``) that owns the id -> artifact mapping. Records *references* only. It is
+#: never authoritative: a PCAP is evidence that traffic occurred, not a protocol
+#: conclusion, so it must not be able to claim ``authoritative=True`` the way
+#: the observation builder does.
+SOURCE_EVIDENCE = "evidence-registry"
 
 AUDIT_SOURCES: Tuple[str, ...] = (
     SOURCE_EXPECTED,
@@ -185,6 +198,7 @@ AUDIT_SOURCES: Tuple[str, ...] = (
     SOURCE_EXPLAINABILITY,
     SOURCE_RESPONSE_RECOMMENDATION,
     SOURCE_COMPARISON,
+    SOURCE_EVIDENCE,
 )
 
 #: The single source of truth for which sources may claim authority.
@@ -198,6 +212,7 @@ SOURCE_AUTHORITATIVE: Dict[str, bool] = {
     SOURCE_EXPLAINABILITY: False,
     SOURCE_RESPONSE_RECOMMENDATION: False,
     SOURCE_COMPARISON: False,
+    SOURCE_EVIDENCE: False,
 }
 
 #: The only source permitted to carry each analysis event type. Recording an
@@ -214,6 +229,7 @@ EVENT_SOURCE: Dict[str, str] = {
     EVENT_RISK_ASSESSMENT: SOURCE_RISK,
     EVENT_EXPLANATION: SOURCE_EXPLAINABILITY,
     EVENT_RESPONSE_PROPOSAL: SOURCE_RESPONSE_RECOMMENDATION,
+    EVENT_EVIDENCE: SOURCE_EVIDENCE,
 }
 
 
@@ -344,7 +360,10 @@ class AuditEvent(JsonModel):
             "explanation_ref": _plain(self.explanation_ref),
             "decision": _plain(self.decision),
             "response_proposal_ref": self.response_proposal_ref,
-            "evidence_refs": [dataclass_asdict(ref) for ref in self.evidence_refs],
+            # ref.to_dict() (not dataclasses.asdict) so the derived
+            # evidence_id travels with the reference; without it the record
+            # would lose the only stable handle an analyst has on the artifact.
+            "evidence_refs": [ref.to_dict() for ref in self.evidence_refs],
         }
 
     def to_dict(self) -> Dict[str, Any]:
@@ -742,6 +761,24 @@ def audit_correlation_result(
                 **common,
             )
         )
+
+    if evidence_refs:
+        events.append(
+            AuditEvent(
+                event_type=EVENT_EVIDENCE,
+                source=SOURCE_EVIDENCE,
+                authoritative=SOURCE_AUTHORITATIVE[SOURCE_EVIDENCE],
+                provenance={
+                    "origin": "correlation.evidence_linkage.EvidenceCatalog",
+                    "note": (
+                        "References only; artifact bytes are never recorded. An "
+                        "artifact is not an authoritative protocol conclusion."
+                    ),
+                    "evidence_ids": [ref.evidence_id for ref in evidence_refs],
+                },
+                **common,
+            )
+        )
     return events
 
 
@@ -752,19 +789,49 @@ def audit_run(
     recorded_at: Optional[str] = None,
     response_proposal_refs: Optional[Dict[str, str]] = None,
     evidence_refs: Sequence[EvidenceRef] = (),
+    evidence_by_window: Optional[Mapping[int, Sequence[EvidenceRef]]] = None,
 ) -> List[AuditEvent]:
     """Audit every window of a :class:`LiveCorrelationRun`, optionally persisting.
 
     The run's ``expected`` and ``observed`` objects are only *read*; audit
     persistence never mutates them (invariant 8).  ``recorded_at`` is forwarded
     verbatim so a replay reproduces byte-identical events.
+
+    ``evidence_by_window`` maps a window index to the evidence bound to *that*
+    window. It is the preferred form: a single flat ``evidence_refs`` sequence
+    would attach the same artifact to every window in the run, which would let a
+    response for window N inherit the capture of window N+1. When both are
+    supplied the per-window mapping wins for the windows it names, and the flat
+    sequence applies only to windows it does not.
     """
+    from .evidence_linkage import bind_window, evidence_map_for_windows
+
     expected = run.expected
+    resolved_by_window: Dict[int, Tuple[EvidenceRef, ...]] = {}
+    if evidence_by_window:
+        normalized = evidence_map_for_windows(evidence_by_window)
+        for index, refs in normalized.items():
+            resolved_by_window[index] = bind_window(
+                refs,
+                window_index=index,
+                run_id=getattr(run.identity, "dataset_run_id", None),
+                experiment_id=getattr(run.identity, "experiment_id", None),
+                sequence=getattr(run.identity, "sequence", None),
+            )
     events: List[AuditEvent] = []
     for index, result in enumerate(run.results):
         ref = None
         if response_proposal_refs:
             ref = response_proposal_refs.get(result.window_id)
+        window_evidence = resolved_by_window.get(index)
+        if window_evidence is None:
+            window_evidence = bind_window(
+                evidence_refs,
+                window_index=index,
+                run_id=getattr(run.identity, "dataset_run_id", None),
+                experiment_id=getattr(run.identity, "experiment_id", None),
+                sequence=getattr(run.identity, "sequence", None),
+            )
         events.extend(
             audit_correlation_result(
                 result,
@@ -772,7 +839,7 @@ def audit_run(
                 identity=run.identity,
                 recorded_at=recorded_at,
                 response_proposal_ref=ref,
-                evidence_refs=evidence_refs,
+                evidence_refs=window_evidence,
                 window_index=index,
             )
         )

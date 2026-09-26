@@ -92,6 +92,20 @@ def _coerce_evidence(evidence_refs: Sequence) -> tuple:
     return tuple(result)
 
 
+def _derive_evidence(correlation: CorrelationResult) -> tuple:
+    """Recover the evidence a correlation result was derived from.
+
+    This is the automatic observation -> comparison -> risk edge. A comparison
+    outcome already carries the references it was computed from, so when the
+    caller supplies no refs of their own the risk engine reuses those instead of
+    leaving the findings unattached. No ref is ever invented here: an empty
+    correlation yields an empty tuple, which stays a valid finding.
+    """
+    from ..evidence_linkage import evidence_from_comparison
+
+    return evidence_from_comparison(correlation)
+
+
 @dataclass(frozen=True)
 class RiskEngine:
     """Deterministic risk assessment engine (one policy instance)."""
@@ -127,7 +141,10 @@ class RiskEngine:
         assert_identity_compatible(expected_identity, correlation.identity)
 
         ml = _resolve_ml_result(correlation, ml_result)
-        evidence = _coerce_evidence(evidence_refs)
+        # Automatic propagation: an explicit caller-supplied set wins, otherwise
+        # the evidence carried by the comparison outcomes is adopted. Never
+        # fabricated -- an empty comparison yields an empty tuple.
+        evidence = _coerce_evidence(evidence_refs) or _derive_evidence(correlation)
 
         context = RiskRuleContext(
             expected=expected_state,
