@@ -171,10 +171,60 @@ class PcapService:
                 data = handle.read()
         except OSError:
             return None
-        self._downloads.append(
-            {"evidence_id": evidence_id, "bytes": len(data), "resolved_path": path}
-        )
+        self._record(evidence_id, len(data), path)
         return data
+
+    #: Chunk size for :meth:`open_stream`.  64 KiB keeps peak memory bounded
+    #: regardless of capture size; a capture is routinely 10s of MB and the
+    #: transport must not need it all in RAM to forward it.
+    STREAM_CHUNK_SIZE = 65536
+
+    def open_stream(self, evidence_id: str, chunk_size: Optional[int] = None):
+        """Open a registered capture for streaming, or return None.
+
+        The caller is responsible for closing the returned file object.  The
+        resolution goes through the same hardened
+        :meth:`PcapRegistry.resolve` as :meth:`download`, so allow-listing,
+        root containment, symlink escape checks and the extension allow-list
+        are identical -- streaming does not become a weaker path.
+        """
+        path = self.registry.resolve(evidence_id)
+        if path is None:
+            return None
+        try:
+            handle = open(path, "rb")
+        except OSError:
+            return None
+        self._record(evidence_id, self.size(evidence_id), path)
+        return handle
+
+    def size(self, evidence_id: str) -> Optional[int]:
+        """Byte length of a registered capture, or None if not resolvable."""
+        path = self.registry.resolve(evidence_id)
+        if path is None:
+            return None
+        try:
+            return os.path.getsize(path)
+        except OSError:
+            return None
+
+    def suggested_filename(self, evidence_id: str) -> str:
+        """A safe ``Content-Disposition`` filename for a capture.
+
+        Built from the validated evidence id rather than the on-disk path, so
+        the header can never leak a directory layout and can never be steered
+        by a crafted registered filename.
+        """
+        try:
+            validate_evidence_id(evidence_id)
+        except ValueError:
+            return "capture.pcap"
+        return f"{evidence_id}.pcap"
+
+    def _record(self, evidence_id: str, size: Optional[int], path: str) -> None:
+        self._downloads.append(
+            {"evidence_id": evidence_id, "bytes": size, "resolved_path": path}
+        )
 
     def verify(self, evidence_id: str) -> Optional[Any]:
         """Read-only integrity report for a registered reference.

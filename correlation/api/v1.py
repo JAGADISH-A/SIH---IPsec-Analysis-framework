@@ -34,6 +34,14 @@ from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
 
 from .audit_routes import handle_audit_get, is_audit_path
+from .discovery import (
+    handle_assessment_findings,
+    handle_assessment_v1,
+    handle_assessments_v1,
+    handle_findings,
+    handle_run,
+    handle_runs,
+)
 from .evidence_routes import (
     EVIDENCE_LIST_PATH,
     RESPONSE_EVIDENCE_PREFIX,
@@ -59,6 +67,13 @@ TRAFFIC_GENERATOR_PATH = "/api/v1/traffic-generator"
 EVIDENCE_PREFIX = "/api/v1/evidence/"
 GOVERNANCE_PATH = "/api/v1/governance"
 GOVERNANCE_PREFIX = "/api/v1/governance/"
+RUNS_PATH = "/api/v1/runs"
+RUNS_PREFIX = "/api/v1/runs/"
+ASSESSMENTS_PATH = "/api/v1/assessments"
+ASSESSMENTS_PREFIX = "/api/v1/assessments/"
+FINDINGS_PATH = "/api/v1/findings"
+OPENAPI_PATH = "/api/v1/openapi.json"
+DOCS_PATH = "/api/v1/docs"
 
 
 def _evidence_id(path: str) -> str:
@@ -74,8 +89,16 @@ def _evidence_id(path: str) -> str:
     return remainder
 
 
-def handle_v1_health(health) -> Dict[str, Any]:
-    return health.to_dict()
+def handle_v1_health(health, cors_policy=None) -> Dict[str, Any]:
+    payload = health.to_dict()
+    if cors_policy is not None:
+        # Additive: lets a browser client discover the origin policy instead of
+        # inferring it from a failed request.  Contains no host information.
+        from .cors import summarize_cors
+
+        payload = dict(payload)
+        payload["cors"] = summarize_cors(cors_policy)
+    return payload
 
 
 def handle_v1_metrics(metrics) -> str:
@@ -121,14 +144,43 @@ def handle_v1_audit(context, path: str, params: Optional[Mapping[str, Any]] = No
     return handle_audit_get(store, path, dict(params or {}))
 
 
-def handle_v1_get(context, path: str, params: Optional[Mapping[str, Any]] = None):
+def _store_or_503(store):
+    """The assessment store, or a structured 503 when it is not attached.
+
+    ``/api/v1`` assessments and findings are projections of the same
+    ``AssessmentStore`` that ``/api/assessments`` serves.  If the transport
+    somehow starts the v1 surface without it, say so rather than reporting an
+    empty result set that reads as "there are no assessments".
+    """
+    if store is None:
+        raise ApiError(
+            503, "assessments_unavailable",
+            "no assessment store is attached to the /api/v1 surface",
+        )
+    return store
+
+
+def handle_v1_get(
+    context,
+    path: str,
+    params: Optional[Mapping[str, Any]] = None,
+    store=None,
+):
     """Dispatch one /api/v1 path; returns (content, content_type) or raises.
 
     ``params`` is the already-parsed query string. It is optional so existing
     callers and the Phase-10 tests keep working unchanged.
+
+    ``store`` is the :class:`~correlation.api.store.AssessmentStore`.  It is
+    optional and only required by the assessment/finding projections; the
+    health, metrics, evidence, audit and governance routes never touch it.
     """
-    if path.startswith(HEALTH_PATH):
-        return handle_v1_health(context.health), CONTENT_TYPE_JSON
+    params = dict(params or {})
+    if path == HEALTH_PATH:
+        return (
+            handle_v1_health(context.health, getattr(context, "cors_policy", None)),
+            CONTENT_TYPE_JSON,
+        )
     if path == METRICS_PATH:
         return handle_v1_metrics(context.metrics), CONTENT_TYPE_PROMETHEUS
     if path == TRAFFIC_GENERATOR_PATH:
@@ -141,7 +193,7 @@ def handle_v1_get(context, path: str, params: Optional[Mapping[str, Any]] = None
         if path.startswith(prefix) and path.endswith("/evidence"):
             remainder = path[len(prefix):-len("/evidence")]
             if remainder and "/" not in remainder:
-                return handle_event_evidence(context, remainder), CONTENT_TYPE_JSON
+                return handle_event_evidence(context, remainder, params), CONTENT_TYPE_JSON
         return handle_v1_audit(context, path, params), CONTENT_TYPE_JSON
     if path == GOVERNANCE_PATH:
         return handle_governance_list(context, params), CONTENT_TYPE_JSON
@@ -159,7 +211,10 @@ def handle_v1_get(context, path: str, params: Optional[Mapping[str, Any]] = None
                 handle_response_evidence(context, remainder[:-len("/evidence")]),
                 CONTENT_TYPE_JSON,
             )
-        raise ApiError(404, "unknown_route", f"unknown route {path!r}")
+        if "/" in remainder:
+            raise ApiError(404, "unknown_route", f"unknown route {path!r}")
+        # A bare /api/v1/responses/{id} has no detail route; fall through to the
+        # trailing unknown_route below rather than claiming a route we lack.
     if path.startswith(EVIDENCE_PREFIX):
         remainder = path[len(EVIDENCE_PREFIX):]
         if not remainder:
@@ -178,7 +233,45 @@ def handle_v1_get(context, path: str, params: Optional[Mapping[str, Any]] = None
             run_id = remainder[:-len("/evidence")]
             if run_id and "/" not in run_id:
                 return handle_run_evidence(context, run_id, params), CONTENT_TYPE_JSON
+        if "/" in remainder:
+            raise ApiError(404, "unknown_route", f"unknown route {path!r}")
+        # A bare /api/v1/runs/{id} is a *discovery* route, not evidence: fall
+        # through to the RUNS_PREFIX branch below. Raising here used to shadow
+        # run discovery entirely, which is exactly the kind of route-ordering
+        # bug that makes an added endpoint silently 404.
+    # -- discovery (added for frontend state restoration) ------------------
+    # Ordered AFTER the run sub-resource routes above so ``/api/v1/runs/{id}``
+    # discovery never shadows ``/api/v1/runs/{id}/audit`` or ``.../evidence``.
+    if path == RUNS_PATH:
+        return handle_runs(getattr(context, "audit_store", None), params), CONTENT_TYPE_JSON
+    if path.startswith(RUNS_PREFIX):
+        remainder = path[len(RUNS_PREFIX):]
+        if remainder and "/" not in remainder:
+            return (
+                handle_run(getattr(context, "audit_store", None), remainder),
+                CONTENT_TYPE_JSON,
+            )
         raise ApiError(404, "unknown_route", f"unknown route {path!r}")
+    if path == ASSESSMENTS_PATH:
+        return handle_assessments_v1(_store_or_503(store), params), CONTENT_TYPE_JSON
+    if path.startswith(ASSESSMENTS_PREFIX):
+        remainder = path[len(ASSESSMENTS_PREFIX):]
+        if not remainder:
+            raise ApiError(404, "invalid_route", f"unknown route {path!r}")
+        if remainder.endswith("/findings"):
+            assessment_id = remainder[: -len("/findings")]
+            if assessment_id and "/" not in assessment_id:
+                return (
+                    handle_assessment_findings(
+                        _store_or_503(store), assessment_id, params
+                    ),
+                    CONTENT_TYPE_JSON,
+                )
+        elif "/" not in remainder:
+            return handle_assessment_v1(_store_or_503(store), remainder), CONTENT_TYPE_JSON
+        raise ApiError(404, "unknown_route", f"unknown route {path!r}")
+    if path == FINDINGS_PATH:
+        return handle_findings(_store_or_503(store), params), CONTENT_TYPE_JSON
     raise ApiError(404, "unknown_route", f"unknown route {path!r}")
 
 

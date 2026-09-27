@@ -11,9 +11,15 @@ Implements the Phase-8 REST contract:
 Unknown assessment ids and unknown sub-resources yield a structured 404.
 Method handling is left to the HTTP layer (405). Everything is JSON: the
 handlers return plain dicts that ``json.dumps`` serializes deterministically.
+
+Error envelope, pagination envelope and the ``ApiError`` type live here because
+they are the shared vocabulary of every route module in this package.  The
+``/api/v1`` surface reuses them unchanged; see
+``correlation/api/v1.py`` for its route list and ``openapi.py`` for the
+machine-readable contract.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from .adapters import parse_assessment_id
 
@@ -30,16 +36,144 @@ SUB_RESOURCES = (
 
 
 class ApiError(Exception):
-    """Carries an HTTP status code + structured payload."""
+    """Carries an HTTP status code + structured payload.
 
-    def __init__(self, status: int, code: str, detail: str) -> None:
+    The wire shape is::
+
+        {"error": {"code": "...", "message": "...", "detail": "...", "request_id": "..."}}
+
+    ``detail`` is retained from the original Phase-8 contract and is the human
+    message; ``message`` is an explicit alias so a frontend can read either.
+    ``code`` is the stable machine-readable discriminator a client should
+    branch on, and ``request_id`` correlates a browser-visible failure with the
+    server log line for the same request.
+
+    ``request_id`` is filled in by the transport when it is absent, so handler
+    code stays transport-agnostic and is still unit testable.
+    """
+
+    def __init__(
+        self,
+        status: int,
+        code: str,
+        detail: str,
+        request_id: Optional[str] = None,
+    ) -> None:
         super().__init__(detail)
         self.status = status
         self.code = code
         self.detail = detail
+        self.request_id = request_id
 
-    def payload(self) -> Dict[str, Any]:
-        return {"error": {"code": self.code, "detail": self.detail}}
+    def payload(self, request_id: Optional[str] = None) -> Dict[str, Any]:
+        rid = self.request_id or request_id
+        error: Dict[str, Any] = {
+            "code": self.code,
+            "message": self.detail,
+            "detail": self.detail,
+        }
+        if rid:
+            error["request_id"] = rid
+        return {"error": error}
+
+
+#: Pagination contract shared by every list endpoint.
+#:
+#: ``DEFAULT_PAGE_LIMIT`` is deliberately conservative: these responses are
+#: read whole into memory by a browser before rendering, and the audit journal
+#: in particular can be large.  ``MAX_PAGE_LIMIT`` bounds a single request so a
+#: client cannot ask for the entire journal in one page.
+DEFAULT_PAGE_LIMIT = 100
+MAX_PAGE_LIMIT = 5000
+
+
+def page_params(
+    params: Optional[Dict[str, Any]] = None,
+    default_limit: int = DEFAULT_PAGE_LIMIT,
+    max_limit: int = MAX_PAGE_LIMIT,
+) -> tuple:
+    """Validate ``limit``/``offset`` into ``(limit, offset)``.
+
+    Raises :class:`ApiError` 400 on a bad value rather than silently coercing
+    it: a client that sends ``limit=abc`` and receives 200 with a default page
+    size will paginate incorrectly without ever knowing why.
+
+    ``offset`` beyond the end of the result set is NOT an error; it yields an
+    empty page, which is how a client detects it has walked off the end.
+    """
+    params = params or {}
+
+    def _positive_int(name: str, default: int) -> int:
+        raw = params.get(name)
+        if raw is None or raw == "":
+            return default
+        if isinstance(raw, bool):
+            raise ApiError(
+                400, "invalid_query_parameter", f"{name} must be an integer"
+            )
+        if isinstance(raw, int):
+            value = raw
+        else:
+            try:
+                value = int(str(raw).strip())
+            except (TypeError, ValueError):
+                raise ApiError(
+                    400, "invalid_query_parameter",
+                    f"{name} must be an integer, got {raw!r}",
+                ) from None
+        return value
+
+    limit = _positive_int("limit", default_limit)
+    if limit < 1:
+        raise ApiError(
+            400, "invalid_query_parameter", f"limit must be >= 1, got {limit}"
+        )
+    limit = min(limit, max_limit)
+
+    offset = _positive_int("offset", 0)
+    if offset < 0:
+        raise ApiError(
+            400, "invalid_query_parameter", f"offset must be >= 0, got {offset}"
+        )
+    return limit, offset
+
+
+def paginate(items: List[Any], limit: int, offset: int) -> tuple:
+    """Return ``(page, total)`` for an already-materialised list.
+
+    ``total`` is the count BEFORE paging, so a client can compute the number of
+    pages without a second request.
+    """
+    total = len(items)
+    return items[offset:offset + limit], total
+
+
+def paged_envelope(
+    api: str,
+    items: List[Any],
+    limit: int,
+    offset: int,
+    key: str = "items",
+    **extra: Any,
+) -> Dict[str, Any]:
+    """The standard list response.
+
+    ``key`` names the array so an existing endpoint keeps its historical array
+    name (``events``, ``runs``, ``evidence``) while every list still reports
+    ``limit``/``offset``/``total``/``count`` uniformly.
+    """
+    page, total = paginate(items, limit, offset)
+    body: Dict[str, Any] = {
+        "api": api,
+        key: page,
+        "count": len(page),
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(page) < total,
+    }
+    body.update(extra)
+    return body
 
 
 def _bundle_or_404(store, assessment_id) -> Dict[str, Any]:
@@ -66,12 +200,25 @@ def handle_health(store) -> Dict[str, Any]:
     }
 
 
-def handle_assessments(store) -> Dict[str, Any]:
-    """List endpoint: overview + deterministic table headers (no full bodies)."""
+def handle_assessments(store, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """List endpoint: overview + deterministic table headers (no full bodies).
+
+    Paginates with ``limit``/``offset``.  The ``headers`` array name and the
+    ``overview`` block are unchanged, so an existing consumer reading either
+    keeps working; ``limit``/``offset``/``total``/``count``/``has_more`` are
+    added so a client can page instead of assuming the list is complete.
+    """
+    limit, offset = page_params(params)
+    page, total = paginate(store.headers, limit, offset)
     return {
         "api": "assessments",
         "overview": dict(store.overview),
-        "headers": [dict(h) for h in store.headers],
+        "headers": [dict(h) for h in page],
+        "count": len(page),
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(page) < total,
     }
 
 
@@ -95,12 +242,19 @@ def handle_sub_resource(store, assessment_id, resource) -> Dict[str, Any]:
     }
 
 
-def handle_get(store, path: str) -> Dict[str, Any]:
-    """Dispatch one GET path; raises ApiError for unknown/invalid routes."""
+def handle_get(
+    store, path: str, params: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """Dispatch one GET path; raises ApiError for unknown/invalid routes.
+
+    ``params`` is the parsed query string.  The Phase-8 contract is path-only
+    apart from ``/api/assessments`` pagination, so passing ``None`` (the
+    default) reproduces the original behaviour exactly.
+    """
     if path == "/api/health":
         return handle_health(store)
     if path == "/api/assessments":
-        return handle_assessments(store)
+        return handle_assessments(store, params)
     prefix = "/api/assessments/"
     if path.startswith(prefix):
         remainder = path[len(prefix):]

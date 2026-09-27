@@ -33,6 +33,7 @@ Every route here is a projection of persisted journal records:
 
 from __future__ import annotations
 
+import sys
 from typing import Any, Dict, List, Optional
 
 from .audit_store import (
@@ -41,6 +42,7 @@ from .audit_store import (
     AuditQuery,
     AuditStore,
 )
+from .redact import bounded_echo
 from .routes import ApiError
 
 AUDIT_EVENTS_PATH = "/api/v1/audit/events"
@@ -51,21 +53,37 @@ API_NAME = "audit"
 
 
 def _query_or_400(params: Optional[Dict[str, Any]]) -> AuditQuery:
-    """Build a query, mapping a bad filter value onto a structured 400."""
+    """Build a query, mapping a bad filter value onto a structured 400.
+
+    The ``ValueError`` text only ever contains the field name and the value we
+    rejected, both of which the caller supplied, so echoing it is safe -- but
+    it is still bounded in case a caller passes something very long.
+    """
     try:
         return AuditQuery.from_params(params)
     except ValueError as exc:
-        raise ApiError(400, "invalid_query_parameter", str(exc)) from None
+        raise ApiError(400, "invalid_query_parameter", bounded_echo(exc)) from None
 
 
 def _guard(read):
-    """Turn a journal read failure into a structured 500, never partial data."""
+    """Turn a journal read failure into a structured 500, never partial data.
+
+    The exception text is deliberately NOT included in the response. A
+    parse failure can carry a host path or the content of the corrupt record,
+    and this API is unauthenticated. The client gets the fact and a request id;
+    the detail stays in the server log.
+    """
     try:
         return read()
     except AuditJournalUnreadable as exc:
+        sys.stderr.write(
+            f"[analytics-api] audit journal unreadable: {exc!r}\n"
+        )
         raise ApiError(
             500, "audit_journal_unreadable",
-            f"the audit journal could not be read as intact evidence: {exc}",
+            "the audit journal could not be read as intact evidence; it is "
+            "reported as unavailable rather than partially served. Check the "
+            "analytics API log for the parse error.",
         ) from None
 
 
@@ -213,6 +231,12 @@ def handle_run_audit(store: AuditStore, run_id: str, params: Optional[Dict[str, 
         "run_id": trail["run_id"],
         "window_count": trail["window_count"],
         "event_count": trail["event_count"],
+        # Pagination is real, not echoed: the store slices the filtered event
+        # set. event_count is the total; returned_event_count is this page.
+        "returned_event_count": trail.get("returned_event_count"),
+        "limit": trail.get("limit"),
+        "offset": trail.get("offset", 0),
+        "has_more": trail.get("has_more", False),
         "stage_order": trail["stage_order"],
         "stages_present": trail["stages_present"],
         "filters": query.describe(),

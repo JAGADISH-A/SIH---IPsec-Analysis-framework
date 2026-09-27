@@ -66,10 +66,21 @@ class Phase10Context:
     #: Read-only link target: the observation journal the ledger's ``audit_tap``
     #: evidence references point into.
     observation_journal: Optional[str] = None
+    #: The resolved CORS policy, attached by the transport so ``/api/v1/health``
+    #: can report the effective origin allow-list to a browser client. Optional:
+    #: when it is absent (e.g. in a unit test) health simply omits ``cors``.
+    cors_policy: Optional[Any] = None
 
     def __post_init__(self) -> None:
         if self.pcap is None:
             self.pcap = PcapService(PcapRegistry(root=""))
+        if self.cors_policy is None:
+            # Default the policy so `/api/v1/health` always reports the
+            # effective allow-list, even when the context was built directly
+            # (tests, embedding) rather than by ``app.main()``.
+            from .config import CorsPolicy
+
+            self.cors_policy = CorsPolicy.from_env()
         self._seed_health()
 
     def attach_audit_store(self, store) -> None:

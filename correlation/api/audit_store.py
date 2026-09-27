@@ -449,6 +449,22 @@ class AuditStore:
         if query is not None:
             run_events = [event for event in run_events if query.matches(event)]
 
+        # Pagination applies to the *filtered event* set, before windows are
+        # grouped, so limit/offset means the same thing here as on the flat
+        # event list. It used to be ignored entirely: the query's limit and
+        # offset were echoed in the response while the whole run was returned,
+        # so a client paging a long run silently re-fetched everything each
+        # time and could never reach the end.
+        event_count_total = len(run_events)
+        offset = query.offset if query is not None else 0
+        limit = query.limit if query is not None else None
+        if limit is not None or offset:
+            start = offset or 0
+            if limit is None:
+                run_events = run_events[start:]
+            else:
+                run_events = run_events[start:start + limit]
+
         windows: Dict[Tuple[Any, Any, Any], AuditTrailWindow] = {}
         order: List[Tuple[Any, Any, Any]] = []
         for event in run_events:
@@ -484,6 +500,7 @@ class AuditStore:
             window.stages = ordered
             trail_windows.append(window)
 
+        shown = sum(len(window.events) for window in trail_windows)
         return {
             "run_id": run_id,
             "window_count": len(trail_windows),
@@ -492,7 +509,11 @@ class AuditStore:
                 stage["stage"]
                 for window in trail_windows for stage in window.stages
             }),
-            "event_count": len(run_events),
+            "event_count": event_count_total,
+            "returned_event_count": shown,
+            "limit": limit,
+            "offset": offset or 0,
+            "has_more": (offset or 0) + shown < event_count_total,
             "windows": trail_windows,
         }
 

@@ -42,7 +42,8 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 from ..models.evidence import EvidenceRef, resolve_within_root
 from ..evidence_linkage import window_packet_coverage
 from .pcap import PcapService
-from .routes import ApiError
+from .redact import public_path, bounded_echo
+from .routes import ApiError, page_params, paginate
 
 EVIDENCE_LIST_PATH = "/api/v1/evidence"
 RUN_EVIDENCE_PREFIX = "/api/v1/runs/"
@@ -180,10 +181,20 @@ def handle_evidence_list(context, params: Optional[Mapping[str, Any]] = None) ->
     refs.sort(key=lambda ref: (ref.run_id or "", ref.window_index
                                if ref.window_index is not None else -1,
                                ref.evidence_id))
+    limit, offset = page_params(params)
+    page, total = paginate(refs, limit, offset)
     return {
         "api": "evidence-list",
-        "evidence_count": len(refs),
-        "evidence": [evidence_payload(context, ref) for ref in refs],
+        # evidence_count is the TOTAL matching the filters, not this page's
+        # length; `count` is the page length. Keeping the historical key
+        # meaningful is why both exist.
+        "evidence_count": total,
+        "count": len(page),
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(page) < total,
+        "evidence": [evidence_payload(context, ref) for ref in page],
         "read_only": True,
     }
 
@@ -196,7 +207,7 @@ def handle_run_evidence(
     refs = [ref for ref in _catalog_refs(context).values() if ref.run_id == run_id]
     if not refs:
         raise ApiError(404, "evidence_run_not_found",
-                       f"no evidence registered for run {run_id!r}")
+                       f"no evidence registered for run {bounded_echo(run_id)!r}")
     window_index = params.get("window_index")
     if window_index not in (None, ""):
         try:
@@ -220,7 +231,7 @@ def handle_run_evidence(
             if recorded is None:
                 raise ApiError(
                     404, "evidence_window_not_found",
-                    f"run {run_id!r} has no window {wanted} and no evidence "
+                    f"run {bounded_echo(run_id)!r} has no window {wanted} and no evidence "
                     f"bound to it",
                 )
             return {
@@ -230,7 +241,7 @@ def handle_run_evidence(
                 "evidence_count": 0,
                 "windows": [{"window_index": wanted, "evidence": []}],
                 "no_evidence_reason": (
-                    f"window {wanted} of run {run_id!r} is recorded in the "
+                    f"window {wanted} of run {bounded_echo(run_id)!r} is recorded in the "
                     f"analysis journal but has no evidence reference bound to "
                     f"it; none is substituted"
                 ),
@@ -278,11 +289,14 @@ def handle_run_evidence(
     }
 
 
-def handle_event_evidence(context, event_id: str) -> Dict[str, Any]:
+def handle_event_evidence(
+    context, event_id: str, params: Optional[Mapping[str, Any]] = None
+) -> Dict[str, Any]:
     """The evidence that supported one recorded audit stage.
 
     Answers the finding -> evidence question directly: a risk event's recorded
-    references are the evidence its finding was derived from.
+    references are the evidence its finding was derived from.  Paged with
+    ``limit``/``offset``; a single event can reference a large capture set.
     """
     store = getattr(context, "audit_store", None)
     if store is None:
@@ -294,7 +308,7 @@ def handle_event_evidence(context, event_id: str) -> Dict[str, Any]:
     event = store.get_event(event_id)
     if event is None:
         raise ApiError(404, "audit_event_not_found",
-                       f"no audit event {event_id!r}")
+                       f"no audit event {bounded_echo(event_id)!r}")
     # get_event() returns a materialized AuditEvent, not a raw dict; go through
     # to_dict() so this path reads the same verified shape the journal stores.
     event = event.to_dict() if hasattr(event, "to_dict") else dict(event)
@@ -310,6 +324,8 @@ def handle_event_evidence(context, event_id: str) -> Dict[str, Any]:
                 window_end_ns=identity.get("window_end_ns"),
             )
         )
+    limit, offset = page_params(params)
+    page, total = paginate(payloads, limit, offset)
     return {
         "api": "audit-event-evidence",
         "event_id": event_id,
@@ -319,8 +335,13 @@ def handle_event_evidence(context, event_id: str) -> Dict[str, Any]:
         "run_id": identity.get("dataset_run_id"),
         "experiment_id": identity.get("experiment_id"),
         "window_index": identity.get("window_index"),
-        "evidence_count": len(payloads),
-        "evidence": payloads,
+        "evidence_count": total,
+        "count": len(page),
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(page) < total,
+        "evidence": page,
         "read_only": True,
     }
 
@@ -409,17 +430,22 @@ def handle_evidence_id(context, evidence_id: str) -> Dict[str, Any]:
     # Fall back to the pre-existing download-descriptor contract for an id that
     # is registered for download but carries no reference.
     if not pcap.registry.has(evidence_id):
-        raise ApiError(404, "evidence_not_found", f"no evidence {evidence_id!r}")
+        raise ApiError(404, "evidence_not_found", f"no evidence {bounded_echo(evidence_id)!r}")
     resolved = pcap.registry.resolve(evidence_id)
     if resolved is None:
         raise ApiError(
             403, "evidence_unavailable",
-            f"evidence {evidence_id!r} cannot be served (no capture resolved)",
+            f"evidence {bounded_echo(evidence_id)!r} cannot be served (no capture resolved)",
         )
     return {
         "api": "evidence-detail",
         "evidence_id": evidence_id,
-        "served_from": resolved,
+        # Deliberately NOT the absolute on-disk location: this response is
+        # unauthenticated, and the host path discloses the deploy layout and
+        # the service account.  The registry-relative filename is what a
+        # client actually needs to correlate the artifact.
+        "served_from": os.path.basename(resolved),
+        "host_path_disclosed": False,
         "extension_locked": True,
         "read_only": True,
         "download_path": f"/api/v1/evidence/{evidence_id}/pcap",
@@ -477,7 +503,12 @@ def _governance_summary(event) -> Dict[str, Any]:
 
 
 def handle_governance_list(context, params: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
-    """The persisted governance chain, in order, with its integrity state."""
+    """The persisted governance chain, in order, with its integrity state.
+
+    The chain is ordered by construction, so paging slices the *ordered* list
+    and every page keeps chain order.  ``event_count`` remains the total chain
+    length; ``count`` is this page's length.
+    """
     ledger = _governance(context)
     events = ledger.events()
     # Report the chain as it stands. A chain that does not verify is reported
@@ -485,17 +516,30 @@ def handle_governance_list(context, params: Optional[Mapping[str, Any]] = None) 
     try:
         chain_verified = ledger.verify()
         chain_detail = None
-    except Exception as exc:
+    except Exception:
+        # The exception text can embed a host path or a fragment of journal
+        # content, so it goes to the server log, not to the response. The
+        # client gets the fact that verification failed, which is the part it
+        # can act on.
         chain_verified = False
-        chain_detail = str(exc)
+        chain_detail = "chain verification failed; see the analytics API log"
+    limit, offset = page_params(params)
+    page, total = paginate(events, limit, offset)
     return {
         "api": "governance",
-        "journal": str(ledger.path) if ledger.path is not None else None,
+        # Repository/journal-relative, never the absolute host path.
+        "journal": public_path(ledger.path, roots=(getattr(ledger, "root", None),)),
+        "host_path_disclosed": False,
         "engine_version": ledger.engine_version,
-        "event_count": len(events),
+        "event_count": total,
+        "count": len(page),
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(page) < total,
         "chain_verified": chain_verified,
         "chain_detail": chain_detail,
-        "events": [_governance_summary(event) for event in events],
+        "events": [_governance_summary(event) for event in page],
         "read_only": True,
     }
 
@@ -517,11 +561,12 @@ def handle_governance_event(context, event_id: str) -> Dict[str, Any]:
             summary = _governance_summary(event)
             summary.update({
                 "api": "governance-event",
-                "journal": str(ledger.path) if ledger.path is not None else None,
+                "journal": public_path(ledger.path, roots=(getattr(ledger, "root", None),)),
+                "host_path_disclosed": False,
+                "observation_journal": public_path(observation),
                 "evidence": payloads,
-                "observation_journal": observation,
                 "read_only": True,
             })
             return summary
     raise ApiError(404, "governance_event_not_found",
-                   f"no governance event {event_id!r}")
+                   f"no governance event {bounded_echo(event_id)!r}")

@@ -359,7 +359,12 @@ class TestReadOnlyApi(unittest.TestCase):
         self.assertTrue(payload["chain_verified"])
         self.assertIsNone(payload["chain_detail"])
         self.assertEqual(payload["event_count"], 2)
-        self.assertEqual(payload["journal"], self.path)
+        # The journal is identified by filename, never by its absolute host
+        # location: this API is unauthenticated, and /tmp/... would disclose
+        # the deploy layout and the service account.
+        self.assertEqual(payload["journal"], "governance.jsonl")
+        self.assertFalse(os.path.isabs(payload["journal"]))
+        self.assertFalse(payload["host_path_disclosed"])
         self.assertEqual([e["event_id"] for e in payload["events"]],
                          ["EVT-0001", "EVT-0002"])
         self.assertEqual(payload["events"][0]["principal"], "system:planner")
@@ -373,6 +378,7 @@ class TestReadOnlyApi(unittest.TestCase):
         self.assertEqual(payload["evidence_count"], 1)
         self.assertEqual(len(payload["evidence"]), 1)
         self.assertTrue(payload["observation_journal"].endswith("events.jsonl"))
+        self.assertFalse(os.path.isabs(payload["observation_journal"]))
         # A capture justifies a decision; it never authorizes it.
         self.assertFalse(payload["evidence"][0]["authoritative"])
 
