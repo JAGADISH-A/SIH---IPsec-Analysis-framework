@@ -57,7 +57,10 @@ from .. import artifacts
 from ..adapters import ExpectedStateAdapter
 from ..artifacts import ArtifactUnavailable
 from ..comparison import ComparisonEngine, ComparisonEngineOptions
+from ..custody import ChainOfCustody, build_chain_of_custody
 from ..models import EvidenceRef, MLResult, ObservedState
+from ..response.planner import PlanningContext, plan as plan_response
+from ..response.policy import ResponsePolicy
 from ..risk import RiskEngine, RiskPolicy
 from ..xai import ExplainabilityEngine
 from .adapters import (
@@ -66,6 +69,7 @@ from .adapters import (
     evidence_to_view,
     header_view,
 )
+from .redact import public_path
 
 PLAN_PATH = os.path.join(artifacts.REPO_ROOT, artifacts.REAL_PLAN_PATH)
 
@@ -187,6 +191,27 @@ class RecordedObservation:
             records.append(self.ml_record)
         return artifacts.provenance(*records)
 
+    def custody_provenance(self) -> List[Dict[str, Any]]:
+        """Role-tagged provenance for the chain of custody.
+
+        :meth:`provenance` is left exactly as it is because the bundle's existing
+        ``sources`` shape is part of the published contract. The custody layer
+        additionally needs to say *what role* each artifact played, so that a
+        reader can tell the state snapshot from the feature window from the model
+        output rather than being handed three anonymous digests.
+        """
+        tagged: List[Dict[str, Any]] = []
+        for role, record in (
+            ("observed_state", self.state_record),
+            ("live_feature_window", self.window_record),
+            ("ml_output", self.ml_record),
+        ):
+            if record is None:
+                continue
+            for item in artifacts.provenance(record):
+                tagged.append({**item, "role": role, "name": self.case.name})
+        return tagged
+
 
 @dataclass(frozen=True)
 class RecordedMlEvidence:
@@ -285,6 +310,55 @@ def real_evidence(sequence: int, *paths: str) -> List[EvidenceRef]:
     return refs
 
 
+def disclosed_sources(sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Reduce recorded artifact records to their disclosed form.
+
+    The chain of custody is served to a browser, so each recorded artifact keeps
+    its role, digest, size and record count but loses its host path: the
+    repository-relative form survives when the artifact is inside the repository
+    (the most useful form for a client) and everything else collapses to a
+    basename. The redaction is the API's existing disclosure policy applied once,
+    at the boundary, so the custody layer itself needs no knowledge of the
+    filesystem.
+    """
+    disclosed: List[Dict[str, Any]] = []
+    for source in sources or ():
+        if not isinstance(source, dict):
+            continue
+        item = dict(source)
+        path = item.pop("path", None)
+        item["public_path"] = public_path(path, repo_root=artifacts.REPO_ROOT)
+        disclosed.append(item)
+    return disclosed
+
+
+@dataclass(frozen=True)
+class CustodyInput:
+    """The authoritative objects one assessment's chain of custody is built from.
+
+    Retained alongside the serialized bundle because the bundle is a view, not
+    the source: a custody chain must quote the real ``ExpectedState``,
+    ``CorrelationResult``, ``RiskAssessment`` and response recommendation objects
+    that the pipeline produced, not a re-parse of the view. Holding them lets
+    :meth:`AssessmentStore.chain_of_custody` answer a request without re-running
+    any stage, which is what keeps the read-only guarantee true.
+    """
+
+    assessment_id: str
+    expected: Any
+    observed: ObservedState
+    correlation: Any
+    assessment: Any
+    xai: Any
+    ml_result: Optional[MLResult]
+    evidence_refs: Tuple[EvidenceRef, ...]
+    sources: Tuple[Dict[str, Any], ...]
+    #: ``False`` when no observed state was supplied, so the chain can say so.
+    observed_present: bool
+    #: The reused response plan, planned once with ``clock=None``.
+    response_plan: Any
+
+
 def _scenario_label(slot: str, sequence: int, posture: Optional[str],
                     case: Optional[RecordedCase] = None) -> str:
     """What each scenario actually is, named for the artifact behind it."""
@@ -338,6 +412,8 @@ class AssessmentStore:
         self.overview: Dict[str, Any] = {}
         self.store: Dict[str, Any] = {}
         self.sources: List[Dict[str, Any]] = []
+        #: Authoritative pipeline objects per assessment, for the custody layer.
+        self.custody_inputs: Dict[str, CustodyInput] = {}
         self._build()
 
     # -- lifecycle ----------------------------------------------------------
@@ -430,13 +506,46 @@ class AssessmentStore:
         )
         # The artifacts this bundle was actually built from, with their digests.
         sources: List[Dict[str, Any]] = []
+        custody_sources: List[Dict[str, Any]] = []
         if observation is not None:
             sources.extend(observation.provenance())
+            custody_sources.extend(observation.custody_provenance())
         if ml_evidence is not None:
             sources.extend(artifacts.provenance(ml_evidence.record))
+            custody_sources.extend(
+                {**item, "role": "ml_output", "name": "recorded-ml-window"}
+                for item in artifacts.provenance(ml_evidence.record)
+            )
         bundle["sources"] = sources
         self.bundles[assessment_id] = bundle
         self.headers.append(header_view(bundle))
+        # The custody layer reuses the reused response planner rather than
+        # inventing a recommendation. ``clock=None`` keeps the plan free of any
+        # wall-clock reading, so it is byte-identical across runs. The plan is
+        # produced once here, at build time, alongside everything else.
+        self.custody_inputs[assessment_id] = CustodyInput(
+            assessment_id=assessment_id,
+            expected=expected,
+            observed=observed,
+            correlation=correlation,
+            assessment=assessment,
+            xai=xai,
+            ml_result=ml_result,
+            evidence_refs=tuple(evidence_refs),
+            sources=tuple(disclosed_sources(custody_sources)),
+            observed_present=observation is not None,
+            response_plan=plan_response(
+                PlanningContext(
+                    assessment=assessment,
+                    xai=xai,
+                    correlation=correlation,
+                    ml_result=ml_result,
+                    evidence_refs=tuple(evidence_refs),
+                    policy=ResponsePolicy.default(),
+                ),
+                clock=None,
+            ),
+        )
         return bundle
 
     def _build(self) -> None:
@@ -722,6 +831,67 @@ class AssessmentStore:
             "overview": dict(self.overview),
             "headers": [dict(h) for h in self.headers],
         }
+
+    # -- chain of custody ----------------------------------------------------
+
+    def chain_of_custody(
+        self,
+        assessment_id: str,
+        finding_id: str,
+        *,
+        audit_event_ids: Tuple[str, ...] = (),
+        evidence_root: Optional[str] = None,
+        verify_evidence: bool = True,
+    ) -> ChainOfCustody:
+        """The custody chain for one finding of one assessment.
+
+        Raises :class:`KeyError` for an unknown assessment or a finding that
+        assessment never produced -- a finding id repeats across assessments, so
+        resolving the pair strictly is what keeps one assessment's decision from
+        being explained with another's evidence.
+
+        No stage is re-run here. Every value is read from the objects the real
+        pipeline produced during :meth:`_build`, so serving a chain performs no
+        detection, writes nothing and dispatches nothing.
+
+        ``verify_evidence=False`` skips the artifact re-hash and reports each
+        evidence link as ``not_performed`` rather than as verified.
+        """
+        held = self.custody_inputs.get(assessment_id)
+        if held is None:
+            raise KeyError(assessment_id)
+        finding = next(
+            (
+                item
+                for item in held.assessment.findings
+                if item.finding_id == finding_id
+            ),
+            None,
+        )
+        if finding is None:
+            raise KeyError(f"{assessment_id}:{finding_id}")
+        recommendation = next(
+            (
+                item
+                for item in held.response_plan.recommendations
+                if item.finding_id == finding_id
+            ),
+            None,
+        )
+        return build_chain_of_custody(
+            assessment_id=assessment_id,
+            finding=finding,
+            assessment=held.assessment,
+            correlation=held.correlation,
+            expected=held.expected,
+            observed=held.observed,
+            recommendation=recommendation,
+            sources=held.sources,
+            audit_event_ids=audit_event_ids,
+            evidence_root=evidence_root,
+            observed_present=held.observed_present,
+            verify_evidence=verify_evidence,
+        )
 
 
 def build_store(plan_path: str = PLAN_PATH) -> AssessmentStore:

@@ -50,6 +50,12 @@ class ApiError(Exception):
 
     ``request_id`` is filled in by the transport when it is absent, so handler
     code stays transport-agnostic and is still unit testable.
+
+    ``extra`` adds machine-readable fields to the error object (e.g. the
+    candidate ids that made a lookup ambiguous).  It is merged before
+    ``request_id`` and can never overwrite ``code``/``message``/``detail``, so a
+    handler cannot disguise an error by setting one of those.  Callers that pass
+    nothing extra produce the byte-identical payload they always did.
     """
 
     def __init__(
@@ -58,20 +64,29 @@ class ApiError(Exception):
         code: str,
         detail: str,
         request_id: Optional[str] = None,
+        extra: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__(detail)
         self.status = status
         self.code = code
         self.detail = detail
         self.request_id = request_id
+        self.extra: Dict[str, Any] = dict(extra or {})
 
     def payload(self, request_id: Optional[str] = None) -> Dict[str, Any]:
         rid = self.request_id or request_id
         error: Dict[str, Any] = {
-            "code": self.code,
-            "message": self.detail,
-            "detail": self.detail,
+            key: value
+            for key, value in self.extra.items()
+            if key not in ("code", "message", "detail", "request_id")
         }
+        error.update(
+            {
+                "code": self.code,
+                "message": self.detail,
+                "detail": self.detail,
+            }
+        )
         if rid:
             error["request_id"] = rid
         return {"error": error}

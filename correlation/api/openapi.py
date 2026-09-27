@@ -350,6 +350,94 @@ def openapi_document(base_url: str = "") -> Dict[str, Any]:
             _param("model_version", "query", _STR, "Filter by ML model version."),
         ],
         responses=_paged())
+    paths["/api/v1/assessments/{id}/findings/{finding_id}/explanation"] = _get(
+        "/api/v1/assessments/{id}/findings/{finding_id}/explanation",
+        "getAssessmentFindingExplanation",
+        "Chain of custody for one finding of one assessment.",
+        tags=["findings", "custody"],
+        description=(
+            "The audit view of one decision: the rule that fired, the "
+            "observed/expected/derived/recommended facts with their authority "
+            "stated, the content-addressed evidence with live integrity results, "
+            "the ordered derivation steps, and the integrity checks.\n\n"
+            "A finding id is NOT unique -- the same id is raised by several "
+            "assessments -- so the (assessment, finding) pair addresses the "
+            "decision. A finding id that exists in a different assessment is a "
+            "404 here, never that other assessment's evidence.\n\n"
+            "Read-only and derived: the chain quotes the Phase-3/4/6/7 objects "
+            "the pipeline already produced. It runs no detection, changes no "
+            "score, creates no evidence, proposes no control of its own, and "
+            "applies nothing. `recommendation.applied` is always `false` and the "
+            "model rejects any other value.\n\n"
+            "Observation honesty: a variable the sensor cannot observe is "
+            "reported with `value: null`, the comparison engine's own reason, an "
+            "`observation.authoritative_value_present` check of status "
+            "`unavailable`, and a matching entry in `limitations`. Nothing is "
+            "substituted from the plan or from a model.\n\n"
+            "Determinism: no wall clock, no random ids. `determinism."
+            "filesystem_dependent_fields` lists the fields that can change if an "
+            "artifact on disk changes, so a byte-diff can be attributed."
+        ),
+        params=[
+            _param("id", "path", _STR, "Assessment id.", required=True),
+            _param("finding_id", "path", _STR, "Finding id.", required=True),
+            _param("verify", "query", _STR,
+                   "Set to `0`, `false`, `no` or `off` to skip the read-only "
+                   "artifact re-hash. Any other value (including `true`, and the "
+                   "absent default) re-hashes every referenced artifact. The "
+                   "recorded digests are always served either way; a skipped "
+                   "re-hash is reported as `verification.performed: false` and "
+                   "every evidence link as `not_performed`, so it is never "
+                   "mistaken for a passed check."),
+        ],
+        responses={
+            "200": {
+                "description": "The chain of custody.",
+                "content": {_JSON: {"schema": _ref("ChainOfCustody")}},
+            },
+            **_ERROR_RESPONSES,
+        })
+    paths["/api/v1/findings/{finding_id}/explanation"] = _get(
+        "/api/v1/findings/{finding_id}/explanation",
+        "getFindingExplanation",
+        "Chain of custody for a finding id, disambiguated by ?assessment_id=.",
+        tags=["findings", "custody"],
+        description=(
+            "Same document as the nested route, addressed by finding id alone.\n\n"
+            "Because a finding id is raised by more than one assessment, this "
+            "route answers `409 finding_ambiguous` and lists the candidate "
+            "assessment ids rather than guessing. Re-request with "
+            "`?assessment_id=<id>`, or use the nested route. Merging the "
+            "candidates would invent a decision no assessment made, and "
+            "returning the first would attach one capture's evidence to another "
+            "capture's finding."
+        ),
+        params=[
+            _param("finding_id", "path", _STR, "Finding id.", required=True),
+            _param("assessment_id", "query", _STR,
+                   "Disambiguator. Required when the finding id occurs in more "
+                   "than one assessment."),
+            _param("verify", "query", _STR,
+                   "Set to `0`, `false`, `no` or `off` to skip the read-only "
+                   "artifact re-hash; the default re-hashes every referenced "
+                   "artifact. A skipped re-hash is reported as "
+                   "`verification.performed: false` and every evidence link as "
+                   "`not_performed`."),
+        ],
+        responses={
+            "200": {
+                "description": "The chain of custody.",
+                "content": {_JSON: {"schema": _ref("ChainOfCustody")}},
+            },
+            "409": {
+                "description": (
+                    "The finding id is not unique. `error.candidates` lists the "
+                    "assessment ids that produced it."
+                ),
+                "content": {_JSON: {"schema": _ref("Error")}},
+            },
+            **_ERROR_RESPONSES,
+        })
 
     return {
         "openapi": OPENAPI_VERSION,
@@ -392,6 +480,7 @@ def openapi_document(base_url: str = "") -> Dict[str, Any]:
             {"name": "governance", "description": "The governance decision ledger."},
             {"name": "discovery", "description": "Enumerating what exists, for state restoration."},
             {"name": "findings", "description": "Backend-produced risk findings, read-only."},
+            {"name": "custody", "description": "Chain of custody and integrity checks for a finding."},
         ],
         "paths": paths,
         "components": {
@@ -451,8 +540,315 @@ def openapi_document(base_url: str = "") -> Dict[str, Any]:
                         },
                     },
                 },
+                "ChainOfCustody": {
+                    "type": "object",
+                    "description": (
+                        "The deterministic, read-only audit view of exactly one "
+                        "decision, identified by (assessment_id, finding_id). "
+                        "Every value is copied from an object the pipeline "
+                        "already produced, or is a SHA-256 over canonical JSON "
+                        "of one. Contains no PCAP bytes, no artifact payload and "
+                        "no absolute host path."
+                    ),
+                    "required": [
+                        # Every key below is emitted on every response, so a client
+                        # may rely on its presence without a defaulting branch.
+                        # Keys whose value may be null are marked nullable below.
+                        "schema_version", "component", "assessment_id",
+                        "finding_id", "finding_digest", "severity", "rule",
+                        "facts", "steps", "evidence", "sources", "integrity",
+                        "recommendation", "limitations", "audit_event_ids",
+                        "audit_linkage_status", "read_only",
+                    ],
+                    "properties": {
+                        "schema_version": _STR,
+                        "component": _STR,
+                        "component_version": _STR,
+                        "read_only": {
+                            "type": "boolean",
+                            "const": True,
+                            "description": "Always true; this API exposes no mutation route.",
+                        },
+                        "assessment_id": {
+                            **_STR,
+                            "description": (
+                                "Half of the decision's identity. A finding id "
+                                "repeats across assessments, so the pair is the key."
+                            ),
+                        },
+                        "finding_id": _STR,
+                        "finding_digest": {
+                            **_STR,
+                            "description": (
+                                "SHA-256 over the canonical JSON of the "
+                                "authoritative RiskFinding. Recompute it to detect "
+                                "an edited finding."
+                            ),
+                        },
+                        "title": _STR,
+                        "summary": _STR,
+                        "category": _STR,
+                        "severity": _STR,
+                        "risk_score": {"type": "integer", "minimum": 0, "maximum": 100},
+                        "risk_severity": _STR,
+                        "risk_policy_version": _STR,
+                        "risk_engine_version": _STR,
+                        "identity": {"type": "object", "description": "CorrelationIdentity of the assessment."},
+                        "rule": {
+                            "type": "object",
+                            "description": (
+                                "Which rule fired, copied from the rule registry. "
+                                "`registered` is true only when the exact rule id is "
+                                "a registry key; `base_rule_id` names the registered "
+                                "rule a per-variable id was specialised from."
+                            ),
+                            "properties": {
+                                "rule_id": _STR,
+                                "finding_id": _STR,
+                                "registered": {"type": "boolean"},
+                                "base_rule_id": {"type": "string", "nullable": True},
+                                "source_variable": {"type": "string", "nullable": True},
+                                "authoritative_source": {"type": "string", "nullable": True},
+                                "condition": {"type": "string", "nullable": True},
+                                "evidence_requirement": {"type": "string", "nullable": True},
+                                "unknown_handling": {"type": "string", "nullable": True},
+                                "dedup_behavior": {"type": "string", "nullable": True},
+                                "severity": {"type": "string", "nullable": True},
+                                "score_contribution": {"type": "integer", "nullable": True},
+                                "traceability": {"type": "object"},
+                            },
+                        },
+                        "facts": {
+                            "type": "array",
+                            "description": (
+                                "Sorted by fact_id. `category` says where the value "
+                                "came from; `authority` says what may be relied on. "
+                                "Only OBSERVED and EXPECTED are authoritative -- a "
+                                "planned value is authoritative about intent, never "
+                                "about what happened, and neither a model verdict nor "
+                                "a policy proposal is authoritative at all."
+                            ),
+                            "items": {
+                                "type": "object",
+                                "required": ["fact_id", "category", "authority", "value", "source"],
+                                "properties": {
+                                    "fact_id": _STR,
+                                    "category": {
+                                        "type": "string",
+                                        "enum": ["OBSERVED", "EXPECTED", "DERIVED", "RECOMMENDED"],
+                                    },
+                                    "authority": {
+                                        "type": "string",
+                                        "enum": [
+                                            "authoritative_observation",
+                                            "authoritative_plan",
+                                            "derived_non_authoritative",
+                                            "proposed_non_authoritative",
+                                        ],
+                                    },
+                                    "authoritative": {"type": "boolean"},
+                                    "label": _STR,
+                                    "value": {"description": "Copied verbatim from the source object; may be null."},
+                                    "value_digest": {
+                                        "type": "string",
+                                        "nullable": True,
+                                        "description": "SHA-256 over the canonical JSON of `value`.",
+                                    },
+                                    "source": {
+                                        **_STR,
+                                        "description": "The exact domain field the value was copied from.",
+                                    },
+                                    "detail": {"type": "string", "nullable": True},
+                                    "evidence_ids": {
+                                        "type": "array",
+                                        "items": _STR,
+                                        "description": "Stable evidence ids. Never paths, never payloads.",
+                                    },
+                                },
+                            },
+                        },
+                        "steps": {
+                            "type": "array",
+                            "description": (
+                                "The ordered derivation, as the pipeline stages ran it. "
+                                "A stage that produced nothing is still listed with an "
+                                "outcome saying so. `authoritative` marks the decision path; "
+                                "the XAI and response-planning steps are non-authoritative."
+                            ),
+                            "items": {
+                                "type": "object",
+                                "required": ["index", "stage", "component", "action", "authoritative"],
+                                "properties": {
+                                    "index": {"type": "integer", "minimum": 1},
+                                    "stage": _STR,
+                                    "component": _STR,
+                                    "action": _STR,
+                                    "authoritative": {"type": "boolean"},
+                                    "inputs": {"type": "array", "items": _STR},
+                                    "outcome": {"type": "string", "nullable": True},
+                                },
+                            },
+                        },
+                        "evidence": {
+                            "type": "array",
+                            "description": (
+                                "Sorted by evidence_id. Identity and digests only: the "
+                                "artifact is never inlined and its path is never emitted."
+                            ),
+                            "items": {
+                                "type": "object",
+                                "required": ["evidence_id", "verifiable"],
+                                "properties": {
+                                    "evidence_id": _STR,
+                                    "artifact_type": {"type": "string", "nullable": True},
+                                    "artifact_sha256": {"type": "string", "nullable": True},
+                                    "byte_size": {"type": "integer", "nullable": True},
+                                    "verifiable": {"type": "boolean"},
+                                    "verification_status": {
+                                        "type": "string",
+                                        "nullable": True,
+                                        "enum": ["valid", "unavailable", "invalid", "unverified",
+                                                 "not_performed", None],
+                                    },
+                                    "verification_detail": {"type": "string", "nullable": True},
+                                    "artifact_present": {
+                                        "type": "boolean",
+                                        "nullable": True,
+                                        "description": (
+                                            "Null when the artifact was not looked "
+                                            "for, so an unchecked file is never "
+                                            "reported as a verified absence."
+                                        ),
+                                    },
+                                    "actual_sha256": {"type": "string", "nullable": True},
+                                    "attached_by": {"type": "array", "items": _STR},
+                                },
+                            },
+                        },
+                        "sources": {
+                            "type": "array",
+                            "description": (
+                                "The recorded input artifacts with their digests. "
+                                "`public_path` has already been reduced by the API's "
+                                "disclosure policy; an artifact outside the repository "
+                                "collapses to a basename."
+                            ),
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "role": _STR,
+                                    "public_path": {"type": "string", "nullable": True},
+                                    "artifact_sha256": {"type": "string", "nullable": True},
+                                    "byte_size": {"type": "integer", "nullable": True},
+                                    "record_count": {"type": "integer", "nullable": True},
+                                    "detail": {"type": "object"},
+                                },
+                            },
+                        },
+                        "integrity": {
+                            "type": "array",
+                            "description": (
+                                "Machine-evaluable checks, each phrased as a comparison "
+                                "so a client can run it itself. A check that could not be "
+                                "evaluated is `unavailable`, never `pass`; `invalid` "
+                                "evidence is reported as `fail` and never repaired."
+                            ),
+                            "items": {
+                                "type": "object",
+                                "required": ["check_id", "description", "status", "detail", "passed"],
+                                "properties": {
+                                    "check_id": _STR,
+                                    "description": _STR,
+                                    "status": {
+                                        "type": "string",
+                                        "enum": ["pass", "fail", "unavailable", "not_applicable"],
+                                    },
+                                    "passed": {"type": "boolean"},
+                                    "detail": _STR,
+                                    "observed": {"description": "What the check compared."},
+                                    "expected": {"description": "What it was compared against."},
+                                    "client_verifiable": {"type": "boolean"},
+                                },
+                            },
+                        },
+                        "recommendation": {
+                            "type": "object",
+                            "nullable": True,
+                            "description": (
+                                "The response-policy proposal, copied from the reused "
+                                "planner. `applied` is always false: this API has no route "
+                                "that could apply it."
+                            ),
+                            "properties": {
+                                "recommendation_id": {"type": "string", "nullable": True},
+                                "action": {"type": "string", "nullable": True},
+                                "priority": {"type": "string", "nullable": True},
+                                "policy_version": {"type": "string", "nullable": True},
+                                "reason": {"type": "string", "nullable": True},
+                                "rationale": {"type": "string", "nullable": True},
+                                "authorization_required": {"type": "boolean", "nullable": True},
+                                "approval_required": {"type": "boolean", "nullable": True},
+                                "required_roles": {"type": "array", "items": _STR},
+                                "limitations": {"type": "array", "items": _STR},
+                                "applied": {"type": "boolean", "const": False},
+                                "derived_by": _STR,
+                            },
+                        },
+                        "audit_event_ids": {
+                            "type": "array",
+                            "items": _STR,
+                            "description": "Content-addressed audit events for this assessment; may be empty.",
+                        },
+                        "audit_linkage_status": {
+                            "type": "string",
+                            "enum": ["linked", "unavailable"],
+                        },
+                        "limitations": {
+                            "type": "array",
+                            "items": _STR,
+                            "description": "What this chain does not establish. Stated as data, never omitted.",
+                        },
+                        "determinism": {
+                            "type": "object",
+                            "description": (
+                                "How to reproduce the document byte for byte, and which "
+                                "fields legitimately change when an artifact on disk changes."
+                            ),
+                            "properties": {
+                                "deterministic": {"type": "boolean", "const": True},
+                                "reads_wall_clock": {"type": "boolean", "const": False},
+                                "generates_random_ids": {"type": "boolean", "const": False},
+                                "order": _STR,
+                                "digest_algorithm": _STR,
+                                "canonical_json": _STR,
+                                "filesystem_dependent_fields": {
+                                    "type": "array",
+                                    "items": _STR,
+                                    "description": "The only fields a byte-diff can legitimately blame on disk state.",
+                                },
+                            },
+                        },
+                        "api": {"type": "string", "const": "custody.v1"},
+                        "route": {"type": "string"},
+                        "read_only": {"type": "boolean", "const": True},
+                        "verification": {
+                            "type": "object",
+                            "description": (
+                                "Added by the transport. `performed: false` means "
+                                "the artifact re-hash genuinely did not run, and "
+                                "every evidence link then carries "
+                                "`not_performed` rather than `valid`."
+                            ),
+                            "required": ["performed", "reason"],
+                            "properties": {
+                                "performed": {"type": "boolean"},
+                                "reason": _STR,
+                            },
+                        },
+                    },
             }
         },
+    }
     }
 
 

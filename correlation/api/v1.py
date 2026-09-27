@@ -15,6 +15,10 @@ Complements the Phase-8 contract WITHOUT touching it:
     GET /api/v1/audit/runs                  -> per-run audit summaries
     GET /api/v1/runs/{run_id}/audit         -> ordered audit trail for a run
     GET /api/v1/governance[/{event_id}]     -> persisted governance chain
+    GET /api/v1/assessments/{id}/findings/{fid}/explanation -> finding custody chain
+    GET /api/v1/findings/{finding_id}/explanation -> the same, disambiguated by
+                                              ?assessment_id= (409 when the
+                                              finding id is not unique)
 
 The audit surface is a QUERY layer over the existing
 ``correlation.audit.AuditJournal``: it reads persisted records and returns them
@@ -34,6 +38,10 @@ from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
 
 from .audit_routes import handle_audit_get, is_audit_path
+from .custody_routes import (
+    handle_assessment_finding_explanation,
+    handle_finding_explanation,
+)
 from .discovery import (
     handle_assessment_findings,
     handle_assessment_v1,
@@ -72,6 +80,10 @@ RUNS_PREFIX = "/api/v1/runs/"
 ASSESSMENTS_PATH = "/api/v1/assessments"
 ASSESSMENTS_PREFIX = "/api/v1/assessments/"
 FINDINGS_PATH = "/api/v1/findings"
+FINDINGS_PREFIX = "/api/v1/findings/"
+#: Sub-resource of one finding inside one assessment. A finding id repeats
+#: across assessments, so the chain is addressed by the pair.
+FINDING_EXPLANATION_SUFFIX = "/explanation"
 OPENAPI_PATH = "/api/v1/openapi.json"
 DOCS_PATH = "/api/v1/docs"
 
@@ -258,7 +270,20 @@ def handle_v1_get(
         remainder = path[len(ASSESSMENTS_PREFIX):]
         if not remainder:
             raise ApiError(404, "invalid_route", f"unknown route {path!r}")
-        if remainder.endswith("/findings"):
+        if remainder.endswith(FINDING_EXPLANATION_SUFFIX):
+            # /api/v1/assessments/{assessment_id}/findings/{finding_id}/explanation
+            head = remainder[: -len(FINDING_EXPLANATION_SUFFIX)]
+            assessment_id, _, finding_id = head.partition("/findings/")
+            if assessment_id and finding_id and "/" not in assessment_id \
+                    and "/" not in finding_id:
+                return (
+                    handle_assessment_finding_explanation(
+                        _store_or_503(store), assessment_id, finding_id, params,
+                        audit_store=getattr(context, "audit_store", None),
+                    ),
+                    CONTENT_TYPE_JSON,
+                )
+        elif remainder.endswith("/findings"):
             assessment_id = remainder[: -len("/findings")]
             if assessment_id and "/" not in assessment_id:
                 return (
@@ -272,6 +297,20 @@ def handle_v1_get(
         raise ApiError(404, "unknown_route", f"unknown route {path!r}")
     if path == FINDINGS_PATH:
         return handle_findings(_store_or_503(store), params), CONTENT_TYPE_JSON
+    if path.startswith(FINDINGS_PREFIX):
+        # /api/v1/findings/{finding_id}/explanation
+        remainder = path[len(FINDINGS_PREFIX):]
+        if remainder.endswith(FINDING_EXPLANATION_SUFFIX):
+            finding_id = remainder[: -len(FINDING_EXPLANATION_SUFFIX)]
+            if finding_id and "/" not in finding_id:
+                return (
+                    handle_finding_explanation(
+                        _store_or_503(store), finding_id, params,
+                        audit_store=getattr(context, "audit_store", None),
+                    ),
+                    CONTENT_TYPE_JSON,
+                )
+        raise ApiError(404, "unknown_route", f"unknown route {path!r}")
     raise ApiError(404, "unknown_route", f"unknown route {path!r}")
 
 
