@@ -64,6 +64,7 @@ from .models import (
     CUSTODY_COMPONENT,
     CUSTODY_COMPONENT_VERSION,
     CUSTODY_SCHEMA_VERSION,
+    FACT_CONFIGURED,
     FACT_DERIVED,
     FACT_EXPECTED,
     FACT_OBSERVED,
@@ -451,6 +452,191 @@ def _build_facts(
         )
 
     return sorted(facts, key=lambda fact: fact.fact_id)
+
+
+def _build_mission_facts(context: Any) -> List[CustodyFact]:
+    """Facts for the declared asset context, filed as CONFIGURED or DERIVED.
+
+    ``role``, ``criticality`` and ``mission_impact`` are operator declarations,
+    so they are filed under ``CONFIGURED`` and can never be cited as evidence
+    that something was observed. The contextualized score is arithmetic over the
+    technical score and those declarations, so it is filed as ``DERIVED``.
+
+    Returns an empty list when there is no configured context: an absent profile
+    contributes no facts at all, rather than facts saying "unknown".
+    """
+    if context is None or not getattr(context, "configured", False):
+        return []
+    profile = context.profile
+    risk = context.risk
+    source = (
+        f"{context.context_source} ({context.context_source_path} "
+        f"sha256:{context.context_source_sha256})"
+    )
+    declared = (
+        ("asset.asset_id", profile.asset_id),
+        ("asset.criticality", profile.criticality),
+        ("asset.mission_impact", profile.mission_impact),
+        ("asset.role", profile.role),
+    )
+    facts = [
+        CustodyFact(
+            fact_id=fact_id,
+            category=FACT_CONFIGURED,
+            label=f"declared {fact_id.split('.', 1)[1]} for asset {profile.asset_id}",
+            value=value,
+            source=source,
+            detail=(
+                f"declared by an operator in the asset mission profile "
+                f"({context.context_source_path}); this is assessment input, not "
+                f"an observation, and nothing in the capture supports or refutes it"
+            ),
+            value_digest=canonical_digest(value),
+        )
+        for fact_id, value in declared
+    ]
+    facts.append(
+        CustodyFact(
+            fact_id="configured.context_source",
+            category=FACT_CONFIGURED,
+            label="provenance of the declared mission context",
+            value=context.context_source,
+            source=context.context_source_path or context.context_source,
+            detail=(
+                f"mission context was supplied by {source}; it is external "
+                f"assessment input and was not inferred from traffic, addresses, "
+                f"payloads or model output"
+            ),
+            value_digest=canonical_digest(context.context_source),
+        )
+    )
+    if risk is not None:
+        facts.append(
+            CustodyFact(
+                fact_id="derived.contextualized_risk",
+                category=FACT_DERIVED,
+                label="contextualized risk for the declared asset context",
+                value=risk.contextualized_risk,
+                source=(
+                    f"{context.context_source} via {risk.model_version} "
+                    f"({context.context_source_path})"
+                ),
+                detail=(
+                    f"technical risk {risk.technical_risk} "
+                    f"({risk.technical_severity}) with a {risk.multiplier_bp} bp "
+                    f"context multiplier: {risk.formula}; the multiplier comes "
+                    f"from the operator-declared profile, this value is derived "
+                    f"from declared context and is not an observation, and the "
+                    f"technical risk is unchanged by it"
+                ),
+                value_digest=canonical_digest(risk.contextualized_risk),
+            )
+        )
+    return facts
+
+
+def _mission_integrity(context: Any, technical_risk: int) -> List[CustodyIntegrityCheck]:
+    """Checks on the declared context, emitted only when context exists.
+
+    With no profile there is nothing to check, so no check is added and the
+    chain's existing integrity set is byte-identical to a chain built before
+    mission context existed.
+    """
+    if context is None or not getattr(context, "configured", False):
+        return []
+    profile = context.profile
+    risk = context.risk
+    checks = [
+        CustodyIntegrityCheck(
+            check_id="mission.context_declared",
+            description=(
+                "the asset role, criticality and mission impact come from a "
+                "declared operator profile, not from the capture"
+            ),
+            status=CHECK_PASS,
+            detail=(
+                f"asset {profile.asset_id!r} resolved from "
+                f"{context.context_source_path} "
+                f"(sha256:{context.context_source_sha256}); role={profile.role}, "
+                f"criticality={profile.criticality}, "
+                f"mission_impact={profile.mission_impact}; no mission value was "
+                f"derived from observed traffic, addresses, payloads or ML output"
+            ),
+            observed={
+                "asset_id": profile.asset_id,
+                "role": profile.role,
+                "criticality": profile.criticality,
+                "mission_impact": profile.mission_impact,
+            },
+            expected={
+                "source": context.context_source,
+                "source_path": context.context_source_path,
+                "source_sha256": context.context_source_sha256,
+            },
+            client_verifiable=True,
+        )
+    ]
+    if risk is not None:
+        bounded = (
+            0 <= risk.contextualized_risk <= risk.score_cap
+            and risk.technical_risk == technical_risk
+            and risk.contextualized_risk >= risk.technical_risk
+        )
+        checks.append(
+            CustodyIntegrityCheck(
+                check_id="mission.risk_preserves_technical",
+                description=(
+                    "the contextualized risk is bounded by the existing technical "
+                    "scale, is never below the technical risk, and did not change "
+                    "it"
+                ),
+                status=CHECK_PASS if bounded else CHECK_FAIL,
+                detail=(
+                    f"technical risk {risk.technical_risk} is unchanged; "
+                    f"contextualized risk {risk.contextualized_risk} lies within "
+                    f"[0, {risk.score_cap}] using a {risk.multiplier_bp} bp "
+                    f"multiplier ({risk.model_version})"
+                    if bounded
+                    else (
+                        f"contextualized risk {risk.contextualized_risk} is not a "
+                        f"bounded, non-decreasing view of technical risk "
+                        f"{risk.technical_risk}"
+                    )
+                ),
+                observed={
+                    "technical_risk": risk.technical_risk,
+                    "contextualized_risk": risk.contextualized_risk,
+                    "multiplier_bp": risk.multiplier_bp,
+                },
+                expected={
+                    "score_cap": risk.score_cap,
+                    "technical_risk_unchanged": technical_risk,
+                    "model_version": risk.model_version,
+                },
+                client_verifiable=True,
+            )
+        )
+    return checks
+
+
+def _mission_limitations(context: Any) -> List[str]:
+    """What the declared context does and does not establish."""
+    if context is None:
+        return []
+    if not getattr(context, "configured", False):
+        return [
+            f"{context.reason}; no asset role, criticality or mission impact is "
+            f"asserted, and no mission-contextualized risk is available for this "
+            f"finding"
+        ]
+    profile = context.profile
+    return [
+        f"asset role ({profile.role}), criticality ({profile.criticality}) and "
+        f"mission impact ({profile.mission_impact}) are operator-declared "
+        f"assessment context from {context.context_source_path}; they are not "
+        f"observations, are not derived from traffic, addresses, payloads or ML "
+        f"output, and the technical risk and severity are unchanged by them",
+    ]
 
 
 def _build_steps(
@@ -1120,6 +1306,7 @@ def build_chain_of_custody(
     evidence_root: Optional[str] = None,
     observed_present: bool = True,
     verify_evidence: bool = True,
+    mission_context: Optional[Any] = None,
 ) -> ChainOfCustody:
     """Assemble the chain for one finding of one assessment.
 
@@ -1135,6 +1322,11 @@ def build_chain_of_custody(
     ``verify_evidence=False`` is the documented opt-out of that filesystem read.
     It serves the recorded digests and reports every one of them as
     ``not_performed``, so a skipped check can never be mistaken for a passed one.
+
+    ``mission_context`` is externally supplied asset context (a
+    :class:`correlation.mission.contextualize.MissionContext`). It is passed
+    through and filed under the ``CONFIGURED`` category; this layer performs no
+    contextualisation arithmetic and reads no traffic-derived value from it.
 
     Every other parameter is a read. Nothing is written, dispatched or mutated,
     and no new detection, comparison or severity is produced here.
@@ -1189,14 +1381,18 @@ def build_chain_of_custody(
         risk_engine_version=assessment.risk_engine_version,
         identity=assessment.identity.to_dict(),
         rule=_rule_ref(finding),
-        facts=tuple(
-            _build_facts(
-                finding=finding,
-                assessment=assessment,
-                outcomes=outcomes,
-                expected=expected,
-                recommendation=recommendation,
-            )
+        facts=sorted(
+            [
+                *_build_facts(
+                    finding=finding,
+                    assessment=assessment,
+                    outcomes=outcomes,
+                    expected=expected,
+                    recommendation=recommendation,
+                ),
+                *_build_mission_facts(mission_context),
+            ],
+            key=lambda fact: fact.fact_id,
         ),
         steps=_build_steps(
             finding=finding,
@@ -1209,14 +1405,19 @@ def build_chain_of_custody(
         ),
         evidence=links,
         sources=provenance_sources,
-        integrity=_build_integrity(
-            finding=finding,
-            assessment=assessment,
-            outcomes=outcomes,
-            links=links,
-            statuses=statuses,
-            sources=sources,
-            audit_event_ids=audit_ids,
+        integrity=tuple(
+            [
+                *_build_integrity(
+                    finding=finding,
+                    assessment=assessment,
+                    outcomes=outcomes,
+                    links=links,
+                    statuses=statuses,
+                    sources=sources,
+                    audit_event_ids=audit_ids,
+                ),
+                *_mission_integrity(mission_context, assessment.overall_score),
+            ]
         ),
         recommendation=(
             CustodyRecommendation(
@@ -1236,15 +1437,20 @@ def build_chain_of_custody(
         ),
         audit_event_ids=audit_ids,
         audit_linkage_status=AUDIT_LINKED if audit_ids else AUDIT_UNAVAILABLE,
-        limitations=_limitations(
-            finding=finding,
-            expected=expected,
-            observed_present=observed_present,
-            outcomes=outcomes,
-            links=links,
-            sources=sources,
-            audit_event_ids=audit_ids,
-            recommendation=recommendation,
+        limitations=tuple(
+            [
+                *_limitations(
+                    finding=finding,
+                    expected=expected,
+                    observed_present=observed_present,
+                    outcomes=outcomes,
+                    links=links,
+                    sources=sources,
+                    audit_event_ids=audit_ids,
+                    recommendation=recommendation,
+                ),
+                *_mission_limitations(mission_context),
+            ]
         ),
         determinism={
             "deterministic": True,
@@ -1265,5 +1471,10 @@ def build_chain_of_custody(
                 "integrity[evidence.artifact_digests].observed",
             ],
         },
+        mission_context=(
+            dict(mission_context.to_dict())
+            if mission_context is not None
+            else None
+        ),
         read_only=True,
     )

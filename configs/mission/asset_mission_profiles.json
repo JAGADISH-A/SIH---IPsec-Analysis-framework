@@ -1,0 +1,17 @@
+{
+  "schema_version": "v1",
+  "assets": {
+    "gw-a": {
+      "asset_id": "gw-a",
+      "role": "development",
+      "criticality": "low",
+      "mission_impact": "low"
+    },
+    "gw-b": {
+      "asset_id": "gw-b",
+      "role": "operational-communications",
+      "criticality": "high",
+      "mission_impact": "high"
+    }
+  }
+}

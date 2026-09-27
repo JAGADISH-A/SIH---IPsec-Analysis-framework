@@ -75,11 +75,18 @@ FACT_OBSERVED = "OBSERVED"
 FACT_EXPECTED = "EXPECTED"
 FACT_DERIVED = "DERIVED"
 FACT_RECOMMENDED = "RECOMMENDED"
+#: Declared, operator-supplied assessment context (asset role, criticality,
+#: mission impact). Not an observation and never in
+#: :data:`AUTHORITATIVE_CATEGORIES`: configured context may shape a
+#: contextualised risk number, but it can never be cited as evidence that
+#: something was seen on the wire.
+FACT_CONFIGURED = "CONFIGURED"
 FACT_CATEGORIES: Tuple[str, ...] = (
     FACT_OBSERVED,
     FACT_EXPECTED,
     FACT_DERIVED,
     FACT_RECOMMENDED,
+    FACT_CONFIGURED,
 )
 
 # ---- authority levels -------------------------------------------------------
@@ -91,12 +98,16 @@ AUTHORITY_PLAN = "authoritative_plan"
 AUTHORITY_DERIVED = "derived_non_authoritative"
 #: A control proposal. Not a decision; never applied by this API.
 AUTHORITY_PROPOSED = "proposed_non_authoritative"
+#: Declared assessment input. Authoritative about *what the operator said*, and
+#: about nothing that happened on the network.
+AUTHORITY_CONFIGURED = "configured_assessment_context"
 
 CATEGORY_AUTHORITY: Dict[str, str] = {
     FACT_OBSERVED: AUTHORITY_OBSERVATION,
     FACT_EXPECTED: AUTHORITY_PLAN,
     FACT_DERIVED: AUTHORITY_DERIVED,
     FACT_RECOMMENDED: AUTHORITY_PROPOSED,
+    FACT_CONFIGURED: AUTHORITY_CONFIGURED,
 }
 
 #: Categories that may be cited as a primary source for the finding.
@@ -554,6 +565,12 @@ class ChainOfCustody(JsonModel):
     #: What this chain does not establish. Stated, never omitted.
     limitations: Tuple[str, ...] = field(default_factory=tuple)
     determinism: Dict[str, Any] = field(default_factory=dict)
+    #: Externally supplied asset context and the contextualized risk it
+    #: produced, or ``None`` when the assessment declared none. A ``dict`` (not
+    #: a custody type) so this layer keeps no import edge to the mission package
+    #: and stays independently loadable; :meth:`build_chain_of_custody` accepts
+    #: the richer object and serializes it here.
+    mission_context: Optional[Dict[str, Any]] = None
     #: Always True. There is no mutation path anywhere in this layer.
     read_only: bool = True
 
@@ -649,6 +666,9 @@ class ChainOfCustody(JsonModel):
             "audit_linkage_status": self.audit_linkage_status,
             "limitations": list(self.limitations),
             "determinism": dict(self.determinism),
+            "mission_context": (
+                dict(self.mission_context) if self.mission_context is not None else None
+            ),
         }
 
     @classmethod
@@ -763,6 +783,11 @@ class ChainOfCustody(JsonModel):
             audit_linkage_status=data.get("audit_linkage_status", AUDIT_UNAVAILABLE),
             limitations=tuple(data.get("limitations") or ()),
             determinism=dict(data.get("determinism") or {}),
+            mission_context=(
+                dict(data["mission_context"])
+                if data.get("mission_context") is not None
+                else None
+            ),
         )
 
 

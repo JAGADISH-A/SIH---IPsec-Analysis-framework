@@ -58,6 +58,7 @@ from ..adapters import ExpectedStateAdapter
 from ..artifacts import ArtifactUnavailable
 from ..comparison import ComparisonEngine, ComparisonEngineOptions
 from ..custody import ChainOfCustody, build_chain_of_custody
+from ..mission import MissionProfileBook, mission_context
 from ..models import EvidenceRef, MLResult, ObservedState
 from ..response.planner import PlanningContext, plan as plan_response
 from ..response.policy import ResponsePolicy
@@ -405,7 +406,9 @@ def _observed_values(observation: Optional[RecordedObservation]) -> Optional[Dic
 class AssessmentStore:
     """Deterministic in-memory index + bundles (built once, read-only)."""
 
-    def __init__(self, plan_path: str = PLAN_PATH) -> None:
+    def __init__(self, plan_path: str = PLAN_PATH, *,
+                 asset_id: Optional[str] = None,
+                 mission_profiles: Optional[MissionProfileBook] = None) -> None:
         self.plan_path = os.path.abspath(plan_path)
         self.bundles: Dict[str, Dict[str, Any]] = {}
         self.headers: List[Dict[str, Any]] = []
@@ -414,6 +417,13 @@ class AssessmentStore:
         self.sources: List[Dict[str, Any]] = []
         #: Authoritative pipeline objects per assessment, for the custody layer.
         self.custody_inputs: Dict[str, CustodyInput] = {}
+        #: The asset this dataset run was declared to belong to, or ``None``.
+        #: Operator-declared assessment input. It is never derived from the
+        #: assessment, the capture or any observed value; with ``None`` every
+        #: chain reports ``not_configured`` and keeps its technical risk alone.
+        self.asset_id: Optional[str] = asset_id
+        #: Declared asset mission profiles, or ``None`` when none were loaded.
+        self.mission_profiles: Optional[MissionProfileBook] = mission_profiles
         self._build()
 
     # -- lifecycle ----------------------------------------------------------
@@ -856,6 +866,11 @@ class AssessmentStore:
 
         ``verify_evidence=False`` skips the artifact re-hash and reports each
         evidence link as ``not_performed`` rather than as verified.
+
+        Declared asset context is attached when the store was built with an
+        ``asset_id``. It is looked up in the mission profile book, never derived
+        from the assessment: with no ``asset_id`` or no matching profile the
+        chain reports ``not_configured`` and the technical risk stands alone.
         """
         held = self.custody_inputs.get(assessment_id)
         if held is None:
@@ -891,8 +906,26 @@ class AssessmentStore:
             evidence_root=evidence_root,
             observed_present=held.observed_present,
             verify_evidence=verify_evidence,
+            mission_context=mission_context(
+                technical_risk=held.assessment.overall_score,
+                technical_severity=held.assessment.severity,
+                asset_id=self.asset_id,
+                profiles=self.mission_profiles,
+            ),
         )
 
 
-def build_store(plan_path: str = PLAN_PATH) -> AssessmentStore:
-    return AssessmentStore(plan_path=plan_path)
+def build_store(plan_path: str = PLAN_PATH, *,
+                asset_id: Optional[str] = None,
+                mission_profiles: Optional[MissionProfileBook] = None) -> AssessmentStore:
+    """Build the store, optionally bound to a declared asset and its profiles.
+
+    ``asset_id`` is the operator's statement about which testbed asset this
+    dataset run describes. It is the only link between an assessment and a
+    mission profile, and it is supplied rather than inferred.
+    """
+    return AssessmentStore(
+        plan_path=plan_path,
+        asset_id=asset_id,
+        mission_profiles=mission_profiles,
+    )

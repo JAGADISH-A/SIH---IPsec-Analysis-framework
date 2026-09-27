@@ -626,7 +626,11 @@ def openapi_document(base_url: str = "") -> Dict[str, Any]:
                                 "Only OBSERVED and EXPECTED are authoritative -- a "
                                 "planned value is authoritative about intent, never "
                                 "about what happened, and neither a model verdict nor "
-                                "a policy proposal is authoritative at all."
+                                "a policy proposal is authoritative at all. CONFIGURED "
+                                "is operator-declared assessment context (asset role, "
+                                "criticality, mission impact): it is authoritative "
+                                "about what the operator declared and about nothing "
+                                "observed on the network."
                             ),
                             "items": {
                                 "type": "object",
@@ -635,7 +639,8 @@ def openapi_document(base_url: str = "") -> Dict[str, Any]:
                                     "fact_id": _STR,
                                     "category": {
                                         "type": "string",
-                                        "enum": ["OBSERVED", "EXPECTED", "DERIVED", "RECOMMENDED"],
+                                        "enum": ["OBSERVED", "EXPECTED", "DERIVED",
+                                                  "RECOMMENDED", "CONFIGURED"],
                                     },
                                     "authority": {
                                         "type": "string",
@@ -644,6 +649,7 @@ def openapi_document(base_url: str = "") -> Dict[str, Any]:
                                             "authoritative_plan",
                                             "derived_non_authoritative",
                                             "proposed_non_authoritative",
+                                            "configured_assessment_context",
                                         ],
                                     },
                                     "authoritative": {"type": "boolean"},
@@ -768,6 +774,106 @@ def openapi_document(base_url: str = "") -> Dict[str, Any]:
                                     "observed": {"description": "What the check compared."},
                                     "expected": {"description": "What it was compared against."},
                                     "client_verifiable": {"type": "boolean"},
+                                },
+                            },
+                        },
+                        "mission_context": {
+                            "type": "object",
+                            "nullable": True,
+                            "description": (
+                                "Externally supplied asset context and the "
+                                "contextualized risk it produced. `status` is "
+                                "`configured` when an operator declared a profile for "
+                                "this asset, and `not_configured` otherwise -- in which "
+                                "case `profile` and `risk` are null, no criticality is "
+                                "assumed, and the technical risk stands alone. Never "
+                                "inferred from traffic, addresses, payloads or ML "
+                                "output: `derived_from_observation` is always false."
+                            ),
+                            "required": ["status", "configured", "derived_from_observation"],
+                            "properties": {
+                                "status": {
+                                    "type": "string",
+                                    "enum": ["configured", "not_configured"],
+                                },
+                                "configured": {"type": "boolean"},
+                                "asset_id": {"type": "string", "nullable": True},
+                                "profile": {
+                                    "type": "object",
+                                    "nullable": True,
+                                    "description": (
+                                        "The operator's declarations. `role` is "
+                                        "descriptive and never enters the calculation."
+                                    ),
+                                    "required": ["asset_id", "role", "criticality",
+                                                 "mission_impact"],
+                                    "properties": {
+                                        "asset_id": _STR,
+                                        "role": {
+                                            "type": "string",
+                                            "enum": ["development", "test",
+                                                     "operational-communications",
+                                                     "mission-support"],
+                                        },
+                                        "criticality": {
+                                            "type": "string",
+                                            "enum": ["low", "medium", "high"],
+                                        },
+                                        "mission_impact": {
+                                            "type": "string",
+                                            "enum": ["low", "medium", "high"],
+                                        },
+                                    },
+                                },
+                                "risk": {
+                                    "type": "object",
+                                    "nullable": True,
+                                    "description": (
+                                        "The contextualized view, over the "
+                                        "assessment-level risk pair: "
+                                        "`technical_risk` mirrors the response's "
+                                        "`risk_score` and `technical_severity` mirrors "
+                                        "`risk_severity`, both unchanged. The "
+                                        "individual finding's own `severity` is a "
+                                        "separate field and is not touched either. "
+                                        "`contextualized_risk` is that score placed in "
+                                        "the declared context, bounded by the same "
+                                        "0-100 scale and never below the technical "
+                                        "score."
+                                    ),
+                                    "required": ["technical_risk", "technical_severity",
+                                                 "contextualized_risk",
+                                                 "contextualized_severity", "model_version"],
+                                    "properties": {
+                                        "technical_risk": {"type": "integer"},
+                                        "technical_severity": _STR,
+                                        "contextualized_risk": {"type": "integer"},
+                                        "contextualized_severity": _STR,
+                                        "context_index": {"type": "integer"},
+                                        "multiplier_bp": {
+                                            "type": "integer",
+                                            "description": "Basis points; 10000 is neutral.",
+                                        },
+                                        "criticality_weight": {"type": "integer"},
+                                        "mission_impact_weight": {"type": "integer"},
+                                        "model_version": _STR,
+                                        "formula": _STR,
+                                        "score_cap": {"type": "integer"},
+                                        "inferred_from_traffic": {"type": "boolean", "const": False},
+                                    },
+                                },
+                                "context_source": {"type": "string", "nullable": True},
+                                "context_source_path": {
+                                    "type": "string",
+                                    "nullable": True,
+                                    "description": "Repository-relative; never absolute.",
+                                },
+                                "context_source_sha256": {"type": "string", "nullable": True},
+                                "reason": _STR,
+                                "model_version": _STR,
+                                "derived_from_observation": {
+                                    "type": "boolean",
+                                    "const": False,
                                 },
                             },
                         },
