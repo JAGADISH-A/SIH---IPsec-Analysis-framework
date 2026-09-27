@@ -349,7 +349,7 @@ class AuditEvent(JsonModel):
             "event_type": self.event_type,
             "source": self.source,
             "authoritative": self.authoritative,
-            "identity": dataclass_asdict(self.identity),
+            "identity": self.identity.to_identity_payload(),
             "provenance": dataclass_asdict(self.provenance),
             "recorded_at": self.recorded_at,
             "expected_ref": _plain(self.expected_ref),

@@ -49,6 +49,12 @@ class CorrelationIdentity(JsonModel):
     window_index: Optional[int] = None
     window_start_ns: Optional[int] = None
     window_end_ns: Optional[int] = None
+    #: Passive SA/tunnel this record belongs to (see
+    #: :mod:`correlation.models.sa_identity`).  Both stay ``None`` on the
+    #: single-SA path, which is what keeps every pre-existing identity -- and
+    #: therefore every previously derived audit ``event_id`` -- byte-identical.
+    sa_group_id: Optional[str] = None
+    sa_id: Optional[str] = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.dataset_run_id, str) or not self.dataset_run_id.strip():
@@ -78,6 +84,36 @@ class CorrelationIdentity(JsonModel):
                         f"window_end_ns ({end}) must be >= window_start_ns ({start})"
                     )
 
+        for name in ("sa_group_id", "sa_id"):
+            value = getattr(self, name)
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ValueError(f"{name} must be a non-empty string or None")
+
+    def to_identity_payload(self) -> Dict[str, Any]:
+        """Fields covered by a content-addressed ``event_id``.
+
+        The two SA keys are included **only when set**.  That is deliberate: an
+        identity from before SA correlation existed produces exactly the payload
+        it always did, so its derived ``event_id`` is unchanged and a persisted
+        audit chain still verifies.  Only a genuinely SA-scoped record gains the
+        extra fields -- and therefore a distinct id per SA, which is what stops
+        one SA's audit record from being confused with another's.
+        """
+        payload = {
+            "dataset_run_id": self.dataset_run_id,
+            "sequence": self.sequence,
+            "experiment_id": self.experiment_id,
+            "attempt_number": self.attempt_number,
+            "window_index": self.window_index,
+            "window_start_ns": self.window_start_ns,
+            "window_end_ns": self.window_end_ns,
+        }
+        if self.sa_group_id is not None:
+            payload["sa_group_id"] = self.sa_group_id
+        if self.sa_id is not None:
+            payload["sa_id"] = self.sa_id
+        return payload
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "CorrelationIdentity":
         return cls(
@@ -88,6 +124,8 @@ class CorrelationIdentity(JsonModel):
             window_index=data.get("window_index"),
             window_start_ns=data.get("window_start_ns"),
             window_end_ns=data.get("window_end_ns"),
+            sa_group_id=data.get("sa_group_id"),
+            sa_id=data.get("sa_id"),
         )
 
     def is_window_level(self) -> bool:

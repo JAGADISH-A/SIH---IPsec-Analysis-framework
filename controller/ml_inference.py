@@ -419,13 +419,30 @@ def explain(record, *, artifact: dict | None = None, top_k: int = 10) -> dict:
     }
 
 
-def iter_window_records(events, *, capture_ip=None, window_ms: int = WINDOW_SIZE_MS):
+def iter_window_records(events, *, capture_ip=None, window_ms: int = WINDOW_SIZE_MS,
+                        sa_scoped: bool = False, resolver=None):
     """Group an event stream into per-100 ms live records (live sensor shape).
 
     Each aligned ``window_ms``-bucket seen in the stream yields one exact-v2
     record, exactly as the live window aggregator + extractor would emit it.
     ``events`` may yield :class:`PacketEvent` objects (from the live reader /
     ``iter_jsonl_events``) or plain event dicts.
+
+    ``sa_scoped=False`` (the default) is the original behavior exactly: one
+    record per time bucket, with every SA's traffic merged.  That is correct for
+    a single-SA gateway and is what the trained model was fitted on.
+
+    ``sa_scoped=True`` buckets by ``(window_index, SA/tunnel)`` instead, so a
+    gateway carrying several simultaneous SAs over the same UDP/4500 transport
+    yields one feature record per SA per window.  A 100 ms window containing
+    SA-A and SA-B therefore produces two records, not one blended vector.
+    Uncertain traffic is never merged into a neighbouring SA: it buckets under
+    its own ``sa-ambiguous:...`` / ``sa-unknown`` group key, so it stays visible
+    as its own record.
+
+    The 59-feature math is untouched in both modes -- only which events share an
+    extractor changes, and ``summarize_capture`` remains the single
+    implementation.
     """
     from controller.live_features import LiveFeatureExtractor
 
@@ -433,18 +450,76 @@ def iter_window_records(events, *, capture_ip=None, window_ms: int = WINDOW_SIZE
         return int(event.ts if hasattr(event, "ts") else event["ts"])
 
     window_ns = window_ms * 1_000_000
-    buckets: dict[int, list] = {}
-    for event in events:
-        key = ts_of(event) // window_ns
-        buckets.setdefault(key, []).append(event)
-    for key in sorted(buckets):
-        extractor = LiveFeatureExtractor(capture_ip=capture_ip, window_ms=window_ms)
-        for event in buckets[key]:
-            if isinstance(event, Mapping):
-                extractor.accept_dict(event)
-            else:
-                extractor.accept(event)
-        yield extractor.snapshot()
+    if not sa_scoped:
+        buckets: dict[int, list] = {}
+        for event in events:
+            buckets.setdefault(ts_of(event) // window_ns, []).append(event)
+        for key in sorted(buckets):
+            yield _extract_window(buckets[key], capture_ip, window_ms)
+        return
+
+    # -- SA-scoped: resolve identities first, then bucket per SA ------------
+    from correlation.sa_correlation import SaResolver
+
+    event_list = list(events)
+    if resolver is None:
+        resolver = SaResolver(capture_ip=capture_ip)
+        resolver.index(event_list)
+    identities = [resolver.resolve(event) for event in event_list]
+
+    buckets = {}
+    for position, event in enumerate(event_list):
+        key = (ts_of(event) // window_ns, identities[position].group_key)
+        buckets.setdefault(key, []).append(position)
+
+    for key in sorted(buckets, key=lambda item: (item[0], item[1] or "")):
+        positions = buckets[key]
+        record = _extract_window(
+            [event_list[position] for position in positions], capture_ip, window_ms
+        )
+        record["sa_identity"] = _summarise_identities(
+            [identities[position] for position in positions], key[1]
+        )
+        yield record
+
+
+def _extract_window(members, capture_ip, window_ms):
+    from controller.live_features import LiveFeatureExtractor
+
+    extractor = LiveFeatureExtractor(capture_ip=capture_ip, window_ms=window_ms)
+    for event in members:
+        if isinstance(event, Mapping):
+            extractor.accept_dict(event)
+        else:
+            extractor.accept(event)
+    return extractor.snapshot()
+
+
+def _summarise_identities(identities, group_key):
+    """One representative + full spread of the identities behind a record.
+
+    A record is emitted per SA group, so normally every member shares one
+    identity.  When several identities do share a group (an ambiguous bucket),
+    the first is representative and every distinct state is listed, so a report
+    can show *why* the bucket exists instead of hiding it.
+    """
+    from correlation.models.sa_identity import REASON_AMBIGUOUS_KEPT_SEPARATE
+
+    first = identities[0]
+    states = sorted({identity.state for identity in identities})
+    payload = dict(first.to_dict())
+    payload["state"] = states[0] if len(states) == 1 else "AMBIGUOUS"
+    payload["group_key"] = group_key
+    payload["event_count"] = len(identities)
+    if len(states) > 1:
+        payload["reason"] = REASON_AMBIGUOUS_KEPT_SEPARATE
+    payload["resolved_sa_ids"] = sorted(
+        {identity.sa_id for identity in identities if identity.sa_id}
+    )
+    payload["observed_spis"] = sorted(
+        {identity.spi for identity in identities if identity.spi}
+    )
+    return payload
 
 
 def main(argv: list | None = None) -> int:

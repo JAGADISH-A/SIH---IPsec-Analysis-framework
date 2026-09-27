@@ -34,6 +34,21 @@ from .expected import (  # noqa: F401
 from .features import FEATURE_SCHEMA_VERSION_V2, LiveFeatureWindow  # noqa: F401
 from .identity import CorrelationIdentity  # noqa: F401
 from .ml import MLResult  # noqa: F401
+from .sa_identity import (  # noqa: F401
+    SA_KINDS,
+    SA_STATES,
+    KIND_AH_SA,
+    KIND_ESP_SA,
+    KIND_IKE_CONTEXT,
+    KIND_UNRESOLVED,
+    REASON_AMBIGUOUS_KEPT_SEPARATE,
+    SA_AMBIGUOUS_GROUP_PREFIX,
+    SA_UNKNOWN_GROUP,
+    STATE_AMBIGUOUS,
+    STATE_RESOLVED,
+    STATE_UNKNOWN,
+    SaIdentity,
+)
 from .observed import (  # noqa: F401
     DOCUMENTED_TRANSITIONS,
     SPI_DIRECTION_A_TO_B,
@@ -88,6 +103,19 @@ __all__ = [
     "IkeExpected",
     "TrafficExpected",
     "FEATURE_SCHEMA_VERSION_V2",
+    "SA_KINDS",
+    "SA_STATES",
+    "KIND_AH_SA",
+    "KIND_ESP_SA",
+    "KIND_IKE_CONTEXT",
+    "KIND_UNRESOLVED",
+    "REASON_AMBIGUOUS_KEPT_SEPARATE",
+    "SA_AMBIGUOUS_GROUP_PREFIX",
+    "SA_UNKNOWN_GROUP",
+    "STATE_AMBIGUOUS",
+    "STATE_RESOLVED",
+    "STATE_UNKNOWN",
+    "SaIdentity",
     "LiveFeatureWindow",
     "CorrelationIdentity",
     "MLResult",

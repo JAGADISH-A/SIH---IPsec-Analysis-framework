@@ -178,6 +178,9 @@ class EvidenceRef(JsonModel):
     capture_end_ns: Optional[int] = None
     packet_start: Optional[int] = None
     packet_end: Optional[int] = None
+    # -- passive SA / tunnel binding ----------------------------------------
+    sa_group_id: Optional[str] = None
+    sa_id: Optional[str] = None
 
     def __post_init__(self) -> None:
         _optional_str(self.pcap_path, "pcap_path")
@@ -277,6 +280,16 @@ class EvidenceRef(JsonModel):
             "capture_end_ns": self.capture_end_ns,
             "packet_start": self.packet_start,
             "packet_end": self.packet_end,
+            # The SA keys appear only when a reference is SA-scoped.  An
+            # unscoped reference keeps exactly the payload -- and therefore
+            # exactly the evidence_id -- it always had, so recorded evidence
+            # stays valid.  A SA-scoped reference gains a distinct id per SA,
+            # so one SA's evidence can never be silently reused for another.
+            **(
+                {"sa_group_id": self.sa_group_id, "sa_id": self.sa_id}
+                if (self.sa_group_id or self.sa_id)
+                else {}
+            ),
         }
 
     def _seal_evidence_id(self) -> None:
@@ -316,6 +329,8 @@ class EvidenceRef(JsonModel):
             capture_end_ns=data.get("capture_end_ns"),
             packet_start=data.get("packet_start"),
             packet_end=data.get("packet_end"),
+            sa_group_id=data.get("sa_group_id"),
+            sa_id=data.get("sa_id"),
         )
         recorded = data.get("evidence_id")
         if recorded is not None and recorded != ref.evidence_id:
@@ -331,6 +346,15 @@ class EvidenceRef(JsonModel):
         # field rather than the derived id; keep the derived id authoritative.
         payload = dataclasses_asdict(self)
         payload["evidence_id"] = self.evidence_id
+        # The SA keys are dropped when unset.  This is not cosmetic: an
+        # evidence_ref travels inside the audit event payload, and the audit
+        # event_id is derived from that payload, so always emitting the keys
+        # would renumber every reference recorded before SA correlation existed
+        # and make a valid journal fail its own integrity check.
+        if not self.sa_group_id:
+            payload.pop("sa_group_id", None)
+        if not self.sa_id:
+            payload.pop("sa_id", None)
         return payload
 
     # -- window binding ------------------------------------------------------

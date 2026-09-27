@@ -31,6 +31,13 @@ class MLResult(JsonModel):
     anomaly: Optional[bool] = None
     anomaly_score: Optional[float] = None
     extras: Dict[str, Any] = field(default_factory=dict)
+    #: Passive SA/tunnel this result was produced for (see
+    #: :mod:`correlation.models.sa_identity`).  Optional and ``None`` on the
+    #: single-SA path, so a pre-SA artifact loads and re-serializes unchanged.
+    #: The RF is *never* authoritative over the network, SA-scoped or not --
+    #: the value only records which observed SA the prediction describes.
+    sa_group_id: Optional[str] = None
+    sa_id: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.model_version is not None and not isinstance(self.model_version, str):
@@ -60,6 +67,10 @@ class MLResult(JsonModel):
                 )
         if not isinstance(self.extras, dict):
             raise ValueError("extras must be a dict")
+        for name in ("sa_group_id", "sa_id"):
+            value = getattr(self, name)
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ValueError(f"{name} must be a non-empty string or None")
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MLResult":
@@ -70,4 +81,6 @@ class MLResult(JsonModel):
             anomaly=data.get("anomaly"),
             anomaly_score=data.get("anomaly_score"),
             extras=data.get("extras") or {},
+            sa_group_id=data.get("sa_group_id"),
+            sa_id=data.get("sa_id"),
         )

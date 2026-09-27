@@ -150,6 +150,174 @@ def _ipv6_fields(data, offset):
     return ip_total, src, dst
 
 
+def read_pcap_esp_with_spi(path):
+    """Return [(timestamp, incl_len, ip_total, src, dst, spi), ...] for ESP.
+
+    Additive companion to :func:`read_pcap`, which parses only *native* ESP
+    (IP protocol 50) and deliberately drops the SPI because the v2 feature
+    vector never reads it.  SA correlation is the opposite case: the SPI is
+    the RFC 4303 selector that tells two SAs sharing UDP/4500 apart, so it has
+    to be observable.
+
+    Two things this adds over ``read_pcap``:
+
+    * **UDP encapsulation (NAT-T).**  Both ``ip protocol 50`` and
+      ``UDP/4500 -> ESP`` are decoded, because a gateway behind NAT carries all
+      of its SAs on UDP/4500 and a native-only reader would see nothing at all.
+    * **LINUX_SLL2 (link type 276).**  What ``tcpdump -i any`` writes, which is
+      what an in-container capture actually produces.
+
+    ``spi`` is ``None`` when the ESP header could not be read; the frame is
+    still reported, so an unparsable SPI degrades to "no SPI evidence" and is
+    never invented.
+    """
+    with open(path, "rb") as fh:
+        header = fh.read(24)
+        if len(header) < 24:
+            raise ValueError("truncated pcap global header")
+
+        magic = header[:4]
+        if magic in (b"\xa1\xb2\xc3\xd4", b"\xa1\xb2\x3c\x4d"):
+            endian = "big"
+        elif magic in (b"\xd4\xc3\xb2\xa1", b"\x4d\x3c\xb2\xa1"):
+            endian = "little"
+        else:
+            raise ValueError(f"unsupported pcap magic: {magic!r}")
+        is_nano = magic in (b"\xa1\xb2\x3c\x4d", b"\x4d\x3c\xb2\xa1")
+
+        linktype = int.from_bytes(header[20:24], endian)
+        if linktype not in (1, 101, 127, 276):
+            raise ValueError(f"unsupported linktype: {linktype}")
+
+        records = []
+        while True:
+            record = fh.read(16)
+            if len(record) < 16:
+                break
+            ts_sec = int.from_bytes(record[0:4], endian)
+            ts_frac = int.from_bytes(record[4:8], endian)
+            incl_len = int.from_bytes(record[8:12], endian)
+            _orig_len = int.from_bytes(record[12:16], endian)
+
+            data = fh.read(incl_len)
+            if len(data) < incl_len:
+                break
+
+            parsed = _esp_fields_with_spi(data, linktype)
+            if parsed is None:
+                continue
+            if is_nano:
+                timestamp = ts_sec + ts_frac / 1_000_000_000.0
+            else:
+                timestamp = ts_sec + ts_frac / 1_000_000.0
+            records.append((timestamp, incl_len) + parsed)
+
+    if not records:
+        return []
+    records.sort(key=lambda p: p[0])
+    return records
+
+
+def _esp_fields_with_spi(data, linktype):
+    """Return (ip_total, src, dst, spi) for an ESP frame, else None."""
+    if linktype == 1:  # Ethernet
+        if len(data) < 14:
+            return None
+        ethertype = int.from_bytes(data[12:14], "big")
+        offset = 14
+        if ethertype == 0x0800:
+            return _esp_ipv4(data, offset)
+        if ethertype == 0x86DD:
+            return _esp_ipv6(data, offset)
+        return None
+    if linktype == 101:  # Raw IPv4
+        return _esp_ipv4(data, 0)
+    if linktype == 127:  # Raw IPv6
+        return _esp_ipv6(data, 0)
+    if linktype == 276:  # LINUX_SLL2 (tcpdump -i any)
+        if len(data) < 20:
+            return None
+        # 20-byte SLL2 header, protocol at offset 0, network layer at 20.
+        protocol = int.from_bytes(data[0:2], "big")
+        offset = 20
+        if protocol == 0x0800:
+            return _esp_ipv4(data, offset)
+        if protocol == 0x86DD:
+            return _esp_ipv6(data, offset)
+        return None
+    return None
+
+
+def _esp_ipv4(data, offset):
+    if len(data) < offset + 20:
+        return None
+    ip_total = int.from_bytes(data[offset + 2:offset + 4], "big")
+    src = data[offset + 12:offset + 16]
+    dst = data[offset + 16:offset + 20]
+    ihl = (data[offset] & 0x0F) * 4
+    protocol = data[offset + 9]
+    if protocol == 50:  # native ESP
+        return ip_total, src, dst, _esp_spi(data, offset + ihl)
+    if protocol == 17:  # UDP encapsulation (NAT-T)
+        udp_offset = offset + ihl
+        if len(data) < udp_offset + 8:
+            return None
+        dport = int.from_bytes(data[udp_offset + 2:udp_offset + 4], "big")
+        if dport != 4500:
+            return None
+        return ip_total, src, dst, _esp_spi(data, _natt_esp_start(data, udp_offset))
+    return None
+
+
+def _natt_esp_start(data, udp_offset):
+    """Offset of the ESP header inside a UDP/4500 datagram.
+
+    RFC 3948 allows a four-byte zero "non-ESP marker" to precede the ESP
+    header on a NAT-T datagram.  It is optional and peers differ: strongSwan
+    omits it, several other implementations emit it.  Reading the SPI at a
+    fixed offset therefore gets it wrong in one direction or the other, and the
+    failure is silent -- a marker-emitting peer yields SPI 0, which the
+    identity resolver reports as ``UNKNOWN no_spi_available`` and the whole
+    tunnel becomes unresolvable rather than raising.
+
+    So the marker is detected, exactly as :func:`_ike_udp_common` already does
+    for IKE on the same transport.  A zero first word is the marker; anything
+    else is taken to be the SPI itself.
+    """
+    start = udp_offset + 8
+    if len(data) >= start + 4 and int.from_bytes(data[start:start + 4], "big") == 0:
+        start += 4
+    return start
+
+
+def _esp_ipv6(data, offset):
+    if len(data) < offset + 40:
+        return None
+    next_header = data[offset + 6]
+    payload_len = int.from_bytes(data[offset + 4:offset + 6], "big")
+    ip_total = 40 + payload_len
+    src = data[offset + 8:offset + 24]
+    dst = data[offset + 24:offset + 40]
+    if next_header == 50:  # native ESP
+        return ip_total, src, dst, _esp_spi(data, offset + 40)
+    if next_header == 17:  # UDP encapsulation (NAT-T)
+        udp_offset = offset + 40
+        if len(data) < udp_offset + 8:
+            return None
+        dport = int.from_bytes(data[udp_offset + 2:udp_offset + 4], "big")
+        if dport != 4500:
+            return None
+        return ip_total, src, dst, _esp_spi(data, _natt_esp_start(data, udp_offset))
+    return None
+
+
+def _esp_spi(payload, offset):
+    """Read the 32-bit SPI from an ESP header, or None if it is too short."""
+    if len(payload) < offset + 4:
+        return None
+    return int.from_bytes(payload[offset:offset + 4], "big")
+
+
 def read_pcap_ike(path):
     """Return [(timestamp, incl_len, ip_total, src, dst, udp_port, version,
     exchange_type), ...] for IKE datagrams (UDP 500/4500) in the capture.

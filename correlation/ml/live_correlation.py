@@ -95,6 +95,7 @@ from ..models import (
     ObservedState,
 )
 from ..risk import RiskEngine, RiskPolicy
+from ..sa_correlation import SaResolver
 from ..xai import ExplainabilityEngine
 from .controller_bridge import infer_controller_ml_result
 from .integration import correlate_with_ml
@@ -299,14 +300,32 @@ class LiveCorrelationResult:
     observed: ObservedState
     ml_result: Optional[MLResult] = None
     ml_error: Optional[str] = None
+    observed_identity: Optional[CorrelationIdentity] = None
 
     @property
     def window_id(self) -> str:
         return f"{self.window.window_start_ns}-{self.window.window_end_ns}"
 
+    @property
+    def sa_identity(self) -> Optional[Dict[str, Any]]:
+        """The passive SA/tunnel this result belongs to, or ``None``.
+
+        Sourced from the window's identity, so it is present whenever the run
+        was SA-scoped and absent on the single-SA path -- the same
+        backward-compatible optional shape used by the stored models.
+        """
+        return self.window.sa_identity
+
+    @property
+    def sa_group_id(self) -> Optional[str]:
+        identity = self.window.sa_identity or {}
+        return identity.get("sa_group_id") or None
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "window_id": self.window_id,
+            "sa_group_id": self.sa_group_id,
+            "sa_identity": self.sa_identity,
             "window": self.window.to_dict(),
             "ml_result": None if self.ml_result is None else self.ml_result.to_dict(),
             "ml_error": self.ml_error,
@@ -325,6 +344,9 @@ class LiveCorrelationRun:
     results: List[LiveCorrelationResult] = field(default_factory=list)
     identity: Optional[CorrelationIdentity] = None
     expected: Optional[Union[ExpectedState, MaterializedExpectedState]] = None
+    #: Per-SA observed states, keyed by SA group id.  Populated only on the
+    #: ``sa_scoped`` path; ``observed`` still holds the aggregate state there.
+    observed_per_sa: Dict[str, ObservedState] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -333,6 +355,10 @@ class LiveCorrelationRun:
             "expected_source": "materialized_plan",
             "observed": self.observed.to_dict(),
             "window_count": len(self.results),
+            "observed_per_sa": {
+                key: value.to_dict()
+                for key, value in self.observed_per_sa.items()
+            },
             "windows": [result.to_dict() for result in self.results],
         }
 
@@ -427,6 +453,7 @@ def correlate_live_window(
         observed=observed,
         ml_result=ml_result,
         ml_error=ml_error,
+        observed_identity=observed_identity,
     )
 
 
@@ -435,6 +462,7 @@ def feature_windows_from_events(
     *,
     capture_ip: Optional[str] = None,
     window_ms: int = WINDOW_SIZE_MS,
+    sa_scoped: bool = False,
 ) -> List[LiveFeatureWindow]:
     """Real 100 ms feature windows from a live event batch.
 
@@ -442,13 +470,81 @@ def feature_windows_from_events(
     bucketing + ``LiveFeatureExtractor`` pair the live controller path uses, so
     features are never re-extracted on the correlation side and the 100 ms
     alignment stays owned by ``ebpf.xdp_window_aggregator.WINDOW_SIZE_MS``.
+
+    ``sa_scoped=True`` additionally buckets by SA/tunnel, so one 100 ms window
+    holding several simultaneous SAs yields one window per SA.  Each returned
+    window then carries its own ``sa_identity``.
     """
     from controller.ml_inference import iter_window_records
 
     records = list(
-        iter_window_records(events, capture_ip=capture_ip, window_ms=window_ms)
+        iter_window_records(
+            events,
+            capture_ip=capture_ip,
+            window_ms=window_ms,
+            sa_scoped=sa_scoped,
+        )
     )
     return [LiveFeatureWindow.from_dict(record) for record in records]
+
+
+def observed_states_per_sa(
+    events: Sequence[Any],
+    *,
+    capture_ip: Optional[str] = None,
+    endpoints: Optional[Mapping[str, str]] = None,
+    active_timeout_ms: Optional[int] = None,
+) -> Dict[str, ObservedState]:
+    """Build one real ``ObservedState`` per observed SA/tunnel.
+
+    This is what keeps SA-A's findings off SA-B's observations.  Each SA is
+    fed to its *own* :class:`~ebpf.ipsec_state_builder.IPsecStateBuilder`, so
+    the per-SPI counters, sequences and timestamps in an assessment describe
+    that SA alone.  There is one state builder per SA -- not a second
+    observation path; the same authoritative engine and the same events are
+    used, merely partitioned by the identity the resolver derived from them.
+
+    Keys are the SA group ids from :mod:`correlation.sa_correlation`; the
+    ambiguous and unknown groups are included so uncertain traffic keeps its own
+    state instead of being folded into a resolved SA.
+    """
+    resolver = SaResolver(capture_ip=capture_ip)
+    resolver.index(events)
+    partitions: Dict[str, List[Any]] = {}
+    for event, identity in resolver.resolve_all(events):
+        partitions.setdefault(identity.group_key, []).append(event)
+
+    states: Dict[str, ObservedState] = {}
+    for group_key, members in partitions.items():
+        builder = _builder(endpoints, active_timeout_ms)
+        for event in members:
+            if isinstance(event, Mapping):
+                builder.consume_event_dict(dict(event))
+            else:
+                builder.consume_event(event)
+        if not members:
+            continue
+        identities = [resolver.resolve(event) for event in members]
+        assignments = {}
+        for identity in identities:
+            if not identity.spi:
+                continue
+            if identity.state == "RESOLVED":
+                assignments[identity.spi] = (identity.sa_id, identity.sa_group_id)
+            else:
+                # An AMBIGUOUS/UNKNOWN SPI still gets recorded, with the reason
+                # that produced it, so unattributable traffic stays visible.
+                assignments[identity.spi] = (
+                    identity.state,
+                    identity.reason,
+                    identity.candidates,
+                )
+        if assignments:
+            builder.assign_sa_identities(assignments)
+        states[group_key] = ObservedState.from_dict(
+            state_snapshot_to_dict(builder.snapshot())
+        )
+    return states
 
 
 def read_event_jsonl(path: str) -> List[Dict[str, Any]]:
@@ -484,6 +580,7 @@ def correlate_live_events(
     clock_alignment=None,
     active_only: bool = False,
     on_ml_error: str = "raise",
+    sa_scoped: bool = False,
 ) -> LiveCorrelationRun:
     """The full production seam: live events -> real state + real correlation.
 
@@ -491,6 +588,11 @@ def correlate_live_events(
     materialized through the existing :class:`ExpectedStateAdapter` -- the same
     independent plan/configuration source the dashboard store uses.  Expected
     state is never derived from ML, observed state, risk or XAI output.
+
+    ``sa_scoped=False`` (the default) is the single-SA behavior, byte for byte.
+    ``sa_scoped=True`` additionally buckets the 100 ms windows and the observed
+    state by passively observed SA, so a gateway holding several SAs over the
+    same UDP/4500 transport yields one correlated result per SA per window.
     """
     materialized: Optional[MaterializedExpectedState] = None
     if expected is None:
@@ -524,8 +626,23 @@ def correlate_live_events(
             event_list, endpoints=endpoints, active_timeout_ms=active_timeout_ms
         )
 
+    # On the SA-scoped path each SA gets its *own* observed state, so a finding
+    # about SA-A never cites SA-B's counters or sequences.  ``observed`` above
+    # stays as the aggregate view for callers that want it.
+    observed_per_sa: Dict[str, ObservedState] = {}
+    if sa_scoped:
+        observed_per_sa = observed_states_per_sa(
+            event_list,
+            capture_ip=capture_ip,
+            endpoints=endpoints,
+            active_timeout_ms=active_timeout_ms,
+        )
+
     windows = feature_windows_from_events(
-        event_list, capture_ip=capture_ip, window_ms=window_ms
+        event_list,
+        capture_ip=capture_ip,
+        window_ms=window_ms,
+        sa_scoped=sa_scoped,
     )
     if active_only:
         windows = [w for w in windows if w.window_end_ns > w.window_start_ns]
@@ -537,8 +654,13 @@ def correlate_live_events(
 
     results: List[LiveCorrelationResult] = []
     for window in windows:
+        sa = window.sa_identity or {}
+        group_id = sa.get("sa_group_id")
+        sa_id = sa.get("sa_id")
         # The observed side is stamped per window so correlation provenance
-        # carries the window it was produced from.
+        # carries the window it was produced from.  The SA keys are part of the
+        # identity, and the identity feeds the audit event_id, so SA-A and
+        # SA-B records are content-distinct and can never be conflated.
         window_identity = CorrelationIdentity(
             dataset_run_id=identity.dataset_run_id,
             sequence=sequence,
@@ -547,11 +669,14 @@ def correlate_live_events(
             window_index=len(results),
             window_start_ns=window.window_start_ns,
             window_end_ns=window.window_end_ns,
+            sa_group_id=group_id,
+            sa_id=sa_id,
         )
+        window_observed = observed_per_sa.get(group_id or "", observed)
         results.append(
             correlate_live_window(
                 expected=resolved_expected,
-                observed=observed,
+                observed=window_observed,
                 window=window,
                 identity=identity,
                 observed_identity=window_identity,
@@ -566,6 +691,7 @@ def correlate_live_events(
         results=results,
         identity=identity,
         expected=resolved_expected,
+        observed_per_sa=observed_per_sa,
     )
 
 

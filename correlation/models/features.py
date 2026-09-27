@@ -18,7 +18,7 @@ dictionary here. ``assert_feature_keys()`` is NOT re-implemented.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from ._base import JsonModel
 
@@ -27,12 +27,20 @@ FEATURE_SCHEMA_VERSION_V2 = "v2"
 
 @dataclass(frozen=True)
 class LiveFeatureWindow(JsonModel):
-    """One immutable live v2 feature window."""
+    """One immutable live v2 feature window.
+
+    ``sa_identity`` is the passive SA/tunnel this window's traffic was
+    attributed to (see :mod:`correlation.models.sa_identity`).  It is optional
+    and defaults to ``None``: a window recorded before SA identity existed, or
+    produced by the single-SA path, still loads unchanged.  When present it is
+    an *observation*, never a configuration value.
+    """
 
     feature_schema_version: str = FEATURE_SCHEMA_VERSION_V2
     window_start_ns: int = 0
     window_end_ns: int = 0
     features: Dict[str, Any] = field(default_factory=dict)
+    sa_identity: Optional[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
         if self.feature_schema_version != FEATURE_SCHEMA_VERSION_V2:
@@ -59,6 +67,8 @@ class LiveFeatureWindow(JsonModel):
             )
         if not isinstance(self.features, dict):
             raise ValueError("features must be a dictionary")
+        if self.sa_identity is not None and not isinstance(self.sa_identity, dict):
+            raise ValueError("sa_identity must be a dictionary or None")
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "LiveFeatureWindow":
@@ -69,4 +79,5 @@ class LiveFeatureWindow(JsonModel):
             window_start_ns=data.get("window_start_ns", 0),
             window_end_ns=data.get("window_end_ns", 0),
             features=data.get("features") or {},
+            sa_identity=data.get("sa_identity"),
         )

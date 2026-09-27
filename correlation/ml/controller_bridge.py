@@ -261,7 +261,26 @@ def infer_controller_ml_result(
     controller_result = controller_ml_inference.predict(
         record, artifact=artifact, timestamp=timestamp
     )
-    return controller_result_to_ml_result(controller_result)
+    ml_result = controller_result_to_ml_result(controller_result)
+
+    # Carry the observed SA on the correlation-side result only.  The
+    # controller record above is deliberately left alone: it is under the
+    # controller's strict feature contract, and adding a key there would change
+    # a contract the RF adapter validates.  The SA is our observation, not a
+    # feature and not an input to the model.
+    sa = window.sa_identity or None
+    if sa:
+        return MLResult(
+            model_version=ml_result.model_version,
+            traffic_class=ml_result.traffic_class,
+            classification_confidence=ml_result.classification_confidence,
+            anomaly=ml_result.anomaly,
+            anomaly_score=ml_result.anomaly_score,
+            extras={**ml_result.extras, "sa_identity": sa},
+            sa_group_id=sa.get("sa_group_id") or None,
+            sa_id=sa.get("sa_id") or None,
+        )
+    return ml_result
 
 
 def correlate_with_controller_ml(
