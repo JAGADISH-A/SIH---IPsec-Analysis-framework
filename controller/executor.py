@@ -2,6 +2,7 @@ import json
 import os
 import signal
 import subprocess
+import time
 from pathlib import Path
 
 from .config import CONFIG
@@ -32,6 +33,7 @@ SUDO = ("sudo", "-n")
 # dataset run perpetually RUNNING.
 DEFAULT_COMMAND_TIMEOUT = 300.0      # generic per-command cap (docker exec/cp, swanctl, ping)
 DOCKER_COMMAND_TIMEOUT = 120.0       # fast docker micro-operations (ping, swanctl, file copy)
+VICI_READY_TIMEOUT = 45.0            # charon startup after containerlab deploy
 LIFECYCLE_TIMEOUT = 900.0            # containerlab deploy --reconfigure (may pull images)
 DESTROY_TIMEOUT = 600.0              # containerlab destroy --cleanup
 
@@ -286,6 +288,11 @@ def load_generated_configs(config):
 
     print("\n=== Loading generated configurations ===\n")
 
+    # containerlab reports deployment complete before the gateway entrypoint
+    # has necessarily started charon and created the VICI socket.
+    _wait_for_vici(local_container)
+    _wait_for_vici(remote_container)
+
     run(
         _privileged("docker", "cp", str(local_file), f"{local_container}:{local_tmp}"),
         timeout=DOCKER_COMMAND_TIMEOUT,
@@ -306,7 +313,49 @@ def load_generated_configs(config):
         timeout=DOCKER_COMMAND_TIMEOUT,
     )
 
+    # Loading a connection file does not reliably preserve credentials that
+    # were loaded during the container entrypoint startup.  Reload the
+    # mounted swanctl secrets explicitly before initiation.
+    run(
+        _privileged("docker", "exec", local_container, "swanctl", "--load-creds"),
+        timeout=DOCKER_COMMAND_TIMEOUT,
+    )
+
+    run(
+        _privileged("docker", "exec", remote_container, "swanctl", "--load-creds"),
+        timeout=DOCKER_COMMAND_TIMEOUT,
+    )
+
     print("\n=== Generated configurations loaded ===\n")
+
+
+def _wait_for_vici(container):
+    """Wait for charon's VICI socket before invoking swanctl.
+
+    A deployed container can be running while its entrypoint is still starting
+    charon.  Retrying the harmless read-only ``--list-conns`` probe avoids a
+    transient ``charon.vici: No such file or directory`` failure without
+    masking a persistent startup error.
+    """
+    deadline = time.monotonic() + VICI_READY_TIMEOUT
+    last_error = None
+
+    while time.monotonic() < deadline:
+        try:
+            run(
+                _privileged("docker", "exec", container, "swanctl", "--list-conns"),
+                timeout=DOCKER_COMMAND_TIMEOUT,
+            )
+            return
+        except RuntimeError as exc:
+            last_error = exc
+            time.sleep(0.5)
+
+    raise RuntimeError(
+        f"Timed out waiting for strongSwan VICI in {container} "
+        f"after {VICI_READY_TIMEOUT:.0f}s: {last_error}"
+    )
+
 
 def initiate_ipsec(mode, address_family):
     topology = get_topology(mode, address_family)
