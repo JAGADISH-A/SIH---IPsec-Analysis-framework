@@ -50,14 +50,25 @@ Phase-6/7 engines consuming these inputs - never recomputed in the UI layer.
 
 import json
 import os
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from .. import artifacts
 from ..adapters import ExpectedStateAdapter
 from ..artifacts import ArtifactUnavailable
 from ..comparison import ComparisonEngine, ComparisonEngineOptions
 from ..custody import ChainOfCustody, build_chain_of_custody
+from ..drift import (
+    BaselineRegistry,
+    DRIFT_SOURCE_KIND_DECLARED,
+    DRIFT_SOURCE_KIND_RECORDED,
+    DriftAssessment,
+    DriftCurrentSource,
+    assess_drift,
+    describe_canonicalization,
+    DRIFT_CATEGORIES,
+    UNSUPPORTED_DRIFT_CATEGORIES,
+)
 from ..mission import MissionProfileBook, mission_context
 from ..models import EvidenceRef, MLResult, ObservedState
 from ..response.planner import PlanningContext, plan as plan_response
@@ -403,12 +414,96 @@ def _observed_values(observation: Optional[RecordedObservation]) -> Optional[Dic
     return artifacts.observed_evidence_values(observation.observed)
 
 
+@dataclass(frozen=True)
+class DriftCurrentObservation:
+    """One explicitly declared current observation for the longitudinal comparison.
+
+    Deliberately *not* a :class:`RecordedObservation`. A recorded case is
+    something a sensor captured; this input may be a controlled fixture derived
+    from such a capture. Whether the current state was observed live or declared
+    for a controlled demonstration is the single most important thing a reader
+    needs to know about a drift claim, so it is carried in the type rather than
+    in a flag that a caller could set inconsistently.
+
+    The declared provenance is free-form because it comes from whoever produced
+    the observation; the store records it verbatim and never upgrades a
+    declaration into a capture.
+    """
+
+    slot: str
+    observed: ObservedState
+    #: The real artifact the state was loaded from, with its real digest.
+    state_record: artifacts.ArtifactRecord
+    #: The producer's own declaration: what it is, and what it was derived from.
+    declared_provenance: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Refuse a declared observation whose artifact no longer matches itself.
+
+        The digest carried by ``state_record`` is what a chain will publish. If
+        the file has changed since it was loaded, that published digest is
+        already false, and the only honest options are to fail or to say
+        something weaker. This fails: a chain is never built on an artifact
+        whose bytes disagree with the identity attached to them, and nothing is
+        silently repaired or re-derived to make the mismatch disappear.
+        """
+        from ..models.evidence import sha256_file
+
+        actual = sha256_file(artifacts._resolve(self.state_record.path))
+        if actual != self.state_record.artifact_sha256:
+            raise ArtifactUnavailable(
+                f"declared current observation {self.state_record.path!r} has "
+                f"changed since it was loaded: recorded sha256 "
+                f"{self.state_record.artifact_sha256}, file hashes to {actual}"
+            )
+
+    def custody_provenance(self) -> List[Dict[str, Any]]:
+        """Role-tagged provenance for the chain of custody.
+
+        The role is fixed to ``controlled_drift_observation`` because that is
+        what an explicitly declared current observation is, whatever the
+        producer called it. The declared text is carried through as ``detail`` so
+        the reader sees the producer's own words rather than a paraphrase.
+        """
+        tagged: List[Dict[str, Any]] = []
+        for item in artifacts.provenance(self.state_record):
+            declared = dict(self.declared_provenance or {})
+            tagged.append({
+                **item,
+                "role": "controlled_drift_observation",
+                "name": declared.get("name") or "declared-current-observation",
+                "detail": {
+                    key: declared[key]
+                    for key in sorted(declared)
+                    if key != "name" and not isinstance(
+                        declared[key], (dict, list, tuple, set))
+                },
+            })
+        return tagged
+
+
+def _current_source_kind(drift: DriftAssessment) -> str:
+    """What kind of artifact the current state was, for the drift surface."""
+    source = getattr(drift, "current_source", None)
+    return getattr(source, "kind", DRIFT_SOURCE_KIND_RECORDED)
+
+
+def _current_source_is_capture(drift: DriftAssessment) -> bool:
+    """Whether the current state came from a live capture."""
+    source = getattr(drift, "current_source", None)
+    return bool(getattr(source, "is_capture", True))
+
+
 class AssessmentStore:
     """Deterministic in-memory index + bundles (built once, read-only)."""
 
     def __init__(self, plan_path: str = PLAN_PATH, *,
                  asset_id: Optional[str] = None,
-                 mission_profiles: Optional[MissionProfileBook] = None) -> None:
+                 mission_profiles: Optional[MissionProfileBook] = None,
+                 baselines: Optional[BaselineRegistry] = None,
+                 baseline_id: Optional[str] = None,
+                 drift_observations: Sequence[DriftCurrentObservation] = (),
+                 drift_scenario_label: Optional[str] = None) -> None:
         self.plan_path = os.path.abspath(plan_path)
         self.bundles: Dict[str, Dict[str, Any]] = {}
         self.headers: List[Dict[str, Any]] = []
@@ -424,6 +519,31 @@ class AssessmentStore:
         self.asset_id: Optional[str] = asset_id
         #: Declared asset mission profiles, or ``None`` when none were loaded.
         self.mission_profiles: Optional[MissionProfileBook] = mission_profiles
+        #: Validated IPsec security-state baselines, or ``None``. Never inferred
+        #: and never auto-populated: a store built without an explicit registry
+        #: performs no drift comparison at all and says so.
+        self.baselines: Optional[BaselineRegistry] = baselines
+        #: Which registered baseline to compare against, named explicitly. No
+        #: fallback to "the only one" or "the latest one" is performed.
+        self.baseline_id: Optional[str] = baseline_id
+        #: Current observations declared for the longitudinal comparison, keyed
+        #: by scenario slot. Absent for a slot, the recorded observation for that
+        #: slot is the current state, exactly as before.
+        self.drift_observations: Dict[str, DriftCurrentObservation] = {
+            item.slot: item for item in drift_observations
+        }
+        #: The scenario text used for a drift-origin assessment, or ``None`` to
+        #: build one that names only what is true. The demonstration supplies its
+        #: own text so the controlled nature of the data is visible in the
+        #: dashboard row, not only in a report.
+        self.drift_scenario_label = drift_scenario_label
+        #: Drift comparison per assessment, computed at build time from the
+        #: recorded observation. Empty when no baseline is configured.
+        self.drift_inputs: Dict[str, DriftAssessment] = {}
+        #: For a drift-origin assessment, the plan-based assessment whose slot
+        #: supplied the current observation. ``None`` for a plan-based
+        #: assessment's own comparison.
+        self.drift_parent: Dict[str, Optional[str]] = {}
         self._build()
 
     # -- lifecycle ----------------------------------------------------------
@@ -487,18 +607,19 @@ class AssessmentStore:
         )
         return expected, observed, correlation, assessment, xai, ml_result
 
-    def _add(self, sequence: int, slot: str, *,
-             observation: Optional[RecordedObservation] = None,
-             ml_evidence: Optional[RecordedMlEvidence] = None,
-             evidence_refs=(), scenario_label=None):
-        expected, observed, correlation, assessment, xai, ml_result = (
-            self._run_pipeline(
-                sequence, slot, observation=observation, ml_evidence=ml_evidence,
-                evidence_refs=evidence_refs,
-            )
-        )
-        assessment_id = f"{DATASET_RUN_ID}:{sequence}:{slot}"
-        evidence_view = [evidence_to_view(ev) for ev in evidence_refs]
+    def _register(self, assessment_id: str, *, slot: str, scenario_label: str,
+                  expected, observed, correlation, assessment, xai, ml_result,
+                  evidence_refs, sources, custody_sources,
+                  observed_present: bool) -> Dict[str, Any]:
+        """Index one completed assessment and keep its authoritative objects.
+
+        Shared by the plan-based assessment and by a drift-origin assessment so
+        that both are exposed through exactly the same bundle, header, custody
+        and API surfaces. Re-using the same function is what keeps a drift
+        finding from needing a parallel explanation implementation: it is
+        registered the way any other assessment is, and every downstream layer
+        treats it identically because it *is* an ordinary assessment.
+        """
         bundle = assessment_bundle(
             assessment_id,
             identity=assessment.identity,
@@ -509,24 +630,10 @@ class AssessmentStore:
             assessment=assessment,
             xai=xai,
             slot=slot,
-            scenario=scenario_label or _scenario_label(
-                slot, sequence, expected.security_posture,
-                observation.case if observation is not None else None),
-            evidence=evidence_view,
+            scenario=scenario_label,
+            evidence=[evidence_to_view(ev) for ev in evidence_refs],
         )
-        # The artifacts this bundle was actually built from, with their digests.
-        sources: List[Dict[str, Any]] = []
-        custody_sources: List[Dict[str, Any]] = []
-        if observation is not None:
-            sources.extend(observation.provenance())
-            custody_sources.extend(observation.custody_provenance())
-        if ml_evidence is not None:
-            sources.extend(artifacts.provenance(ml_evidence.record))
-            custody_sources.extend(
-                {**item, "role": "ml_output", "name": "recorded-ml-window"}
-                for item in artifacts.provenance(ml_evidence.record)
-            )
-        bundle["sources"] = sources
+        bundle["sources"] = list(sources)
         self.bundles[assessment_id] = bundle
         self.headers.append(header_view(bundle))
         # The custody layer reuses the reused response planner rather than
@@ -543,7 +650,7 @@ class AssessmentStore:
             ml_result=ml_result,
             evidence_refs=tuple(evidence_refs),
             sources=tuple(disclosed_sources(custody_sources)),
-            observed_present=observation is not None,
+            observed_present=observed_present,
             response_plan=plan_response(
                 PlanningContext(
                     assessment=assessment,
@@ -557,6 +664,166 @@ class AssessmentStore:
             ),
         )
         return bundle
+
+    def _add(self, sequence: int, slot: str, *,
+             observation: Optional[RecordedObservation] = None,
+             ml_evidence: Optional[RecordedMlEvidence] = None,
+             evidence_refs=(), scenario_label=None):
+        expected, observed, correlation, assessment, xai, ml_result = (
+            self._run_pipeline(
+                sequence, slot, observation=observation, ml_evidence=ml_evidence,
+                evidence_refs=evidence_refs,
+            )
+        )
+        assessment_id = f"{DATASET_RUN_ID}:{sequence}:{slot}"
+        # The artifacts this bundle was actually built from, with their digests.
+        sources: List[Dict[str, Any]] = []
+        custody_sources: List[Dict[str, Any]] = []
+        if observation is not None:
+            sources.extend(observation.provenance())
+            custody_sources.extend(observation.custody_provenance())
+        if ml_evidence is not None:
+            sources.extend(artifacts.provenance(ml_evidence.record))
+            custody_sources.extend(
+                {**item, "role": "ml_output", "name": "recorded-ml-window"}
+                for item in artifacts.provenance(ml_evidence.record)
+            )
+        bundle = self._register(
+            assessment_id,
+            slot=slot,
+            scenario_label=scenario_label or _scenario_label(
+                slot, sequence, expected.security_posture,
+                observation.case if observation is not None else None),
+            expected=expected,
+            observed=observed,
+            correlation=correlation,
+            assessment=assessment,
+            xai=xai,
+            ml_result=ml_result,
+            evidence_refs=evidence_refs,
+            sources=sources,
+            custody_sources=custody_sources,
+            observed_present=observation is not None,
+        )
+        # Longitudinal comparison, performed once here against the current
+        # observation when -- and only when -- a baseline was explicitly
+        # configured. ``not_configured`` is a real, reported outcome; with no
+        # baseline at all nothing is attached and every chain stays exactly as
+        # it was before drift existed.
+        if self.baselines is not None:
+            self._attach_drift(
+                assessment_id, sequence, slot, expected=expected,
+                observed=observed, correlation=correlation, ml_result=ml_result,
+                observation=observation, evidence_refs=evidence_refs,
+                sources=sources, custody_sources=custody_sources,
+            )
+        return bundle
+
+    def _attach_drift(self, assessment_id: str, sequence: int, slot: str, *,
+                      expected, observed, correlation, ml_result,
+                      observation: Optional[RecordedObservation],
+                      evidence_refs, sources, custody_sources) -> None:
+        """Compare the current observation with the validated baseline, once.
+
+        The comparison itself is always attached to the plan-based assessment,
+        so ``no_drift`` and ``indeterminate`` stay visible exactly as the drift
+        milestone defined them. When the comparison does produce findings, the
+        drift result is additionally registered as an assessment in its own
+        right: a drift finding is a real :class:`RiskAssessment` produced by the
+        real risk engine, and nothing downstream -- custody, integrity, the
+        explanation endpoint -- can reach a finding that is not registered.
+        """
+        declared = self.drift_observations.get(slot)
+        # The current state is the declared observation when the caller supplied
+        # one for this slot, and the recorded observation otherwise.
+        current = declared.observed if declared is not None else observed
+        # A recorded capture is a recorded capture; a declared current state is
+        # published as a declaration. This is the only place the distinction is
+        # made, and it is made explicitly rather than inferred from the file.
+        current_source = (
+            DriftCurrentSource(
+                kind=DRIFT_SOURCE_KIND_DECLARED,
+                artifact_sha256=declared.state_record.artifact_sha256,
+                public_path=public_path(
+                    declared.state_record.path, repo_root=artifacts.REPO_ROOT),
+                declared_kind=(declared.declared_provenance or {}).get("kind"),
+                declaration=(declared.declared_provenance or {}).get("not_a_capture"),
+                derived_from=(declared.declared_provenance or {}).get("derived_from"),
+            )
+            if declared is not None
+            else DriftCurrentSource(kind=DRIFT_SOURCE_KIND_RECORDED)
+        )
+
+        # A declared current state is deliberately NOT given an ``EvidenceRef``.
+        # ``evidence_ref_for`` types an artifact from its extension, and a
+        # ``.jsonl`` state artifact is typed as a live XDP state artifact -- which
+        # is exactly the claim a controlled fixture must not be given. It is
+        # published through the provenance channel instead, where its role reads
+        # ``controlled_drift_observation`` and its digest is the one
+        # ``__post_init__`` just verified against the file. The evidence list
+        # therefore keeps referring to recorded captures only.
+        custody_for_drift: List[Dict[str, Any]] = list(custody_sources)
+        sources_for_drift: List[Dict[str, Any]] = list(sources)
+        drift_refs: List[EvidenceRef] = list(evidence_refs)
+        if declared is not None:
+            custody_for_drift.extend(declared.custody_provenance())
+            sources_for_drift.extend(
+                artifacts.provenance(declared.state_record))
+
+        drift = assess_drift(
+            self.baselines.get(self.baseline_id),
+            current,
+            run_id=DATASET_RUN_ID,
+            sequence=sequence,
+            current_source_ref=current_source.public_path,
+            current_source=current_source,
+            evidence_refs=tuple(drift_refs),
+        )
+        self.drift_inputs[assessment_id] = drift
+        self.drift_parent[assessment_id] = None
+        self.bundles[assessment_id]["drift"] = drift.to_dict()
+        # Re-point the plan-based chain at this comparison so its explanation
+        # carries the longitudinal result as context.
+        held = self.custody_inputs[assessment_id]
+        self.custody_inputs[assessment_id] = CustodyInput(
+            **{**held.__dict__, "evidence_refs": tuple(drift_refs),
+               "sources": tuple(disclosed_sources(custody_for_drift))}
+        )
+        if drift.risk is None:
+            # ``no_drift``, ``not_configured`` and ``indeterminate`` carry no
+            # finding, so there is nothing to register and no assessment to add.
+            return
+
+        drift_slot = f"{slot}-drift"
+        drift_id = f"{DATASET_RUN_ID}:{sequence}:{drift_slot}"
+        drift_xai = ExplainabilityEngine().explain(
+            drift.risk,
+            correlation=correlation,
+            ml_result=ml_result,
+            evidence_refs=tuple(drift_refs),
+        )
+        self.drift_inputs[drift_id] = drift
+        self.drift_parent[drift_id] = assessment_id
+        bundle = self._register(
+            drift_id,
+            slot=drift_slot,
+            scenario_label=self.drift_scenario_label or (
+                f"longitudinal comparison of the recorded "
+                f"{observation.case.name if observation is not None else slot} "
+                f"current state against validated baseline "
+                f"{self.baseline_id!r}"),
+            expected=expected,
+            observed=current,
+            correlation=correlation,
+            assessment=drift.risk,
+            xai=drift_xai,
+            ml_result=ml_result,
+            evidence_refs=drift_refs,
+            sources=sources_for_drift,
+            custody_sources=custody_for_drift,
+            observed_present=True,
+        )
+        bundle["drift"] = drift.to_dict()
 
     def _build(self) -> None:
         plan = self._load_plan_samples()
@@ -841,6 +1108,129 @@ class AssessmentStore:
             "overview": dict(self.overview),
             "headers": [dict(h) for h in self.headers],
         }
+        if self.baselines is not None:
+            self.store["drift"] = self.drift_summary()
+            self.overview["drift"] = self.drift_summary()
+
+    # -- drift ---------------------------------------------------------------
+
+    def drift_summary(self) -> Dict[str, Any]:
+        """The drift surface of this store: what was compared, and what changed.
+
+        Reported whether or not a baseline is configured, because "nothing was
+        configured" is itself the honest answer for a store that has no
+        baseline, and a client must not read an absent section as "no drift".
+        """
+        if self.baselines is None:
+            return {
+                "configured": False,
+                "reason": (
+                    "no validated baseline registry was supplied to this store, "
+                    "so no longitudinal comparison was made and no drift is "
+                    "claimed; the absence of drift findings is not evidence that "
+                    "the security state is unchanged over time"
+                ),
+                "baseline_id": None,
+                "supported_categories": list(DRIFT_CATEGORIES),
+                "unsupported_categories": list(UNSUPPORTED_DRIFT_CATEGORIES),
+                "canonicalization": describe_canonicalization(),
+                "status_counts": {},
+                "assessments": {},
+            }
+        counts: Dict[str, int] = {}
+        source_kinds: Dict[str, int] = {}
+        compared: Dict[Tuple[Any, ...], str] = {}
+        for drift in self.drift_inputs.values():
+            counts[drift.status] = counts.get(drift.status, 0) + 1
+            # One comparison is reported against two assessments when it
+            # produced findings, and several assessments can share one
+            # comparison result when they share one security state. Both facts
+            # are published, so `status_counts` is never the only way to read
+            # this surface.
+            identity = (
+                getattr(drift, "baseline_id", None),
+                getattr(drift, "baseline_state_digest", None),
+                getattr(drift, "current_state_digest", None),
+                getattr(drift, "status", None),
+            )
+            compared.setdefault(identity, drift.status)
+            kind = _current_source_kind(drift)
+            source_kinds[kind] = source_kinds.get(kind, 0) + 1
+        return {
+            "configured": True,
+            "reason": None,
+            "baseline_id": self.baseline_id,
+            "baseline": self.baseline_view(),
+            "persistent": self.baselines.persistent,
+            "supported_categories": list(DRIFT_CATEGORIES),
+            "unsupported_categories": list(UNSUPPORTED_DRIFT_CATEGORIES),
+            "canonicalization": describe_canonicalization(),
+            # Assessment counts per status: the published contract, unchanged.
+            "status_counts": dict(sorted(counts.items())),
+            # Distinct comparison results. Lower than `assessment_count` when a
+            # comparison is reported twice (once as context, once as the
+            # drift-origin assessment) or when several assessments share one
+            # security state.
+            "comparison_count": len(compared),
+            "assessment_count": len(self.drift_inputs),
+            # How many of the reporting assessments are the drift-origin alias of
+            # a comparison rather than an independent comparison.
+            "drift_origin_count": sum(
+                1 for parent in self.drift_parent.values() if parent
+            ),
+            # Which kind of artifact each current state was. Reported here so a
+            # client scanning the table cannot read a declared demonstration as
+            # an observation of a live device, and so the distinction is visible
+            # without walking every per-assessment entry.
+            "current_source_kinds": dict(sorted(source_kinds.items())),
+            "assessments": {
+                assessment_id: {
+                    "status": drift.status,
+                    "drift_detected": drift.drift_detected,
+                    "drift_categories": list(drift.drift_categories),
+                    "current_source_kind": _current_source_kind(drift),
+                    "current_source_is_capture": _current_source_is_capture(drift),
+                    "entry_kind": (
+                        "drift_origin" if self.drift_parent.get(assessment_id)
+                        else "plan_comparison"
+                    ),
+                    "parent_assessment_id": self.drift_parent.get(assessment_id),
+                    "changed_fields": [
+                        change.to_dict() for change in drift.changed_fields
+                    ],
+                    "reason": drift.reason,
+                }
+                for assessment_id, drift in sorted(self.drift_inputs.items())
+            },
+        }
+
+    def baseline_view(self) -> Optional[Dict[str, Any]]:
+        """The configured baseline as the API discloses it, or ``None``."""
+        if self.baselines is None or not self.baseline_id:
+            return None
+        record = self.baselines.get(self.baseline_id)
+        if record is None:
+            return None
+        payload = record.to_dict()
+        return {
+            "baseline_id": payload["baseline_id"],
+            "validation_status": payload["validation_status"],
+            "state_digest": payload["state_digest"],
+            "baseline_digest": payload["baseline_digest"],
+            "validated_at": payload["validated_at"],
+            "validated_by": payload["validated_by"],
+            "asset_id": payload["asset_id"],
+            "captured_at": payload["captured_at"],
+            "source_run_id": payload["source_run_id"],
+            "source_observation_ref": payload["source_observation_ref"],
+            "canonical_state": payload["canonical_state"],
+            "model_version": payload["model_version"],
+            "schema_version": payload["schema_version"],
+        }
+
+    def drift_for(self, assessment_id: str) -> Optional[DriftAssessment]:
+        """The build-time drift comparison for one assessment, or ``None``."""
+        return self.drift_inputs.get(assessment_id)
 
     # -- chain of custody ----------------------------------------------------
 
@@ -871,6 +1261,11 @@ class AssessmentStore:
         ``asset_id``. It is looked up in the mission profile book, never derived
         from the assessment: with no ``asset_id`` or no matching profile the
         chain reports ``not_configured`` and the technical risk stands alone.
+
+        The drift comparison is attached only when the store was built with an
+        explicit baseline, using the value computed at build time from the
+        recorded observation. It is never recomputed here: serving a chain
+        performs no comparison.
         """
         held = self.custody_inputs.get(assessment_id)
         if held is None:
@@ -912,20 +1307,32 @@ class AssessmentStore:
                 asset_id=self.asset_id,
                 profiles=self.mission_profiles,
             ),
+            drift=self.drift_inputs.get(assessment_id),
         )
 
 
 def build_store(plan_path: str = PLAN_PATH, *,
                 asset_id: Optional[str] = None,
-                mission_profiles: Optional[MissionProfileBook] = None) -> AssessmentStore:
+                mission_profiles: Optional[MissionProfileBook] = None,
+                baselines: Optional[BaselineRegistry] = None,
+                baseline_id: Optional[str] = None,
+                drift_observations: Sequence[DriftCurrentObservation] = (),
+                drift_scenario_label: Optional[str] = None) -> AssessmentStore:
     """Build the store, optionally bound to a declared asset and its profiles.
 
     ``asset_id`` is the operator's statement about which testbed asset this
     dataset run describes. It is the only link between an assessment and a
     mission profile, and it is supplied rather than inferred.
+
+    ``baselines`` and ``baseline_id`` are the same kind of explicit declaration
+    for drift: without both, no longitudinal comparison is made.
     """
     return AssessmentStore(
         plan_path=plan_path,
         asset_id=asset_id,
         mission_profiles=mission_profiles,
+        baselines=baselines,
+        baseline_id=baseline_id,
+        drift_observations=drift_observations,
+        drift_scenario_label=drift_scenario_label,
     )

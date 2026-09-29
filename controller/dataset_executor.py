@@ -28,6 +28,7 @@ from . import campaign as campaign_mod
 from . import capture as capture_mod
 from . import dataset as dataset_mod
 from . import dataset_run as dataset_run_mod
+from . import experiment_manifest as manifest_mod
 from . import experiment_runner as _engine
 from . import reuse as reuse_mod
 from .dataset_planner import (
@@ -258,6 +259,7 @@ def execute_dataset_run(results_root, dataset_run_id, *,
                         max_attempts_per_sequence=DEFAULT_ATTEMPTS_PER_SEQUENCE,
                         collector_fn=None,
                         run_options=None,
+                        live_session=False,
                         log=None):
     """Execute a dataset run until it is complete (or unrecoverable).
 
@@ -283,23 +285,36 @@ def execute_dataset_run(results_root, dataset_run_id, *,
     or resume starts with no prior identity, so the first sample is always a
     full fresh deployment.
 
+    ``live_session=True`` publishes ONE run-spanning live boundary (controller
+    manifest) for the whole run: it is opened when the first live XDP
+    observation goes live, re-anchored if the sensor journal is truncated by a
+    monitor restart, and closed once this invocation returns.  The production
+    worker sets it only when driving the real testbed pipeline; unit tests and
+    the manual path leave it False, so they never touch the live boundary.
+
     Returns the (persisted) DatasetRun.
     """
     log = log or (lambda msg: None)
     reuse_manager = reuse_mod.TopologyReuseManager(log=log)
-    return _engine.execute_repeated_run(
-        results_root, dataset_run_id,
-        load_plan_fn=load_plan,
-        run_attempt_fn=run_attempt_fn,
-        cleanup_fn=cleanup_fn,
-        validate_plan_fn=validate_plan,
-        max_attempts_per_sequence=max_attempts_per_sequence,
-        collector_fn=collector_fn,
-        run_options=run_options,
-        reuse_manager=reuse_manager,
-        teardown_fn=_teardown_run_topology,
-        log=log,
-    )
+    if live_session:
+        manifest_mod.begin_run_session(dataset_run_id)
+    try:
+        return _engine.execute_repeated_run(
+            results_root, dataset_run_id,
+            load_plan_fn=load_plan,
+            run_attempt_fn=run_attempt_fn,
+            cleanup_fn=cleanup_fn,
+            validate_plan_fn=validate_plan,
+            max_attempts_per_sequence=max_attempts_per_sequence,
+            collector_fn=collector_fn,
+            run_options=run_options,
+            reuse_manager=reuse_manager,
+            teardown_fn=_teardown_run_topology,
+            log=log,
+        )
+    finally:
+        if live_session:
+            manifest_mod.close_run_session(log=log)
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────

@@ -12,6 +12,12 @@ private/
 # A fresh clone must be able to run `controller/test_features.py`,
 # `controller/test_live_features.py` and `controller/test_ml_inference.py`.
 !controller/testdata/*.pcap
+# ...and the real captures in the tracked analytics demo fixture, which
+# `tests/test_evidence_production_registration.py` and
+# `controller/test_live_features.py` require and which the evidence-reference
+# and custody paths fingerprint. Regenerate with `./scripts/init-demo-data.sh`;
+# see `demo/README.md` for provenance and for what is deliberately excluded.
+!demo/analytics/datasets/*/captures/*/*.pcap
 
 #logs
 logs/

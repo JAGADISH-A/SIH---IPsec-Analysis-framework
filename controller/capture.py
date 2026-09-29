@@ -22,9 +22,13 @@ import json
 import subprocess
 import time
 
-# All testbed privileged subprocesses run under ``sudo -n`` (non-interactive).
-# A web worker must never block on an interactive sudo prompt.
-SUDO = ["sudo", "-n"]
+from .privileges import docker_prefix
+
+# docker exec/cp resolves its prefix via the shared ``docker_prefix()``
+# resolver: ``sudo -n`` when passwordless sudo exists, bare docker when the
+# docker socket is group/rootless-reachable.  A web worker must never block
+# on an interactive sudo prompt.
+SUDO = list(docker_prefix())
 
 CAPTURE_COMMAND_TIMEOUT = 120.0
 

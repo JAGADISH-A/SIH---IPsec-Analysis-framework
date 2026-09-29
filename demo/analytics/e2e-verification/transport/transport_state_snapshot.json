@@ -1,0 +1,86 @@
+{
+  "active": true,
+  "active_timeout_ms": 1000,
+  "ah_seen": false,
+  "bytes_a_to_b": 141178,
+  "bytes_b_to_a": 18026,
+  "bytes_seen": 159204,
+  "endpoints": {
+    "a": "10.20.1.10",
+    "b": "10.20.1.20"
+  },
+  "esp_seen": true,
+  "ike_nat_t_seen": true,
+  "ike_seen": true,
+  "last_ah_timestamp_ns": null,
+  "last_esp_timestamp_ns": 1790102132841368832,
+  "last_ike_nat_t_timestamp_ns": 1790101875080577024,
+  "last_ike_timestamp_ns": 1790101875038746112,
+  "last_packet_timestamp_ns": 1790102132841368832,
+  "observation_start_ns": 1790101876027522048,
+  "observed_ike_activity": true,
+  "packets_a_to_b": 641,
+  "packets_b_to_a": 101,
+  "packets_seen": 742,
+  "spis": [
+    {
+      "active": true,
+      "direction": "B_TO_A",
+      "first_seen_ns": 1790101876027746048,
+      "first_sequence": 1,
+      "highest_sequence": 115,
+      "last_seen_ns": 1790102132841293056,
+      "last_sequence": 115,
+      "packet_count": 99,
+      "sequence_delta": 114,
+      "spi": "0xcf45c538"
+    },
+    {
+      "active": true,
+      "direction": "A_TO_B",
+      "first_seen_ns": 1790101876027522048,
+      "first_sequence": 1,
+      "highest_sequence": 1140,
+      "last_seen_ns": 1790102132841368832,
+      "last_sequence": 640,
+      "packet_count": 639,
+      "sequence_delta": 639,
+      "spi": "0xcfcb298f"
+    }
+  ],
+  "timestamp_ns": 1790102132841368832,
+  "transitions": [
+    {
+      "endpoints": {
+        "a": "10.20.1.10",
+        "b": "10.20.1.20"
+      },
+      "timestamp_ns": 1790101876027522048,
+      "type": "IPSEC_TRAFFIC_OBSERVED"
+    },
+    {
+      "direction": "A_TO_B",
+      "known_spis": [
+        "0xcfcb298f"
+      ],
+      "spi": "0xcfcb298f",
+      "timestamp_ns": 1790101876027522048,
+      "type": "SPI_OBSERVED"
+    },
+    {
+      "direction": "B_TO_A",
+      "known_spis": [
+        "0xcfcb298f",
+        "0xcf45c538"
+      ],
+      "spi": "0xcf45c538",
+      "timestamp_ns": 1790101876027746048,
+      "type": "SPI_OBSERVED"
+    },
+    {
+      "timestamp_ns": 1790102132841368832,
+      "type": "ACTIVE"
+    }
+  ],
+  "tunnel_seen": true
+}

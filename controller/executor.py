@@ -2,6 +2,7 @@ import json
 import os
 import signal
 import subprocess
+import time
 from pathlib import Path
 
 from .config import CONFIG
@@ -9,6 +10,9 @@ from .topology import TOPOLOGIES
 from .validate import validate_config
 from .generator import write_connection
 from . import traffic as traffic_mod
+from . import experiment_manifest as manifest_mod
+from . import xdp_observation
+from .privileges import docker_prefix
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -75,12 +79,18 @@ def get_topology(mode, address_family):
 
 
 def _privileged(*argv):
-    """Return a sudo command guaranteed to be non-interactive (``sudo -n``).
+    """Return a command guaranteed to be non-interactive.
 
     The first token is the command (e.g. use ``_privileged("docker", ...)``).
     A web/background worker must never block on an interactive sudo prompt, so
     every privileged subprocess in the testbed path goes through this.
+    ``docker`` operations resolve their prefix (``sudo -n`` when privileged
+    sudo exists, bare ``docker`` when the socket is group/rootless-reachable);
+    root-namespace steps (``containerlab``, the ``br-wan`` lifecycle wrapper)
+    remain under ``sudo -n``.
     """
+    if argv and argv[0] == "docker":
+        return [*docker_prefix(), *argv]
     return [*SUDO, *argv]
 
 
@@ -512,6 +522,20 @@ def verify_ipsec(mode, address_family):
       "mode": expected_mode,
 }
 
+def ensure_live_observation(mode, address_family="ipv4", log=None):
+    """Make the live XDP observation path ready for a deployed testbed.
+
+    Every mode declares a passive sensor that feeds the SAME shared live
+    journal, so the result is identical in shape for both topologies: the
+    tunnel sensor (``clab-ipsec-sensor``) observes the gw-a WAN mirror and the
+    transport sensor (``clab-ipsec-transport-sensor``) observes the host-c
+    host-to-host mirror.  The concrete sensor is resolved by
+    ``xdp_observation.ensure_for_mode``; readiness failures raise
+    ``ObservationReadinessError`` instead of degrading to "no observation".
+    """
+    return xdp_observation.ensure_for_mode(mode, log=log)
+
+
 def validate_traffic(traffic):
     profile = traffic["profile"]
     duration = traffic.get("duration", traffic_mod.DEFAULT_DURATION)
@@ -597,9 +621,10 @@ def run_traffic(config):
     }
 
 
-def run_experiment(config, on_stage=None):
+def run_experiment(config, on_stage=None, job_id=None):
     mode = config["mode"]
     address_family = config["address_family"]
+    started_at_ns = int(time.time_ns())
 
     validate_config(config)
 
@@ -612,12 +637,35 @@ def run_experiment(config, on_stage=None):
         if on_stage is not None:
             on_stage(stage)
 
+    # Lifecycle order (observation readiness is the gate BEFORE connectivity
+    # and traffic; see docs/reports/CAPTURE_FEED_IMPLEMENTATION_REPORT.md):
+    #   DEPLOY -> IPSEC config -> SA verification -> OBSERVATION readiness
+    #   -> CONNECTIVITY verification -> TRAFFIC generation.
     stage("DEPLOY")
+    # A new deploy can only belong to this run: clear the previous experiment's
+    # manifest so a stale identity can never be attached to the new journal.
+    manifest_mod.clear()
     reset_and_deploy(mode)
     stage("IPSEC")
     load_generated_configs(config)
     initiate_ipsec(mode, address_family)
     ipsec = verify_ipsec(mode, address_family)
+    stage("OBSERVATION")
+    observation = ensure_live_observation(mode, address_family)
+    if observation.get("status") != "live":
+        raise xdp_observation.ObservationReadinessError(
+            f"live XDP observation not ready: {observation}"
+        )
+    # The live observation is now flowing against a truncated journal. Record
+    # its exact byte boundary at this moment: the analytics feed will serve
+    # ONLY lines at/after this offset, so no pre-experiment history can ever
+    # appear in the LIVE table for this run.
+    observation_start_bytes = manifest_mod.current_journal_size()
+    if manifest_mod.write_start(job_id, config, started_at_ns, observation_start_bytes):
+        print(
+            f"published live observation boundary @ byte {observation_start_bytes} "
+            "for this experiment"
+        )
     stage("CONNECTIVITY")
     connectivity = test_connectivity(mode, address_family)
 
@@ -633,6 +681,7 @@ def run_experiment(config, on_stage=None):
         "esp": config["esp"],
         "connectivity": connectivity,
         "ipsec": ipsec,
+        "observation": observation,
     }
 
     if profile is not None:
@@ -642,6 +691,65 @@ def run_experiment(config, on_stage=None):
 
         if traffic["status"] != "PASS":
             result["status"] = "FAIL"
+
+        # Evidence readiness is checked HERE, after traffic has been generated,
+        # and never at attach time: a correctly attached monitor legitimately
+        # has an empty journal until packets exist.  This is the point where
+        # "observations are actually arriving" is a meaningful claim.
+        if observation.get("status") == "live":
+            baseline = int(observation.get("journal_lines") or 0)
+            try:
+                evidence_summary = xdp_observation.await_observation_evidence(
+                    baseline_lines=baseline, log=print,
+                )
+            except xdp_observation.ObservationReadinessError as exc:
+                result["observation_evidence"] = {
+                    "status": "FAIL",
+                    "reason": str(exc),
+                }
+                result["status"] = "FAIL"
+                print(f"[traffic] live journal received no observations: {exc}")
+            else:
+                result["observation_evidence"] = {
+                    "status": "PASS",
+                    "new_observations": evidence_summary["lines"] - baseline,
+                    "journal_lines": evidence_summary["lines"],
+                    "journal_bytes": evidence_summary["bytes"],
+                }
+
+    # Refresh the open manifest with the real observed verdicts (observed SPIs,
+    # observation/connectivity/traffic results) BEFORE marking the run ended.
+    # The start manifest is written the moment observation goes live, so its
+    # observed block is still empty; without this refresh the current-run annex
+    # has no observed SPIs to project risk onto, and every live packet reads
+    # UNASSESSED for the whole run. No ``ended_at_ns`` here, so the boundary
+    # gate stays open and the assessment covers the packets observed so far.
+    if (
+        observation.get("status") == "live"
+        and manifest_mod.write_current(
+            job_id, config, result, started_at_ns,
+            observation_start_bytes=observation_start_bytes,
+            ended_at_ns=None,
+        )
+    ):
+        print("published open manifest with observed verdicts for live risk "
+              "projection")
+
+    # Persist the current-run identity + real observed verdicts for the
+    # analytics backend, but only when a real live observation was produced
+    # (a live XDP journal on this mode's passive sensor). Specifying
+    # ``ended_at_ns`` marks the run as finished so the feed drops LIVE rows
+    # immediately on stop. The manifest is cleared at the next DEPLOY, so it
+    # can never describe a different run.
+    if (
+        observation.get("status") == "live"
+        and manifest_mod.write_current(
+            job_id, config, result, started_at_ns,
+            observation_start_bytes=observation_start_bytes,
+            ended_at_ns=int(time.time_ns()),
+        )
+    ):
+        print("published current experiment manifest for live analytics binding")
 
     return result
 

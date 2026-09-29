@@ -795,10 +795,27 @@ class TestApiAndOpenApi(unittest.TestCase):
         self.assertEqual(status["enum"], ["configured", "not_configured"])
 
     def test_no_new_route_was_introduced(self):
-        """The feature rides the existing response; no asset-management API."""
+        """The feature rides the existing response; no asset-management API.
+
+        The route count is pinned so a new surface cannot appear unnoticed, so
+        the later drift milestone's three read-only routes are named here
+        explicitly. What this test really protects is the *shape* of the API:
+        still no asset-management surface, and every route still a GET.
+        """
         document = openapi_document()
-        self.assertEqual(len(document["paths"]), 33)
+        drift_routes = {
+            "/api/v1/drift",
+            "/api/v1/drift/baselines",
+            "/api/v1/assessments/{id}/drift",
+        }
+        self.assertLessEqual(drift_routes, set(document["paths"]))
+        self.assertEqual(len(set(document["paths"]) - drift_routes), 33)
+        self.assertEqual(len(document["paths"]), 33 + len(drift_routes))
         self.assertFalse([path for path in document["paths"] if "asset" in path.lower()])
+        for path, operations in document["paths"].items():
+            self.assertEqual(
+                sorted(operations), ["get"], f"{path} must stay read-only"
+            )
 
     def test_the_documented_shape_matches_the_served_one(self):
         payload = handle_assessment_finding_explanation(

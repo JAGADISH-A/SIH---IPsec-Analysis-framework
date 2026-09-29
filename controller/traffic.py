@@ -32,15 +32,17 @@ import subprocess
 import time
 from pathlib import Path
 
-# All testbed privileged subprocesses run under ``sudo -n`` (non-interactive).
-# A web/background worker must never block on an interactive sudo prompt.
-SUDO = ["sudo", "-n"]
+from .privileges import docker_prefix
 
+# All testbed dataplane subprocesses must run non-interactively.  ``docker``
+# calls resolve their prefix via ``docker_prefix()``: ``sudo -n`` when
+# privileged sudo exists, bare docker when the socket is group/rootless-
+# reachable (the containerlab lab needs no host root for in-container exec).
 DOCKER_EXEC_TIMEOUT = 120.0
 
 
 def _docker(args, **kwargs):
-    return subprocess.run([*SUDO, "docker"] + args, **kwargs)
+    return subprocess.run([*docker_prefix(), "docker"] + args, **kwargs)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TRAFFIC_GEN = PROJECT_ROOT / "scripts" / "trafficgen.py"
@@ -420,7 +422,7 @@ def run_sender(container, profile, target, port=DEFAULT_PORT, duration=30.0):
     if get_traffic_generator() == "ditg" and profile != "icmp":
         argv = build_ditg_command(profile, target, port=port, duration=duration)
         result = subprocess.run(
-            [*SUDO, "docker", "exec", container] + argv,
+            [*docker_prefix(), "docker", "exec", container] + argv,
             capture_output=True, text=True, timeout=int(duration) + 30,
         )
         log = (result.stdout or "") + (result.stderr or "")
@@ -504,7 +506,7 @@ def wait_receiver(source_container, dest_ip, port=DEFAULT_PORT, timeout=15.0):
     deadline = time.time() + timeout
     while time.time() < deadline:
         res = subprocess.run(
-            [*SUDO, "docker", "exec", source_container, "python3", "-c", probe],
+            [*docker_prefix(), "docker", "exec", source_container, "python3", "-c", probe],
             capture_output=True,
             text=True,
             timeout=DOCKER_EXEC_TIMEOUT,

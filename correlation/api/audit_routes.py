@@ -165,6 +165,27 @@ def handle_audit_event(store: AuditStore, event_id: str):
     return event.to_dict()
 
 
+def gated_empty_audit_payload(reason: str) -> Dict[str, Any]:
+    """Envelope for a present-but-closed live audit tail.
+
+    Same idea as the capture feed's ``_gated_empty_payload``: the journal may
+    hold thousands of recorded events, but with no experiment active on this
+    journal zero rows are LIVE. The response reports ``current: false`` and the
+    reason; it never divulges recorded-history rows as if they were current.
+    """
+    return {
+        "api": "audit-events-v1",
+        "read_only": True,
+        "source_of_truth": "correlation.audit.AuditJournal (queried, never rewritten)",
+        "state": "gated-closed",
+        "current": False,
+        "reason": reason,
+        "count": 0,
+        "total": 0,
+        "events": [],
+    }
+
+
 def handle_audit_runs(store: AuditStore, params: Optional[Dict[str, Any]] = None):
     """Per-run summaries so a client can discover which runs have evidence."""
     runs = _guard(store.runs)

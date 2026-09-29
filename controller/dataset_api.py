@@ -320,6 +320,9 @@ def _run_dataset_worker(results_root, dataset_run_id, lock, *, run_attempt_fn,
     collector = collector_fn
     if collector is None:
         collector = artifacts_mod.collect_successful_sample
+    # Only the real testbed pipeline owns the live boundary; an injected
+    # (test) runner must never publish a continuous session manifest.
+    live_session = run_attempt_fn is None
     log = _make_run_logger(results_root, dataset_run_id)
     log("worker started")
     try:
@@ -329,6 +332,7 @@ def _run_dataset_worker(results_root, dataset_run_id, lock, *, run_attempt_fn,
             cleanup_fn=cleaner,
             max_attempts_per_sequence=max_attempts_per_sequence,
             collector_fn=collector,
+            live_session=live_session,
             log=log,
         )
         if run.status == STATUS_COMPLETED:

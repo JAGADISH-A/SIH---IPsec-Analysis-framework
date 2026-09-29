@@ -57,6 +57,10 @@ class Phase10Context:
     #: is None the audit routes report "no journal configured" rather than
     #: inventing evidence; it is never written to from a request.
     audit_store: Optional[Any] = None
+    #: Optional read-only capture-feed service tailing the xdp_monitor packet
+    #: journal. ``None`` keeps the /api/v1/capture/events route unavailable
+    #: (503); it is never written to from a request.
+    capture_feed: Optional[Any] = None
     #: Optional WRITE-side governance ledger. Unlike ``audit_store`` this one is
     #: appended to: it is the durable home of the assessment/recommendation/
     #: authorization/approval record. It is never written from a request
@@ -86,6 +90,10 @@ class Phase10Context:
     def attach_audit_store(self, store) -> None:
         """Wire the audit query layer. Explicit, like every other dependency."""
         self.audit_store = store
+
+    def attach_capture_feed(self, feed) -> None:
+        """Wire the read-only capture-feed service. Explicit, always attachable."""
+        self.capture_feed = feed
 
     def note_evidence_registered(self, registered: int, root: str) -> None:
         """Report the evidence registry's real state after registration.
@@ -157,6 +165,9 @@ class Phase10Context:
             "pcap_downloads": self.pcap.download_count,
             "traffic_generator": self.traffic_generator.status(),
             "audit_journal_configured": self.audit_store is not None,
+            "capture_feed": (
+                None if self.capture_feed is None else str(self.capture_feed.path)
+            ),
             "governance_journal": (
                 None if self.governance is None else str(self.governance.path)
             ),

@@ -25,6 +25,9 @@ from typing import FrozenSet, List, Optional, Tuple
 ENV_ALLOWED_ORIGINS = "ANALYTICS_API_ALLOWED_ORIGINS"
 ENV_HOST = "ANALYTICS_API_HOST"
 ENV_PORT = "ANALYTICS_API_PORT"
+#: Path to the xdp_monitor packet journal served read-only by the capture
+#: feed. Falls back to :data:`capture_feed.DEFAULT_CAPTURE_FEED_PATH`.
+ENV_CAPTURE_FEED = "ANALYTICS_API_CAPTURE_FEED"
 
 #: Bind address used when nothing is configured.  Loopback only: the analytics
 #: API has no authentication, so binding every interface by default would

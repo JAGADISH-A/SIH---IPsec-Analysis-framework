@@ -95041,6 +95041,18 @@ struct ioam6_hdr {
 	__u8 type;
 };
 
+struct rt6_info {
+	struct dst_entry dst;
+	struct fib6_info *from;
+	int sernum;
+	struct rt6key rt6i_dst;
+	struct rt6key rt6i_src;
+	struct in6_addr rt6i_gateway;
+	struct inet6_dev *rt6i_idev;
+	u32 rt6i_flags;
+	short unsigned int rt6i_nfheader_len;
+};
+
 struct ioam6_lwt_freq {
 	u32 k;
 	u32 n;
@@ -95097,7 +95109,7 @@ struct ioam6_lwt_encap {
 };
 
 struct ioam6_lwt {
-	struct dst_entry null_dst;
+	struct rt6_info null_rt;
 	struct dst_cache cache;
 	struct ioam6_lwt_freq freq;
 	atomic_t pkt_cnt;
@@ -111713,18 +111725,6 @@ struct rtable {
 	};
 	u32 rt_mtu_locked: 1;
 	u32 rt_pmtu: 31;
-};
-
-struct rt6_info {
-	struct dst_entry dst;
-	struct fib6_info *from;
-	int sernum;
-	struct rt6key rt6i_dst;
-	struct rt6key rt6i_src;
-	struct in6_addr rt6i_gateway;
-	struct inet6_dev *rt6i_idev;
-	u32 rt6i_flags;
-	short unsigned int rt6i_nfheader_len;
 };
 
 struct net_bridge;

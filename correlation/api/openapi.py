@@ -183,6 +183,40 @@ def openapi_document(base_url: str = "") -> Dict[str, Any]:
             "the analytics API is read-only."
         ),
         responses=_ERROR_RESPONSES)
+    paths["/api/v1/capture/events"] = _get(
+        "/api/v1/capture/events", "getCaptureEvents",
+        "Read-only tail of the xdp_monitor packet journal (capture view).",
+        tags=["capture", "phase10"],
+        description=(
+            "Passive capture of the gateway traffic path. The server tails the "
+            "packet journal the sensor writes (byte-offset cursor) and "
+            "normalizes each raw XDP event through the streaming adapter; it "
+            "never fabricates packets. When no journal is attached the route "
+            "returns a structured 503 (`capture_feed_unavailable`); when the "
+            "attached journal has no packets yet it reports "
+            "`present:false` + a `reason`, i.e. an explicit waiting state. "
+            "Per-packet `risk` is a verbatim projection of the assessment "
+            "store by observed SPI, never inferred from the packet.\n\n"
+            "The envelope also carries the backend's own `current` verdict: a "
+            "journal is current only while it is actively being written (write "
+            "activity inside `freshness_window_ms`, default 8000, overridable "
+            "via `ANALYTICS_API_CAPTURE_FRESHNESS_MS`). A journal that exists "
+            "but is not being written reports `current:false` — its rows are "
+            "recorded history, not current live traffic, and the workspace "
+            "must not present them as live. `last_write_age_ms`, "
+            "`journal_mtime_ms`, `server_time_ms` and `newest_observed_at_ms` "
+            "are the supporting timestamps; currentness is never approximated "
+            "client-side."
+        ),
+        params=[
+            _param("cursor", "query", {"type": "integer"},
+                   "Byte offset into the journal to continue reading from.",
+                   required=False),
+            _param("limit", "query", {"type": "integer", "maximum": 2000},
+                   "Maximum rows to return in this page (default 200).",
+                   required=False),
+        ],
+        responses={**_paged(), **_ERROR_RESPONSES})
 
     paths["/api/v1/evidence"] = _get(
         "/api/v1/evidence", "listEvidence", "All registered evidence references.",
@@ -438,6 +472,81 @@ def openapi_document(base_url: str = "") -> Dict[str, Any]:
             },
             **_ERROR_RESPONSES,
         })
+    paths["/api/v1/drift"] = _get(
+        "/api/v1/drift",
+        "getDrift",
+        "Longitudinal IPsec security-state drift for this dataset run.",
+        tags=["drift"],
+        description=(
+            "What this run's observations were compared against, and the outcome "
+            "per assessment.\n\n"
+            "`configuration_drift` is the only supported category, because the "
+            "authoritative observation path reports only ESP presence, AH presence "
+            "and the endpoint address family. No cipher, DH group, PFS, IKE "
+            "version, firmware, implementation, traffic-behaviour or ML drift is "
+            "detected, and the other categories are listed in "
+            "`unsupported_categories` so the absence is explicit rather than "
+            "silent.\n\n"
+            "A baseline is only ever established explicitly by an operator and is "
+            "never promoted from the most recent observation. With no baseline "
+            "configured this route reports `configured: false` with a reason, and "
+            "`status_counts` is empty -- which is not the same as reporting no "
+            "drift. Transient values (timestamps, counters, SPI values, liveness, "
+            "observation history) are excluded from the comparison by declaration "
+            "and are listed in `canonicalization.excluded`."
+        ),
+        responses={
+            "200": {
+                "description": "The drift summary.",
+                "content": {_JSON: {"schema": _ref("DriftSummary")}},
+            },
+            **_ERROR_RESPONSES,
+        })
+    paths["/api/v1/drift/baselines"] = _get(
+        "/api/v1/drift/baselines",
+        "getDriftBaselines",
+        "The validated IPsec security-state baselines this store knows about.",
+        tags=["drift"],
+        description=(
+            "Each baseline is disclosed as a record with both digests: "
+            "`state_digest` fingerprints the comparable security state, and "
+            "`baseline_digest` seals the whole record including who validated it "
+            "and when, so an edit to either is detectable.\n\n"
+            "Read-only: a baseline is created by the drift layer, not by this API. "
+            "An empty list means no baseline was declared, not that no drift "
+            "exists."
+        ),
+        responses={
+            "200": {
+                "description": "The registered baselines.",
+                "content": {_JSON: {"schema": _ref("DriftBaselineList")}},
+            },
+            **_ERROR_RESPONSES,
+        })
+    paths["/api/v1/assessments/{id}/drift"] = _get(
+        "/api/v1/assessments/{id}/drift",
+        "getAssessmentDrift",
+        "The drift comparison for one assessment.",
+        tags=["drift"],
+        description=(
+            "The field-level comparison behind the run-level summary. A known "
+            "assessment with no configured baseline is reported as "
+            "`not_configured` rather than `drift` or `no_drift`.\n\n"
+            "`indeterminate` means the current observation could not support a "
+            "comparison claim -- for example it saw no traffic at all, so every "
+            "presence flag reads false by observation rather than by security "
+            "change. Nothing is then reported as changed and nothing as agreed."
+        ),
+        params=[
+            _param("id", "path", _STR, "Assessment id.", required=True),
+        ],
+        responses={
+            "200": {
+                "description": "The assessment's drift comparison.",
+                "content": {_JSON: {"schema": _ref("DriftAssessment")}},
+            },
+            **_ERROR_RESPONSES,
+        })
 
     return {
         "openapi": OPENAPI_VERSION,
@@ -481,6 +590,12 @@ def openapi_document(base_url: str = "") -> Dict[str, Any]:
             {"name": "discovery", "description": "Enumerating what exists, for state restoration."},
             {"name": "findings", "description": "Backend-produced risk findings, read-only."},
             {"name": "custody", "description": "Chain of custody and integrity checks for a finding."},
+            {"name": "drift", "description": (
+                "Longitudinal drift of observed IPsec security state against an "
+                "explicitly validated baseline. Read-only: a baseline is "
+                "established by an operator, never inferred from the most recent "
+                "observation."
+            )},
         ],
         "paths": paths,
         "components": {
@@ -535,6 +650,389 @@ def openapi_document(base_url: str = "") -> Dict[str, Any]:
                                     "path": {"type": "string",
                                              "description": "Repository-relative; never absolute."},
                                     "sha256": _STR,
+                                },
+                            },
+                        },
+                    },
+                },
+                "ValidatedBaseline": {
+                    "type": "object",
+                    "description": (
+                        "An explicitly validated historical IPsec security state. "
+                        "`validation_status` is always `validated`: there is no "
+                        "provisional or implicit baseline, and the most recent "
+                        "observation is never promoted to one. `canonical_state` "
+                        "holds only the declared comparable fields, which is why "
+                        "transient values cannot enter the comparison."
+                    ),
+                    "required": ["baseline_id", "state_digest", "canonical_state",
+                                 "validation_status", "baseline_digest",
+                                 "model_version", "schema_version"],
+                    "properties": {
+                        "baseline_id": _STR,
+                        "state_digest": {
+                            **_STR,
+                            "description": (
+                                "sha256 over the canonical comparable state; the "
+                                "fingerprint two observations are compared by, and "
+                                "reproducible by any client holding the state."
+                            ),
+                        },
+                        "baseline_digest": {
+                            **_STR,
+                            "description": (
+                                "sha256 over the whole record including its "
+                                "provenance metadata; the seal, so a change to the "
+                                "validation metadata is detectable too."
+                            ),
+                        },
+                        "canonical_state": {
+                            "type": "object",
+                            "description": (
+                                "The comparable security state: address_family, "
+                                "esp.presence, ah.presence."
+                            ),
+                            "additionalProperties": {"description": "Comparable value."},
+                        },
+                        "validation_status": {"type": "string", "enum": ["validated"]},
+                        "asset_id": {"type": "string", "nullable": True},
+                        "source_run_id": {"type": "string", "nullable": True},
+                        "source_observation_ref": {"type": "string", "nullable": True},
+                        "captured_at": {"type": "string", "nullable": True},
+                        "validated_at": {"type": "string", "nullable": True},
+                        "validated_by": {"type": "string", "nullable": True},
+                        "notes": {"type": "string", "nullable": True},
+                        "model_version": _STR,
+                        "schema_version": _STR,
+                        "component": _STR,
+                        "component_version": _STR,
+                        "source": _STR,
+                        "evidence_refs": {
+                            "type": "array",
+                            "description": "Serialised evidence references; never a payload or a path.",
+                            "items": {"type": "object"},
+                        },
+                    },
+                },
+                "DriftBaselineList": {
+                    "type": "object",
+                    "description": (
+                        "The validated baselines this store knows about, plus the "
+                        "canonicalization declaration. An empty `baselines` list "
+                        "with `configured: false` means no baseline was declared, "
+                        "which is not a claim that no drift exists."
+                    ),
+                    "required": ["configured", "baseline_ids", "baselines",
+                                 "canonicalization"],
+                    "properties": {
+                        "api": _STR,
+                        "read_only": {"type": "boolean", "const": True},
+                        "configured": {"type": "boolean"},
+                        "reason": {"type": "string", "nullable": True},
+                        "persistent": {
+                            "type": "boolean",
+                            "description": "False for the in-memory default registry.",
+                        },
+                        "baseline_ids": {"type": "array", "items": _STR},
+                        "baselines": {
+                            "type": "array",
+                            "items": _ref("ValidatedBaseline"),
+                        },
+                        "canonicalization": _ref("Canonicalization"),
+                    },
+                },
+                "Canonicalization": {
+                    "type": "object",
+                    "description": (
+                        "What participates in the comparison and what does not, with "
+                        "the reason for each. Published so a reader can verify that "
+                        "no excluded field was silently compared."
+                    ),
+                    "required": ["model_version", "included", "excluded"],
+                    "properties": {
+                        "model_version": _STR,
+                        "included": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["variable", "comparison_rule",
+                                             "security_relevance", "reason"],
+                                "properties": {
+                                    "variable": _STR,
+                                    "label": _STR,
+                                    "comparison_rule": _STR,
+                                    "security_relevance": {"type": "boolean"},
+                                    "reason": _STR,
+                                },
+                            },
+                        },
+                        "excluded": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["field", "reason"],
+                                "properties": {"field": _STR, "reason": _STR},
+                            },
+                        },
+                    },
+                },
+                "DriftAssessment": {
+                    "type": "object",
+                    "description": (
+                        "The comparison of one observation against one validated "
+                        "baseline. The same document appears at "
+                        "`ChainOfCustody.drift`."
+                    ),
+                    "required": ["status", "drift_detected", "baseline", "current",
+                                 "changed_fields", "unchanged_variables",
+                                 "unknown_variables", "drift_categories",
+                                 "model_version", "rule_id"],
+                    "properties": {
+                        "api": _STR,
+                        "read_only": {"type": "boolean", "const": True},
+                        "assessment_id": {"type": "string", "nullable": True},
+                        "status": {
+                            "type": "string",
+                            "enum": ["drift", "no_drift", "not_configured",
+                                     "indeterminate"],
+                        },
+                        "drift_detected": {
+                            "type": "boolean",
+                            "description": "True only for status `drift`.",
+                        },
+                        "baseline": _ref("DriftBaselineSide"),
+                        "current": _ref("DriftCurrentSide"),
+                        "changed_fields": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["variable", "baseline_value",
+                                             "current_value", "drift_category",
+                                             "security_relevance"],
+                                "properties": {
+                                    "variable": _STR,
+                                    "label": _STR,
+                                    "baseline_value": {"description": "Validated value."},
+                                    "current_value": {"description": "Observed value."},
+                                    "comparison_rule": _STR,
+                                    "security_relevance": {"type": "boolean"},
+                                    "drift_category": {
+                                        "type": "string",
+                                        "enum": ["configuration_drift"],
+                                    },
+                                    "finding_id": {"type": "string", "nullable": True},
+                                    "severity": {"type": "string", "nullable": True},
+                                },
+                            },
+                        },
+                        "unchanged_variables": {"type": "array", "items": _STR},
+                        "unknown_variables": {"type": "array", "items": _STR},
+                        "drift_categories": {
+                            "type": "array",
+                            "items": {"type": "string",
+                                      "enum": ["configuration_drift"]},
+                        },
+                        "risk": {"type": "object", "nullable": True},
+                        "reason": _STR,
+                        "model_version": _STR,
+                        "rule_id": _STR,
+                    },
+                },
+                "DriftBaselineSide": {
+                    "type": "object",
+                    "nullable": True,
+                    "properties": {
+                        "baseline_id": {"type": "string", "nullable": True},
+                        "state_digest": {"type": "string", "nullable": True},
+                        "baseline_digest": {"type": "string", "nullable": True},
+                        "validated_at": {"type": "string", "nullable": True},
+                        "validated_by": {"type": "string", "nullable": True},
+                        "asset_id": {"type": "string", "nullable": True},
+                        "validation_status": {"type": "string", "nullable": True},
+                    },
+                },
+                "DriftCurrentSide": {
+                    "type": "object",
+                    "nullable": True,
+                    "properties": {
+                        "state_digest": {"type": "string", "nullable": True},
+                        "source_ref": {"type": "string", "nullable": True},
+                        "source": {
+                            "allOf": [_ref("DriftCurrentSource")],
+                            "nullable": True,
+                            "description": (
+                                "What kind of artifact the current state was. A "
+                                "controlled demonstration is published here as "
+                                "`declared_observation` with `is_capture: false`, "
+                                "so it can never be read as an observation of a "
+                                "live device."
+                            ),
+                        },
+                        "run_id": {"type": "string", "nullable": True},
+                        "sequence": {"type": "integer", "nullable": True},
+                    },
+                },
+                "DriftCurrentSource": {
+                    "type": "object",
+                    "nullable": True,
+                    "description": (
+                        "The declared provenance of the current observed state. "
+                        "`kind` is the canonical vocabulary; `declared_kind` and "
+                        "`declaration` are the producer's own words, carried "
+                        "verbatim rather than paraphrased."
+                    ),
+                    "required": ["kind", "is_capture", "is_live_capture"],
+                    "properties": {
+                        "kind": {
+                            "type": "string",
+                            "enum": ["recorded_capture", "declared_observation"],
+                            "description": (
+                                "`recorded_capture` means a sensor produced this "
+                                "state. `declared_observation` means a producer "
+                                "declared it, for example a controlled fixture "
+                                "derived from a capture."
+                            ),
+                        },
+                        "is_capture": {
+                            "type": "boolean",
+                            "description": (
+                                "True only for `recorded_capture`. A declared "
+                                "observation is never a capture, whatever the "
+                                "artifact it was read from happens to be."
+                            ),
+                        },
+                        "is_live_capture": {
+                            "type": "boolean",
+                            "nullable": True,
+                            "description": (
+                                "Defaults to `is_capture`. Explicitly false for a "
+                                "declared observation; the model refuses a value "
+                                "that contradicts `kind`."
+                            ),
+                        },
+                        "artifact_sha256": {"type": "string", "nullable": True},
+                        "public_path": {"type": "string", "nullable": True},
+                        "declared_kind": {"type": "string", "nullable": True},
+                        "declaration": {
+                            "type": "string",
+                            "nullable": True,
+                            "description": (
+                                "The producer's verbatim statement about the "
+                                "artifact, including any 'this is not a capture' "
+                                "claim."
+                            ),
+                        },
+                        "derived_from": {
+                            "type": "object",
+                            "nullable": True,
+                            "description": (
+                                "The artifact a declared current state was "
+                                "derived from, with its path and digest. Present "
+                                "only for a declared observation."
+                            ),
+                            "additionalProperties": True,
+                        },
+                    },
+                },
+                "DriftSummary": {
+                    "type": "object",
+                    "description": "Run-level drift surface.",
+                    "required": ["configured", "supported_categories",
+                                 "unsupported_categories", "canonicalization",
+                                 "status_counts", "assessments"],
+                    "properties": {
+                        "api": _STR,
+                        "read_only": {"type": "boolean", "const": True},
+                        "configured": {"type": "boolean"},
+                        "reason": {"type": "string", "nullable": True},
+                        "baseline_id": {"type": "string", "nullable": True},
+                        "baseline": {
+                            "oneOf": [_ref("ValidatedBaseline"), {"type": "null"}],
+                        },
+                        "persistent": {"type": "boolean"},
+                        "supported_categories": {
+                            "type": "array",
+                            "items": {"type": "string",
+                                      "enum": ["configuration_drift"]},
+                        },
+                        "unsupported_categories": {
+                            "type": "array",
+                            "description": (
+                                "Categories deliberately not implemented. Published so "
+                                "their absence is a documented decision rather than a "
+                                "silent gap."
+                            ),
+                            "items": {"type": "string",
+                                      "enum": ["firmware_drift", "implementation_drift",
+                                               "traffic_behavior_drift",
+                                               "ml_behavior_drift"]},
+                        },
+                        "canonicalization": _ref("Canonicalization"),
+                        "status_counts": {
+                            "type": "object",
+                            "description": "Assessment counts per drift status.",
+                            "additionalProperties": {"type": "integer"},
+                        },
+                        "comparison_count": {
+                            "type": "integer",
+                            "description": (
+                                "Number of distinct comparison results. Lower than "
+                                "`assessment_count` when a comparison produced "
+                                "findings (it is then reported both as context and "
+                                "as the drift-origin assessment) or when several "
+                                "assessments share one security state."
+                            ),
+                        },
+                        "assessment_count": {
+                            "type": "integer",
+                            "description": "Number of assessments reporting one.",
+                        },
+                        "drift_origin_count": {
+                            "type": "integer",
+                            "description": (
+                                "How many of the reporting assessments are the "
+                                "drift-origin alias of a comparison rather than an "
+                                "independent comparison."
+                            ),
+                        },
+                        "current_source_kinds": {
+                            "type": "object",
+                            "description": (
+                                "Assessment counts per kind of current-state "
+                                "artifact. A `declared_observation` here is a "
+                                "controlled demonstration, not an observation of a "
+                                "live device; present so a client reading the table "
+                                "cannot mistake the two."
+                            ),
+                            "additionalProperties": {"type": "integer"},
+                        },
+                        "assessments": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "object",
+                                "properties": {
+                                    "status": _STR,
+                                    "drift_detected": {"type": "boolean"},
+                                    "drift_categories": {"type": "array", "items": _STR},
+                                    "current_source_kind": {
+                                        "type": "string",
+                                        "enum": ["recorded_capture",
+                                                 "declared_observation"],
+                                    },
+                                    "current_source_is_capture": {"type": "boolean"},
+                                    "entry_kind": {
+                                        "type": "string",
+                                        "enum": ["plan_comparison", "drift_origin"],
+                                    },
+                                    "parent_assessment_id": {
+                                        "type": "string",
+                                        "nullable": True,
+                                    },
+                                    "changed_fields": {
+                                        "type": "array",
+                                        "items": {"type": "object"},
+                                    },
+                                    "reason": _STR,
                                 },
                             },
                         },
@@ -875,6 +1373,130 @@ def openapi_document(base_url: str = "") -> Dict[str, Any]:
                                     "type": "boolean",
                                     "const": False,
                                 },
+                            },
+                        },
+                        "drift": {
+                            "type": "object",
+                            "nullable": True,
+                            "description": (
+                                "The validated-baseline comparison, or null when the "
+                                "assessment declared no baseline. `status` is `drift` "
+                                "when a comparable security-state field differs from "
+                                "the baseline, `no_drift` when every comparable field "
+                                "matches, `indeterminate` when the current observation "
+                                "cannot support a comparison claim, and "
+                                "`not_configured` when no baseline was supplied. A "
+                                "`not_configured` or `indeterminate` status claims "
+                                "neither drift nor agreement: absence of evidence is "
+                                "never promoted to a security finding."
+                            ),
+                            "required": ["status", "drift_detected", "baseline",
+                                         "current", "changed_fields",
+                                         "unchanged_variables", "unknown_variables",
+                                         "drift_categories", "model_version", "rule_id"],
+                            "properties": {
+                                "status": {
+                                    "type": "string",
+                                    "enum": ["drift", "no_drift", "not_configured",
+                                             "indeterminate"],
+                                },
+                                "drift_detected": {"type": "boolean"},
+                                "baseline": {
+                                    "type": "object",
+                                    "nullable": True,
+                                    "description": (
+                                        "The validated baseline the comparison was made "
+                                        "against. `state_digest` fingerprints the "
+                                        "comparable state and `baseline_digest` seals "
+                                        "the whole record including its provenance, so "
+                                        "tampering with either is detectable."
+                                    ),
+                                    "properties": {
+                                        "baseline_id": _STR,
+                                        "state_digest": _STR,
+                                        "baseline_digest": _STR,
+                                        "validated_at": {"type": "string", "nullable": True},
+                                        "validated_by": {"type": "string", "nullable": True},
+                                        "asset_id": {"type": "string", "nullable": True},
+                                        "validation_status": {
+                                            "type": "string",
+                                            "nullable": True,
+                                            "enum": ["validated", None],
+                                        },
+                                    },
+                                },
+                                "current": {
+                                    "type": "object",
+                                    "nullable": True,
+                                    "properties": {
+                                        "state_digest": _STR,
+                                        "source_ref": {"type": "string", "nullable": True},
+                                        "run_id": {"type": "string", "nullable": True},
+                                        "sequence": {"type": "integer", "nullable": True},
+                                    },
+                                },
+                                "changed_fields": {
+                                    "type": "array",
+                                    "description": (
+                                        "Field-level differences. `baseline_value` is "
+                                        "the validated historical value and "
+                                        "`current_value` is the current observation; "
+                                        "the two are separately named so neither can be "
+                                        "mistaken for the other."
+                                    ),
+                                    "items": {
+                                        "type": "object",
+                                        "required": ["variable", "baseline_value",
+                                                     "current_value", "drift_category",
+                                                     "security_relevance"],
+                                        "properties": {
+                                            "variable": _STR,
+                                            "label": _STR,
+                                            "baseline_value": {"description": "Validated value."},
+                                            "current_value": {"description": "Observed value."},
+                                            "comparison_rule": _STR,
+                                            "security_relevance": {"type": "boolean"},
+                                            "drift_category": {
+                                                "type": "string",
+                                                "enum": ["configuration_drift"],
+                                            },
+                                            "finding_id": {"type": "string", "nullable": True},
+                                            "severity": {"type": "string", "nullable": True},
+                                        },
+                                    },
+                                },
+                                "unchanged_variables": {
+                                    "type": "array",
+                                    "items": _STR,
+                                },
+                                "unknown_variables": {
+                                    "type": "array",
+                                    "description": (
+                                        "Comparable fields that could not be "
+                                        "established from one side; neither compared "
+                                        "nor counted as agreement."
+                                    ),
+                                    "items": _STR,
+                                },
+                                "drift_categories": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string",
+                                        "enum": ["configuration_drift"],
+                                    },
+                                },
+                                "risk": {
+                                    "type": "object",
+                                    "nullable": True,
+                                    "description": (
+                                        "Findings raised by the comparison, scored by "
+                                        "the existing risk engine under the existing "
+                                        "policy. There is no separate drift scale."
+                                    ),
+                                },
+                                "reason": _STR,
+                                "model_version": _STR,
+                                "rule_id": _STR,
                             },
                         },
                         "recommendation": {

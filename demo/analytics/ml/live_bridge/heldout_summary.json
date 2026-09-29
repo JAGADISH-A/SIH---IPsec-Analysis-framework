@@ -1,0 +1,42 @@
+{
+  "path": "events -> LiveFeatureExtractor -> exact-v2 record -> ml_inference.predict_many",
+  "samples": 46,
+  "held_out_test_split": true,
+  "accuracy": 1.0,
+  "vector_parity_57_strategy": "byte-exact on the 57 canonical features, plus max-abs-diff accounting for the documented ns->s timestamp sub-rounding (rounds a 3-decimal field only)",
+  "vector_parity_exact": 45,
+  "vector_parity_subrounding_only": [
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0068-attempt-01",
+      "n_fields_differing": 1,
+      "max_abs_diff": 0.003,
+      "prediction_correct": true
+    }
+  ],
+  "per_profile": {
+    "email": {
+      "n": 10,
+      "correct": 10
+    },
+    "icmp": {
+      "n": 7,
+      "correct": 7
+    },
+    "messaging": {
+      "n": 7,
+      "correct": 7
+    },
+    "video": {
+      "n": 7,
+      "correct": 7
+    },
+    "voip": {
+      "n": 7,
+      "correct": 7
+    },
+    "web": {
+      "n": 8,
+      "correct": 8
+    }
+  }
+}

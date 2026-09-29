@@ -1,0 +1,2433 @@
+{
+  "strategy": "grouped_stratified_greedy_by_configuration_id",
+  "ratios": {
+    "train": 0.7,
+    "validation": 0.15,
+    "test": 0.15
+  },
+  "seed": 7,
+  "created_at": "2026-09-24T14:14:32+00:00",
+  "input_fingerprints": {
+    "dataset-20260923-221430": "6d4df9c8d3653d64affda09d7f43e3651d99a3a938f15b28156f898924af878a",
+    "dataset-20260924-003710": "aaee80ff8868704ca1d4f3090ab7882650d2135ab64629c407f568643449eef3"
+  },
+  "samples": [
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0001-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 1,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128gcm16-none-modp4096-true",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0002-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 2,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128gcm16-none-modp3072-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0003-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 3,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128gcm16-none-modp2048-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0004-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 4,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128gcm16-none-modp2048-false",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0005-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 5,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha256-modp2048-false",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0006-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 6,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv4-aes256gcm16-none-modp3072-true",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0007-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 7,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes256gcm16-none-modp2048-true",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0008-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 8,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv4-aes256gcm16-none-modp2048-false",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0009-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 9,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128gcm16-none-modp3072-false",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0010-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 10,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha256-modp3072-false",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0011-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 11,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes256gcm16-none-modp4096-true",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0012-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 12,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha256-modp4096-true",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0013-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 13,
+      "split": "test",
+      "configuration_id": "tunnel-ipv4-aes256gcm16-none-modp3072-false",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0014-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 14,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128gcm16-none-modp4096-false",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0015-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 15,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha256-modp4096-false",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0016-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 16,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes128gcm16-none-modp4096-true",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0017-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 17,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha384-modp4096-true",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0018-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 18,
+      "split": "test",
+      "configuration_id": "tunnel-ipv4-aes256gcm16-none-modp4096-false",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0019-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 19,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha256-modp2048-false",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0020-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 20,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha384-modp2048-false",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0021-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 21,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes256gcm16-none-modp3072-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0022-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 22,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha512-modp4096-true",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0023-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 23,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha256-modp2048-true",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0024-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 24,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha256-modp3072-false",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0025-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 25,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha384-modp3072-false",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0026-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 26,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes256gcm16-none-modp4096-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0027-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 27,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha256-modp3072-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0028-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 28,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha256-modp3072-true",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0029-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 29,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha256-modp4096-false",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0030-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 30,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha384-modp4096-false",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0031-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 31,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128gcm16-none-modp4096-true",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0032-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 32,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha256-modp4096-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0033-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 33,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha384-modp2048-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0034-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 34,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha384-modp2048-false",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0035-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 35,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha512-modp2048-false",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0036-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 36,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256gcm16-none-modp3072-true",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0037-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 37,
+      "split": "test",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha384-modp3072-true",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0038-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 38,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha384-modp3072-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0039-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 39,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha384-modp3072-false",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0040-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 40,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha512-modp3072-false",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0041-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 41,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256gcm16-none-modp4096-true",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0042-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 42,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha384-modp4096-true",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0043-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 43,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha512-modp2048-true",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0044-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 44,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha384-modp4096-false",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0045-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 45,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha512-modp4096-false",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0046-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 46,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes128gcm16-none-modp4096-true",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0047-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 47,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha512-modp3072-true",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0048-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 48,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha512-modp3072-true",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0049-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 49,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha512-modp2048-false",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0050-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 50,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha256-modp2048-false",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0051-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 51,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes256gcm16-none-modp3072-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0052-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 52,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha512-modp4096-true",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0053-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 53,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha256-modp2048-true",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0054-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 54,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha512-modp3072-false",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0055-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 55,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha256-modp3072-false",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0056-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 56,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes256gcm16-none-modp4096-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0057-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 57,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes128gcm16-none-modp3072-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0058-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 58,
+      "split": "test",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha384-modp2048-true",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0059-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 59,
+      "split": "test",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha512-modp4096-false",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0060-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 60,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha256-modp4096-false",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0061-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 61,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128gcm16-none-modp4096-true",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0062-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 62,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes256gcm16-none-modp2048-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0063-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 63,
+      "split": "test",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha512-modp2048-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0064-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 64,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes128gcm16-none-modp2048-false",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0065-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 65,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha384-modp2048-false",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0066-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 66,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv4-aes256gcm16-none-modp3072-true",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0067-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 67,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha256-modp4096-true",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0068-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 68,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes128gcm16-none-modp2048-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0069-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 69,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv6-aes128gcm16-none-modp3072-false",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0070-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 70,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha384-modp3072-false",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0071-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 71,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes256gcm16-none-modp4096-true",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0072-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 72,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha384-modp4096-true",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0073-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 73,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv6-aes256gcm16-none-modp2048-false",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0074-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 74,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes128gcm16-none-modp4096-false",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0075-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 75,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha384-modp4096-false",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0076-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 76,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes128gcm16-none-modp4096-true",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0077-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 77,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha512-modp4096-true",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0078-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 78,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes256gcm16-none-modp3072-false",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0079-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 79,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes256cbc-sha256-modp2048-false",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0080-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 80,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha512-modp2048-false",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0081-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 81,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes256gcm16-none-modp3072-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0082-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 82,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes256cbc-sha256-modp3072-true",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0083-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 83,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes256gcm16-none-modp4096-false",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0084-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 84,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes256cbc-sha256-modp3072-false",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0085-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 85,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha512-modp3072-false",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0086-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 86,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes256gcm16-none-modp4096-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0087-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 87,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv6-aes256cbc-sha256-modp4096-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0088-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 88,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha256-modp2048-true",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0089-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 89,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes256cbc-sha256-modp4096-false",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0090-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 90,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha512-modp4096-false",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0091-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 91,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128gcm16-none-modp4096-true",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0092-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 92,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv6-aes256cbc-sha384-modp3072-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0093-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 93,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha256-modp3072-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0094-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 94,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv6-aes256cbc-sha384-modp2048-false",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0095-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 95,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128cbc-sha256-modp2048-false",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0096-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 96,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256gcm16-none-modp3072-true",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0097-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 97,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes256cbc-sha384-modp4096-true",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0098-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 98,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha384-modp2048-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0099-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 99,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes256cbc-sha384-modp3072-false",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0100-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 100,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128cbc-sha256-modp3072-false",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0101-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 101,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256gcm16-none-modp4096-true",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0102-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 102,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes256cbc-sha512-modp3072-true",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0103-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 103,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha384-modp3072-true",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0104-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 104,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes256cbc-sha384-modp4096-false",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0105-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 105,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128cbc-sha256-modp4096-false",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0106-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 106,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes128gcm16-none-modp4096-true",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0107-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 107,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv6-aes256cbc-sha512-modp4096-true",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0108-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 108,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha512-modp2048-true",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0109-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 109,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv6-aes256cbc-sha512-modp2048-false",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0110-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 110,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128cbc-sha384-modp2048-false",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0111-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 111,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes256gcm16-none-modp3072-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0112-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 112,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128gcm16-none-modp3072-true",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0113-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 113,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha512-modp3072-true",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0114-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 114,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv6-aes256cbc-sha512-modp3072-false",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0115-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 115,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128cbc-sha384-modp3072-false",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0116-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 116,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes256gcm16-none-modp4096-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0117-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 117,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256gcm16-none-modp2048-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0118-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 118,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv6-aes256cbc-sha256-modp2048-true",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0119-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 119,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv6-aes256cbc-sha512-modp4096-false",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0120-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 120,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128cbc-sha384-modp4096-false",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0121-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 121,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128gcm16-none-modp4096-true",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0122-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 122,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128cbc-sha256-modp4096-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0123-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 123,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes256cbc-sha384-modp2048-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0124-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 124,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128gcm16-none-modp2048-false",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0125-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 125,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128cbc-sha512-modp2048-false",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0126-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 126,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv4-aes256gcm16-none-modp3072-true",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0127-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 127,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128cbc-sha384-modp4096-true",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0128-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 128,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes256cbc-sha512-modp2048-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0129-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 129,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128gcm16-none-modp3072-false",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0130-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 130,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128cbc-sha512-modp3072-false",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0131-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 131,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes256gcm16-none-modp4096-true",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0132-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 132,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128cbc-sha512-modp4096-true",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0133-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 133,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128gcm16-none-modp2048-true",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0134-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 134,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128gcm16-none-modp4096-false",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0135-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 135,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128cbc-sha512-modp4096-false",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0136-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 136,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes128gcm16-none-modp4096-true",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0137-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 137,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256cbc-sha256-modp3072-true",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0138-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 138,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256gcm16-none-modp2048-false",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0139-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 139,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256cbc-sha256-modp2048-false",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0140-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 140,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes128cbc-sha256-modp2048-false",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0141-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 141,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes256gcm16-none-modp3072-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0142-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 142,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256cbc-sha256-modp4096-true",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0143-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 143,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256gcm16-none-modp3072-false",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0144-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 144,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256cbc-sha256-modp3072-false",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0145-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 145,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes128cbc-sha256-modp3072-false",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0146-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 146,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes256gcm16-none-modp4096-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0147-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 147,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256cbc-sha384-modp3072-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0148-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 148,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256gcm16-none-modp4096-false",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0149-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 149,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256cbc-sha256-modp4096-false",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0150-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 150,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes128cbc-sha256-modp4096-false",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0151-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 151,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128gcm16-none-modp4096-true",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0152-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 152,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256cbc-sha384-modp4096-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0153-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 153,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128cbc-sha256-modp2048-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0154-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 154,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256cbc-sha384-modp2048-false",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0155-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 155,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes128cbc-sha384-modp2048-false",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0156-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 156,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256gcm16-none-modp3072-true",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0157-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 157,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256cbc-sha512-modp3072-true",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0158-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 158,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128cbc-sha256-modp3072-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0159-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 159,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256cbc-sha384-modp3072-false",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0160-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 160,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes128cbc-sha384-modp3072-false",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0161-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 161,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256gcm16-none-modp4096-true",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0162-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 162,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256cbc-sha512-modp4096-true",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0163-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 163,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128cbc-sha384-modp2048-true",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0164-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 164,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256cbc-sha384-modp4096-false",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0165-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 165,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes128cbc-sha384-modp4096-false",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0166-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 166,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes128gcm16-none-modp4096-true",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0167-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 167,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes128gcm16-none-modp3072-true",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0168-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 168,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128cbc-sha384-modp3072-true",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0169-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 169,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256cbc-sha512-modp2048-false",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0170-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 170,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes128cbc-sha512-modp2048-false",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0171-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 171,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes256gcm16-none-modp3072-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0172-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 172,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes256gcm16-none-modp2048-true",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0173-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 173,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128cbc-sha512-modp2048-true",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0174-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 174,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256cbc-sha512-modp3072-false",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0175-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 175,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes128cbc-sha512-modp3072-false",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0176-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 176,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes256gcm16-none-modp4096-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0177-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 177,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes128cbc-sha256-modp4096-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0178-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 178,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128cbc-sha512-modp3072-true",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0179-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 179,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256cbc-sha512-modp4096-false",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0180-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 180,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes128cbc-sha512-modp4096-false",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0181-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 181,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128gcm16-none-modp4096-true",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0182-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 182,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes128cbc-sha384-modp4096-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0183-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 183,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256cbc-sha256-modp2048-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0184-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 184,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes128gcm16-none-modp2048-false",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0185-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 185,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha256-modp2048-false",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0186-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 186,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv4-aes256gcm16-none-modp3072-true",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0187-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 187,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes128cbc-sha512-modp4096-true",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0188-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 188,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256cbc-sha384-modp2048-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0189-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 189,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes128gcm16-none-modp3072-false",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0190-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 190,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha256-modp3072-false",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0191-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 191,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes256gcm16-none-modp4096-true",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0192-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 192,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes256cbc-sha256-modp3072-true",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0193-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 193,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256cbc-sha512-modp2048-true",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0194-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 194,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes128gcm16-none-modp4096-false",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0195-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 195,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha256-modp4096-false",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0196-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 196,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes128gcm16-none-modp4096-true",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0197-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 197,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes256cbc-sha256-modp4096-true",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0198-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 198,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes128gcm16-none-modp2048-true",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0199-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 199,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes256cbc-sha256-modp2048-false",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260923-221430-exp-0200-attempt-01",
+      "dataset_run_id": "dataset-20260923-221430",
+      "sequence": 200,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha384-modp2048-false",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0001-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 1,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128gcm16-none-modp4096-true",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0002-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 2,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128gcm16-none-modp3072-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0003-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 3,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128gcm16-none-modp2048-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0004-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 4,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128gcm16-none-modp2048-false",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0005-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 5,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha256-modp2048-false",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0006-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 6,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv4-aes256gcm16-none-modp3072-true",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0007-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 7,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes256gcm16-none-modp2048-true",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0008-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 8,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv4-aes256gcm16-none-modp2048-false",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0009-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 9,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128gcm16-none-modp3072-false",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0010-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 10,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha256-modp3072-false",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0011-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 11,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes256gcm16-none-modp4096-true",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0012-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 12,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha256-modp4096-true",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0013-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 13,
+      "split": "test",
+      "configuration_id": "tunnel-ipv4-aes256gcm16-none-modp3072-false",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0014-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 14,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128gcm16-none-modp4096-false",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0015-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 15,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha256-modp4096-false",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0016-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 16,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes128gcm16-none-modp4096-true",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0017-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 17,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha384-modp4096-true",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0018-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 18,
+      "split": "test",
+      "configuration_id": "tunnel-ipv4-aes256gcm16-none-modp4096-false",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0019-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 19,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha256-modp2048-false",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0020-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 20,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha384-modp2048-false",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0021-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 21,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes256gcm16-none-modp3072-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0022-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 22,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha512-modp4096-true",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0023-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 23,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha256-modp2048-true",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0024-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 24,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha256-modp3072-false",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0025-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 25,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha384-modp3072-false",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0026-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 26,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes256gcm16-none-modp4096-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0027-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 27,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha256-modp3072-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0028-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 28,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha256-modp3072-true",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0029-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 29,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha256-modp4096-false",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0030-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 30,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha384-modp4096-false",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0031-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 31,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128gcm16-none-modp4096-true",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0032-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 32,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha256-modp4096-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0033-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 33,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha384-modp2048-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0034-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 34,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha384-modp2048-false",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0035-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 35,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha512-modp2048-false",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0036-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 36,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256gcm16-none-modp3072-true",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0037-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 37,
+      "split": "test",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha384-modp3072-true",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0038-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 38,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha384-modp3072-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0039-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 39,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha384-modp3072-false",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0040-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 40,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha512-modp3072-false",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0041-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 41,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256gcm16-none-modp4096-true",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0042-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 42,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha384-modp4096-true",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0043-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 43,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha512-modp2048-true",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0044-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 44,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha384-modp4096-false",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0045-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 45,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha512-modp4096-false",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0046-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 46,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes128gcm16-none-modp4096-true",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0047-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 47,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha512-modp3072-true",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0048-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 48,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128cbc-sha512-modp3072-true",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0049-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 49,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha512-modp2048-false",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0050-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 50,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha256-modp2048-false",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0051-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 51,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes256gcm16-none-modp3072-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0052-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 52,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha512-modp4096-true",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0053-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 53,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha256-modp2048-true",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0054-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 54,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha512-modp3072-false",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0055-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 55,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha256-modp3072-false",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0056-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 56,
+      "split": "train",
+      "configuration_id": "transport-ipv6-aes256gcm16-none-modp4096-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0057-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 57,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes128gcm16-none-modp3072-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0058-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 58,
+      "split": "test",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha384-modp2048-true",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0059-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 59,
+      "split": "test",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha512-modp4096-false",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0060-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 60,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha256-modp4096-false",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0061-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 61,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes128gcm16-none-modp4096-true",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0062-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 62,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes256gcm16-none-modp2048-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0063-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 63,
+      "split": "test",
+      "configuration_id": "tunnel-ipv4-aes256cbc-sha512-modp2048-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0064-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 64,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes128gcm16-none-modp2048-false",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0065-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 65,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha384-modp2048-false",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0066-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 66,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv4-aes256gcm16-none-modp3072-true",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0067-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 67,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha256-modp4096-true",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0068-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 68,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes128gcm16-none-modp2048-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0069-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 69,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv6-aes128gcm16-none-modp3072-false",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0070-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 70,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha384-modp3072-false",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0071-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 71,
+      "split": "train",
+      "configuration_id": "tunnel-ipv4-aes256gcm16-none-modp4096-true",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0072-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 72,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha384-modp4096-true",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0073-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 73,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv6-aes256gcm16-none-modp2048-false",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0074-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 74,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes128gcm16-none-modp4096-false",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0075-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 75,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha384-modp4096-false",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0076-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 76,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes128gcm16-none-modp4096-true",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0077-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 77,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha512-modp4096-true",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0078-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 78,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes256gcm16-none-modp3072-false",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0079-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 79,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes256cbc-sha256-modp2048-false",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0080-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 80,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha512-modp2048-false",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0081-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 81,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes256gcm16-none-modp3072-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0082-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 82,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes256cbc-sha256-modp3072-true",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0083-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 83,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes256gcm16-none-modp4096-false",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0084-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 84,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes256cbc-sha256-modp3072-false",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0085-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 85,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha512-modp3072-false",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0086-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 86,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes256gcm16-none-modp4096-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0087-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 87,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv6-aes256cbc-sha256-modp4096-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0088-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 88,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha256-modp2048-true",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0089-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 89,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes256cbc-sha256-modp4096-false",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0090-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 90,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha512-modp4096-false",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0091-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 91,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128gcm16-none-modp4096-true",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0092-attempt-02",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 92,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv6-aes256cbc-sha384-modp3072-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0093-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 93,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha256-modp3072-true",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0094-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 94,
+      "split": "validation",
+      "configuration_id": "tunnel-ipv6-aes256cbc-sha384-modp2048-false",
+      "target": "email"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0095-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 95,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128cbc-sha256-modp2048-false",
+      "target": "web"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0096-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 96,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes256gcm16-none-modp3072-true",
+      "target": "icmp"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0097-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 97,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes256cbc-sha384-modp4096-true",
+      "target": "voip"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0098-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 98,
+      "split": "train",
+      "configuration_id": "tunnel-ipv6-aes128cbc-sha384-modp2048-true",
+      "target": "video"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0099-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 99,
+      "split": "test",
+      "configuration_id": "tunnel-ipv6-aes256cbc-sha384-modp3072-false",
+      "target": "messaging"
+    },
+    {
+      "experiment_id": "dataset-20260924-003710-exp-0100-attempt-01",
+      "dataset_run_id": "dataset-20260924-003710",
+      "sequence": 100,
+      "split": "train",
+      "configuration_id": "transport-ipv4-aes128cbc-sha256-modp3072-false",
+      "target": "email"
+    }
+  ],
+  "split_counts": {
+    "train": 212,
+    "validation": 42,
+    "test": 46
+  },
+  "verification": {
+    "group_isolation_ok": true,
+    "pair_overlap": {
+      "train_x_validation": 0,
+      "train_x_test": 0,
+      "validation_x_test": 0
+    },
+    "groups_spanning_splits": [],
+    "duplicate_experiment_ids": [],
+    "every_sample_once": true
+  },
+  "split_hash": "fbf04c326bb68d3579c4792dea76fb0baf68fcbd4f384f04487d92ccc2b233d4"
+}

@@ -30,21 +30,25 @@ TRANSPORT_TOPO = REPO_ROOT / "topology" / "transport" / "ipsec.clab.yml"
 # (source relative to the repo root, container destination) per file, in
 # binding order.  This is exactly the mapping the previous absolute host
 # paths (/home/jagan/ipsec-testbed/...) produced, plus the passive-audit
-# bind (``scripts/audit-tap-setup.sh``) added for the gw-a observation
-# surface; it must not change without intent.
+# bind (``scripts/audit-tap-setup.sh``) and the live-journal bind
+# (``results/observed-state/xdp`` on the sensor node) that form the live XDP
+# observation surface of each topology; they must not change without intent.
 EXPECTED_TUNNEL_BINDS = [
     ("scripts/gw-entrypoint.sh", "/usr/local/bin/gw-entrypoint.sh"),
     ("scripts/audit-tap-setup.sh", "/usr/local/bin/audit-tap-setup.sh"),
     ("configs/gw-a/swanctl", "/usr/local/etc/swanctl"),
     ("scripts/gw-entrypoint.sh", "/usr/local/bin/gw-entrypoint.sh"),
     ("configs/gw-b/swanctl", "/usr/local/etc/swanctl"),
+    ("results/observed-state/xdp", "/opt/xdp-journal"),
 ]
 
 EXPECTED_TRANSPORT_BINDS = [
     ("scripts/transport-entrypoint.sh", "/usr/local/bin/transport-entrypoint.sh"),
+    ("scripts/audit-tap-setup.sh", "/usr/local/bin/audit-tap-setup.sh"),
     ("configs/transport/host-c/swanctl", "/etc/swanctl"),
     ("scripts/transport-entrypoint.sh", "/usr/local/bin/transport-entrypoint.sh"),
     ("configs/transport/host-d/swanctl", "/etc/swanctl"),
+    ("results/observed-state/xdp", "/opt/xdp-journal"),
 ]
 
 

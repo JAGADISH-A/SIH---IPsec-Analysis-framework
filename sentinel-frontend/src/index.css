@@ -1,0 +1,1621 @@
+@import 'tailwindcss';
+
+/**
+ * Sentinel design tokens.
+ *
+ * The product is an IPsec security assessment workstation: an analyst reads
+ * dense tables of configuration and findings, compares expected against
+ * observed, and needs the severity of a thing to be legible at a glance
+ * without the page competing for attention.
+ *
+ * The palette is dark everywhere — one coherent surface hierarchy (page
+ * background, panel surface, elevated/selected surface) that matches the
+ * packet-analysis console that anchors the product. There is no glow, no grid
+ * texture, no gradient wash and no colour that is not load-bearing.
+ *
+ * Severity colours are the one place saturated colour is allowed, because
+ * "how bad is this" is the product's core question. They are the light,
+ * desaturated tones that keep text contrast on a dark surface, and they are
+ * picked to stay distinguishable under deuteranopia because adjacent bands
+ * differ in lightness, not only in hue.
+ */
+@theme {
+  /* Surfaces, from the page background inward. The packet-analysis console
+     (`.pw-root`) uses the same values, so the workspace and the rest of the
+     product are one surface language. */
+  --color-canvas: #0d1219;
+  --color-void: #0f151d;
+  --color-abyss: #101722;
+  --color-panel: #101722;
+  --color-panel-2: #16202e;
+  --color-panel-3: #1c2939;
+
+  /* Hairlines. Two weights: default, and `edge-soft` for internal dividers
+     that should not read as a box boundary. */
+  --color-edge: #26354a;
+  --color-edge-soft: #1f2a3b;
+
+  /* Ink. Three steps is enough: readable, de-emphasised, and metadata. */
+  --color-ink: #d9e0ea;
+  --color-ink-dim: #93a1b4;
+  --color-ink-faint: #5b6a80;
+
+  /* The single accent. Used for the active nav item, primary actions, links
+     and focus. Never for decoration and never for severity. The deep step is
+     the fill of a primary action (white text on it clears contrast); the
+     plain step is the readable text/focus tone on a dark surface. */
+  --color-sentinel: #a5b4fc;
+  --color-sentinel-deep: #6366f1;
+
+  /* Severity ramp. Critical is red, high is orange, medium amber, low blue,
+     info neutral. Light tones so text stays readable on dark surfaces. */
+  --color-critical: #f87171;
+  --color-high: #fb923c;
+  --color-medium: #fbbf24;
+  --color-low: #60a5fa;
+  --color-info: #9aa2ad;
+  --color-good: #34d399;
+
+  --font-sans:
+    'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono:
+    'JetBrains Mono', ui-monospace, 'SFMono-Regular', 'Menlo', 'Consolas', monospace;
+
+  /* Type scale. Readable first: the densest screens are tables, and 16px body
+     keeps a full assessment legible at normal browser scale and when zoomed
+     out. Metadata steps down one clear rank at a time rather than shaving
+     single pixels, so hierarchy stays obvious. */
+  --text-2xs: 0.8125rem;
+  --text-2xs--line-height: 1.25rem;
+  --text-xs: 0.875rem;
+  --text-xs--line-height: 1.375rem;
+  --text-sm: 0.9375rem;
+  --text-sm--line-height: 1.5rem;
+  --text-base: 1rem;
+  --text-base--line-height: 1.625rem;
+  --text-lg: 1.125rem;
+  --text-lg--line-height: 1.625rem;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.75rem;
+  --text-2xl: 1.5rem;
+  --text-2xl--line-height: 1.875rem;
+  --text-3xl: 1.875rem;
+  --text-3xl--line-height: 2.25rem;
+  --text-4xl: 2.25rem;
+  --text-4xl--line-height: 2.5rem;
+}
+
+@layer base {
+  *,
+  ::after,
+  ::before {
+    border-color: var(--color-edge);
+  }
+
+  html {
+    color-scheme: dark;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    line-height: 1.5;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  #root {
+    min-height: 100vh;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--color-sentinel) 18%, transparent);
+  }
+
+  ::-webkit-scrollbar {
+    width: 11px;
+    height: 11px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #2b3a4f;
+    border-radius: 6px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #3b4d68;
+    background-clip: content-box;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-sentinel);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* Native controls are themed rather than left to the platform. */
+  select,
+  input,
+  textarea,
+  button {
+    font: inherit;
+    color: inherit;
+  }
+}
+
+@layer components {
+  /* ------------------------------------------------------------- surfaces */
+
+  /* The one card primitive. A hairline border and a barely-there shadow: enough
+     separation to build hierarchy on a flat canvas, not enough to read as a
+     floating panel. */
+  .panel {
+    background: var(--color-panel);
+    border: 1px solid var(--color-edge);
+    border-radius: 8px;
+    box-shadow:
+      0 1px 2px rgb(0 0 0 / 0.4),
+      0 1px 3px rgb(0 0 0 / 0.35);
+  }
+
+  /* The raised surface, for the few elements that must float above a panel
+     (popovers, drawers). The only place in the product with a real shadow,
+     and even here it is a soft ambient shadow rather than a hard drop. */
+  .popover {
+    background: var(--color-panel);
+    border: 1px solid var(--color-edge);
+    border-radius: 8px;
+    box-shadow:
+      0 10px 15px -3px rgb(0 0 0 / 0.6),
+      0 4px 6px -4px rgb(0 0 0 / 0.45);
+  }
+
+  /* Section heading inside a panel. Sentence case, not tracked-out caps: the
+     old design set every label in 10px uppercase with wide tracking, which is
+     what made the product read as a terminal rather than a document. */
+  .panel-title {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    line-height: 1.25rem;
+    letter-spacing: -0.006em;
+    color: var(--color-ink);
+  }
+
+  /* A live status dot. One slow, low-contrast breath while a check is in
+     flight: enough to say "working" without a pulsing alarm. */
+  .status-pending {
+    animation: status-breathe 1.8s ease-in-out infinite;
+  }
+
+  @keyframes status-breathe {
+    0%,
+    100% {
+      opacity: 0.45;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+
+  /* Field label: subordinate metadata, uppercase is acceptable here and only
+     here, at a size that stays readable. */
+  .label {
+    font-size: var(--text-2xs);
+    font-weight: 600;
+    line-height: 1rem;
+    letter-spacing: 0.055em;
+    text-transform: uppercase;
+    color: var(--color-ink-faint);
+  }
+
+  /* The sunken block used for JSON, log output and code. Monospace, inset, no
+     glow. */
+  .code-block {
+    background: var(--color-void);
+    border: 1px solid var(--color-edge);
+    border-radius: 6px;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    line-height: 1.5rem;
+    color: var(--color-ink-dim);
+  }
+
+  /* --------------------------------------------------------------- tables */
+
+  /* One definition of "data table" so the assessments list, the findings list
+     and the audit log share identical density, alignment and hover behaviour
+     instead of each page inventing its own. */
+  .data-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+
+  .data-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--color-panel-2);
+    border-bottom: 1px solid var(--color-edge);
+    padding: 0.5rem 0.875rem;
+    text-align: left;
+    font-size: var(--text-2xs);
+    font-weight: 600;
+    letter-spacing: 0.055em;
+    text-transform: uppercase;
+    color: var(--color-ink-faint);
+    white-space: nowrap;
+  }
+
+  .data-table tbody td {
+    border-bottom: 1px solid var(--color-edge-soft);
+    padding: 0.5rem 0.875rem;
+    font-size: var(--text-base);
+    vertical-align: middle;
+  }
+
+  .data-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .data-table tbody tr {
+    transition: background-color 90ms ease;
+  }
+
+  .data-table tbody tr:hover {
+    background: var(--color-panel-2);
+  }
+
+  /* ---------------------------------------------------------------- utils */
+
+  .mono {
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+  }
+
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .hairline {
+    border-color: var(--color-edge);
+  }
+}
+
+/**
+ * Skeleton loading. A slow opacity fade rather than the old sweeping
+ * highlight: motion that is present but peripheral, and switched off entirely
+ * for anyone who asked for reduced motion.
+ */
+@keyframes sentinel-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.skeleton {
+  background: var(--color-panel-3);
+  border-radius: 4px;
+  animation: sentinel-pulse 1.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+    opacity: 0.7;
+  }
+  *,
+  ::after,
+  ::before {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ------------------------------------------------------- packet analysis */
+
+/**
+ * The packet-analysis workspace on the landing route. A dark console surface
+ * scoped entirely under `.pw-root`: nothing here leaks outside the workspace.
+ * The workspace palette IS the product palette now — the global @theme tokens
+ * above carry the same values — so the console and the rest of the product
+ * share one surface hierarchy.
+ *
+ * The palette is deliberately Wireshark-adjacent rather than fancy: a near-black
+ * canvas, blank row dividers, muted mono data, and one restrained accent for a
+ * selected row. Risk keeps the product's severity colours because "how bad is
+ * this" is load-bearing on a packet list too.
+ */
+.pw-root {
+  --pw-canvas: #0d1219;
+  --pw-surface: #101722;
+  --pw-surface-2: #16202e;
+  --pw-surface-3: #1c2939;
+  --pw-border: #26354a;
+  --pw-border-2: #32466b;
+  --pw-ink: #d9e0ea;
+  --pw-dim: #93a1b4;
+  --pw-faint: #5b6a80;
+  --pw-accent: #a7aef5;
+  --pw-select: rgba(99, 102, 241, 0.22);
+  color-scheme: dark;
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 9.5rem);
+  min-height: 520px;
+  overflow: hidden;
+  border: 1px solid var(--pw-border);
+  border-radius: 10px;
+  background: var(--pw-canvas);
+  color: var(--pw-ink);
+  font-family: var(--font-sans);
+}
+
+.pw-topbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 0.875rem;
+  border-bottom: 1px solid var(--pw-border);
+  background: var(--pw-surface);
+}
+
+/* The LIVE IPsec traffic section is the primary surface; findings sit below
+   it as a compact secondary strip. */
+.pw-live {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.pw-live-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.55rem 0.875rem;
+  border-bottom: 1px solid var(--pw-border);
+  background: var(--pw-surface-2);
+}
+
+.pw-live-title {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  color: var(--pw-ink);
+}
+
+.pw-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.pw-grow {
+  flex: 1;
+}
+
+.pw-cap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: var(--text-xs);
+  color: var(--pw-dim);
+}
+
+.pw-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  flex-shrink: 0;
+}
+
+.pw-cap-label {
+  white-space: nowrap;
+}
+
+.pw-dim-caption {
+  color: var(--pw-faint);
+  font-size: var(--text-xs);
+}
+
+.pw-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--pw-border);
+  border-radius: 4px;
+  background: var(--pw-surface-2);
+  color: var(--pw-dim);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pw-chip-ipsec {
+  border-color: rgba(99, 102, 241, 0.38);
+  background: rgba(99, 102, 241, 0.16);
+  color: var(--pw-accent);
+}
+
+.pw-seg {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--pw-border);
+  border-radius: 6px;
+  background: var(--pw-canvas);
+}
+
+.pw-seg button {
+  padding: 0.25rem 0.75rem;
+  border: 0;
+  border-right: 1px solid var(--pw-border);
+  background: transparent;
+  color: var(--pw-dim);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.pw-seg button:last-child {
+  border-right: 0;
+}
+
+.pw-seg button:hover {
+  background: var(--pw-surface-2);
+  color: var(--pw-ink);
+}
+
+.pw-seg button.pw-seg-on {
+  background: rgba(99, 102, 241, 0.22);
+  color: var(--pw-accent);
+}
+
+.pw-btn {
+  padding: 0.25rem 0.625rem;
+  border: 1px solid var(--pw-border);
+  border-radius: 6px;
+  background: var(--pw-surface-2);
+  color: var(--pw-dim);
+  font-size: var(--text-xs);
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.pw-btn:hover {
+  background: var(--pw-surface-3);
+  color: var(--pw-ink);
+}
+
+.pw-statusline {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  flex-wrap: wrap;
+  padding: 0.35rem 0.875rem;
+  border-bottom: 1px solid var(--pw-border);
+  background: var(--pw-canvas);
+  color: var(--pw-faint);
+  font-size: var(--text-2xs);
+}
+
+.pw-spacer {
+  flex: 1;
+}
+
+.pw-warn {
+  color: var(--pw-warn, #d9a441);
+}
+
+.pw-list {
+  /* The live streaming path renders `.pw-scroll` directly as the flex child of
+     the fixed-height workspace, so the scroll region itself carries the floor
+     (see below). This wrapper is used by the degraded/offline branches and just
+     mirrors the same stacking. */
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pw-scroll {
+  /* The live stream is a direct flex child of the fixed-height workspace; it
+     must keep a visible floor (never `min-height: 0`) so the investigation
+     opening beneath it cannot collapse the table. It scrolls internally. */
+  flex: 1 1 42%;
+  min-height: 150px;
+  overflow: auto;
+}
+
+.pw-table {
+  width: 100%;
+  min-width: 1060px;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.pw-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 0.5rem 0.875rem;
+  border-bottom: 1px solid var(--pw-border);
+  background: var(--pw-surface-2);
+  color: var(--pw-faint);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.pw-table th.pw-th-num,
+.pw-table td.pw-num {
+  text-align: right;
+}
+
+.pw-table tbody td {
+  padding: 0.44rem 0.875rem;
+  border-bottom: 1px solid #1b2634;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.pw-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.pw-table tbody tr {
+  cursor: pointer;
+  transition: background-color 70ms ease;
+}
+
+.pw-table tbody tr:hover {
+  background: var(--pw-surface-2);
+}
+
+.pw-table tbody tr.pw-rowsel,
+.pw-table tbody tr.pw-rowsel:hover {
+  background: var(--pw-select);
+}
+
+.pw-mono {
+  font-family: var(--font-mono);
+  font-variant-ligatures: none;
+}
+
+.pw-num {
+  color: var(--pw-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.pw-ink {
+  color: var(--pw-ink);
+}
+
+.pw-dim {
+  color: var(--pw-dim);
+}
+
+.pw-ink-strong {
+  color: var(--pw-ink);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.pw-faint-text {
+  color: var(--pw-faint);
+  font-size: var(--text-xs);
+}
+
+.pw-risk {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.05rem 0.5rem;
+  border: 1px solid;
+  border-radius: 4px;
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+/* Per-packet badges in the live stream: fixed width so a scrolling column of
+   severities stays aligned and readable, muted "not classified" state kept
+   visibly distinct from a real LOW. */
+.pw-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 5.1rem;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.pw-dir {
+  min-width: 4.6rem;
+  color: var(--color-ink);
+  border-color: var(--pw-border);
+  background: var(--pw-surface-2);
+}
+
+.pw-dir[data-direction='INCOMING'] {
+  color: var(--color-info);
+  border-color: color-mix(in srgb, var(--color-info) 45%, transparent);
+}
+
+.pw-dir[data-direction='OUTGOING'] {
+  color: var(--color-ink-dim);
+  border-color: var(--pw-border);
+  background: var(--pw-surface-3);
+}
+
+.pw-badge-none {
+  color: var(--color-ink-faint);
+  border-color: var(--pw-border);
+  border-style: dashed;
+  background: transparent;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+/* The security risk/severity classification is the verdict a reader must be
+   able to read at a glance, so it is set larger and heavier than the compact
+   direction badge. The word is the backend's own severity, verbatim. */
+.pw-badge[data-risk] {
+  min-width: 6.2rem;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.pw-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  height: 100%;
+  min-height: 120px;
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--pw-faint);
+  font-size: var(--text-sm);
+}
+
+.pw-empty-note {
+  max-width: 36rem;
+  color: var(--pw-faint);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+.pw-inspector {
+  /* Sizes to its content, capped below the stream's floor and internally
+     scrollable, so the investigation can never push the live stream away. */
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  min-height: 200px;
+  max-height: 55%;
+  overflow: hidden;
+  border-top: 1px solid var(--pw-border);
+  background: var(--pw-surface);
+}
+
+.pw-pane {
+  min-width: 0;
+  padding: 0.625rem 0.875rem;
+  overflow: auto;
+}
+
+.pw-pane + .pw-pane {
+  border-left: 1px solid var(--pw-border);
+}
+
+.pw-pane-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.pw-pane-title {
+  color: var(--pw-faint);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.pw-pane-title-spaced {
+  margin-bottom: 0.5rem;
+}
+
+.pw-quiet {
+  color: var(--pw-faint);
+  font-size: var(--text-2xs);
+}
+
+.pw-kv {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.22rem 0;
+  font-size: var(--text-xs);
+}
+
+.pw-kv dt {
+  flex: 0 0 8.5rem;
+  color: var(--pw-faint);
+}
+
+.pw-kv dd {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--pw-dim);
+  overflow-wrap: anywhere;
+}
+
+.pw-kv.pw-reserved dt {
+  margin-top: 0.5rem;
+  color: var(--pw-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: var(--text-2xs);
+  font-weight: 600;
+}
+
+.pw-note {
+  margin: 0.5rem 0 0;
+  color: var(--pw-warn, #d9a441);
+  font-size: var(--text-2xs);
+  line-height: 1.4;
+}
+
+.pw-link {
+  color: var(--pw-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.pw-slots {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.375rem;
+  margin-top: 0.375rem;
+}
+
+.pw-slot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.3rem 0.6rem;
+  border: 1px dashed var(--pw-border-2);
+  border-radius: 6px;
+  color: var(--pw-dim);
+  font-size: var(--text-xs);
+}
+
+.pw-reserved {
+  color: var(--pw-faint);
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* ---------------------------------------------------- packet investigation */
+
+/**
+ * The in-workspace investigation surface replaces the old two-pane inspector:
+ * one full-width panel whose content is driven entirely by the assessment
+ * store (configured / observed / findings / custody / evidence), with a
+ * provenance label on every value so "configured", "observed" and "not
+ * provided by the backend" are never conflated.
+ */
+.pw-invest {
+  --pw-border-soft: #1b2634;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0.625rem 0.875rem 0.875rem;
+  overflow: auto;
+}
+
+.pw-invest-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.625rem;
+}
+
+.pw-invest-title {
+  color: var(--pw-ink);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.pw-invest-spacer {
+  flex: 1;
+}
+
+/* The packet identity strip that anchors the whole investigation. */
+.pw-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+  gap: 0.4rem 0.875rem;
+  padding: 0.5rem 0.625rem;
+  margin-bottom: 0.75rem;
+  border: 1px solid var(--pw-border);
+  border-radius: 6px;
+  background: var(--pw-canvas);
+}
+
+.pw-strip-label {
+  color: var(--pw-faint);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.pw-strip-value {
+  margin-top: 0.1rem;
+  color: var(--pw-ink);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+/* Tab bar for the investigation views. */
+.pw-tabs {
+  display: flex;
+  gap: 0.125rem;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--pw-border);
+  margin-bottom: 0.75rem;
+}
+
+.pw-tab {
+  padding: 0.35rem 0.75rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--pw-dim);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  transition:
+    color 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.pw-tab:hover {
+  color: var(--pw-ink);
+}
+
+.pw-tab.pw-tab-on,
+.pw-tab.pw-tab-on:hover {
+  color: var(--pw-accent);
+  border-bottom-color: var(--pw-accent);
+}
+
+/* Section heading inside a tab. */
+.pw-subhead {
+  margin: 0.875rem 0 0.375rem;
+  color: var(--pw-faint);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.pw-subhead:first-child {
+  margin-top: 0;
+}
+
+/* "where does this value come from" label. */
+.pw-prov {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--pw-border);
+  border-radius: 3px;
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.pw-prov-conf {
+  color: var(--pw-dim);
+}
+
+.pw-prov-obs {
+  border-color: rgba(93, 140, 255, 0.42);
+  background: rgba(93, 140, 255, 0.12);
+  color: #93b4ff;
+}
+
+.pw-prov-miss {
+  border-color: rgba(217, 164, 65, 0.45);
+  background: rgba(217, 164, 65, 0.08);
+  color: #d9b877;
+}
+
+/* Config / SA comparison rows: parameter | configured | observed | verdict. */
+.pw-colheads {
+  display: grid;
+  grid-template-columns: minmax(11rem, 1.3fr) minmax(0, 1fr) minmax(0, 1fr) minmax(7rem, 0.8fr);
+  gap: 0.75rem;
+  padding: 0.25rem 0;
+  color: var(--pw-faint);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.pw-row3 {
+  display: grid;
+  grid-template-columns: minmax(11rem, 1.3fr) minmax(0, 1fr) minmax(0, 1fr) minmax(7rem, 0.8fr);
+  gap: 0.75rem;
+  padding: 0.3rem 0;
+  border-top: 1px solid var(--pw-border-soft);
+  font-size: var(--text-xs);
+  align-items: baseline;
+}
+
+.pw-row3 .pw-term {
+  color: var(--pw-dim);
+  overflow-wrap: anywhere;
+}
+
+.pw-row3 .pw-val {
+  color: var(--pw-ink);
+  overflow-wrap: anywhere;
+}
+
+.pw-row3 .pw-val-muted {
+  color: var(--pw-faint);
+}
+
+/* A finding card. */
+.pw-finding {
+  margin-bottom: 0.625rem;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--pw-border);
+  border-radius: 6px;
+  background: var(--pw-canvas);
+}
+
+.pw-finding-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.pw-finding-title {
+  margin: 0;
+  color: var(--pw-ink);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+/* Verdict chips for security / evidence state. */
+.pw-verdict {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.15rem 0.55rem;
+  border: 1px solid;
+  border-radius: 4px;
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.pw-root ::-webkit-scrollbar-track {
+  background: var(--pw-canvas);
+}
+
+.pw-root ::-webkit-scrollbar-thumb {
+  background: #2b3a4f;
+  border: 3px solid transparent;
+}
+
+.pw-root ::-webkit-scrollbar-thumb:hover {
+  background: #3b4d68;
+}
+
+/* ------------------------------------------------- findings filter bar */
+.pw-findings {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--pw-border-2);
+  background: var(--pw-canvas);
+}
+
+.pw-findings-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.4rem 0.875rem;
+  border: 0;
+  border-bottom: 1px solid var(--pw-border);
+  background: var(--pw-surface);
+  color: var(--pw-dim);
+  cursor: pointer;
+  text-align: left;
+}
+
+.pw-findings-toggle:hover {
+  background: var(--pw-surface-2);
+  color: var(--pw-ink);
+}
+
+.pw-findings-toggle .pw-dim-caption {
+  flex: 1;
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pw-findings-count {
+  padding: 0.05rem 0.45rem;
+  border: 1px solid rgba(99, 102, 241, 0.5);
+  border-radius: 9999px;
+  background: rgba(99, 102, 241, 0.14);
+  color: var(--pw-accent);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.pw-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.45rem 0.875rem 0.35rem;
+  border-bottom: 1px solid var(--pw-border);
+  background: var(--pw-surface);
+}
+
+.pw-findings-label {
+  color: var(--pw-faint);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.pw-filter-dd {
+  position: relative;
+}
+
+.pw-filter-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--pw-border);
+  border-radius: 6px;
+  background: var(--pw-canvas);
+  color: var(--pw-dim);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  transition:
+    border-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.pw-filter-select:hover {
+  border-color: var(--pw-border-2);
+  color: var(--pw-ink);
+}
+
+.pw-filter-select.pw-filter-on {
+  border-color: rgba(99, 102, 241, 0.5);
+  background: rgba(99, 102, 241, 0.14);
+  color: var(--pw-accent);
+}
+
+.pw-filter-value {
+  font-weight: 700;
+}
+
+.pw-filter-caret {
+  color: var(--pw-faint);
+  font-size: var(--text-2xs);
+  line-height: 1;
+}
+
+.pw-filter-select:hover .pw-filter-caret {
+  color: var(--pw-dim);
+}
+
+.pw-filter-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 11rem;
+  max-height: 16rem;
+  overflow: auto;
+  padding: 0.25rem;
+  border: 1px solid var(--pw-border-2);
+  border-radius: 8px;
+  background: var(--pw-surface-3);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+.pw-filter-opt {
+  display: block;
+  width: 100%;
+  padding: 0.3rem 0.55rem;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--pw-dim);
+  font-size: var(--text-xs);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.pw-filter-opt:hover {
+  background: var(--pw-surface-2);
+  color: var(--pw-ink);
+}
+
+.pw-filter-opt.pw-filter-opt-on {
+  background: rgba(99, 102, 241, 0.22);
+  color: var(--pw-accent);
+  font-weight: 600;
+}
+
+.pw-findings-summary {
+  color: var(--pw-dim);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pw-findings-strip {
+  max-height: 11.25rem;
+  overflow: auto;
+  border-bottom: 1px solid var(--pw-border);
+  background: var(--pw-canvas);
+}
+
+.pw-strip-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.875rem;
+  color: var(--pw-faint);
+  font-size: var(--text-xs);
+  text-align: center;
+}
+
+.pw-finding-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.25rem 0;
+}
+
+.pw-finding-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.32rem 0.875rem;
+  border: 0;
+  background: transparent;
+  color: var(--pw-ink);
+  font-size: var(--text-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.pw-finding-row:hover {
+  background: var(--pw-surface-2);
+}
+
+.pw-finding-name {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pw-finding-meta {
+  color: var(--pw-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pw-finding-traffic {
+  display: inline-flex;
+  gap: 0.25rem;
+  white-space: nowrap;
+}
+
+.pw-finding-traffic .pw-chip {
+  padding: 0 0.35rem;
+}
+
+.pw-finding-drift {
+  color: var(--pw-dim);
+  white-space: nowrap;
+}
+
+.pw-finding-nocap {
+  color: var(--pw-faint);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.pw-finding-open {
+  color: var(--pw-accent);
+  font-size: 0.625rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.pw-row-finding,
+.pw-row-finding:hover {
+  background: rgba(167, 174, 245, 0.08);
+  box-shadow: inset 3px 0 0 var(--pw-accent);
+}
+
+/* Risk filter help affordance (finding severity vs packet/assessment risk). */
+.pw-filter-hint {
+  display: inline-grid;
+  place-items: center;
+  width: 0.9rem;
+  height: 0.9rem;
+  margin-left: 0.25rem;
+  border: 1px solid var(--pw-border-2);
+  border-radius: 50%;
+  color: var(--pw-dim);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+}
+
+.pw-filter-hint:hover {
+  color: var(--pw-accent);
+  border-color: var(--pw-accent);
+}
+
+/* Assessment risk chip caption (risk vs finding severity distinction). */
+.pw-risk-col {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.15rem;
+}
+
+.pw-chip-caption {
+  color: var(--pw-faint);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+/* XAI panel — natural extension of the investigation surfaces. */
+.pw-xai {
+  margin-top: 1rem;
+}
+
+.pw-xai-factors {
+  margin: 0.4rem 0 0;
+  padding-left: 1.15rem;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.pw-xai-factors li::marker {
+  color: var(--pw-accent);
+  font-size: var(--text-2xs);
+}
+
+.pw-xai-ml {
+  margin-top: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border-left: 3px solid rgba(147, 197, 253, 0.45);
+  background: rgba(147, 197, 253, 0.06);
+}
+
+details.pw-xai-details {
+  margin-top: 0.6rem;
+  border-top: 1px solid var(--pw-border);
+  padding-top: 0.5rem;
+}
+
+details.pw-xai-details summary {
+  cursor: pointer;
+  color: var(--pw-dim);
+  font-weight: 600;
+  font-size: var(--text-xs);
+  letter-spacing: 0.05em;
+}
+
+details.pw-xai-details summary:hover {
+  color: var(--pw-accent);
+}
+
+@media (max-width: 1060px) {
+  .pw-findings-strip {
+    max-height: 8.5rem;
+  }
+}
+
+@media (max-width: 860px) {
+  .pw-inspector {
+    grid-template-columns: 1fr;
+  }
+
+  .pw-pane + .pw-pane {
+    border-left: 0;
+    border-top: 1px solid var(--pw-border);
+  }
+}
+
+/* ------------------------------------------------------------------ AI panel
+ *
+ * The four origins are given four visibly different treatments on purpose.
+ * This is the feature: if an analyst cannot tell at a glance which kind of
+ * statement they are reading, then merging them in one paragraph would be no
+ * worse than not labelling them at all. So the chips differ in colour, border
+ * and weight, and every block of the panel carries the chip for its own kind.
+ *
+ *   observed fact           — green, solid: a measurement
+ *   deterministic assessment— blue, solid: the risk engine's verdict
+ *   ML inference            — violet, dashed: a prediction
+ *   AI explanation          — amber, dashed: generated prose
+ */
+
+.pw-ai {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.pw-ai-compact {
+  gap: 0.45rem;
+}
+
+.pw-ai-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.pw-ai-origin {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid;
+  border-radius: 3px;
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.pw-ai-origin-obs {
+  border-color: rgba(88, 190, 140, 0.5);
+  background: rgba(88, 190, 140, 0.12);
+  color: #7fd3ab;
+}
+
+.pw-ai-origin-det {
+  border-color: rgba(93, 140, 255, 0.5);
+  background: rgba(93, 140, 255, 0.12);
+  color: #93b4ff;
+}
+
+.pw-ai-origin-ml {
+  border-style: dashed;
+  border-color: rgba(167, 174, 245, 0.55);
+  background: rgba(167, 174, 245, 0.08);
+  color: #b3b9f7;
+}
+
+.pw-ai-origin-ai {
+  border-style: dashed;
+  border-color: rgba(217, 164, 65, 0.55);
+  background: rgba(217, 164, 65, 0.1);
+  color: #e0bd7c;
+}
+
+.pw-ai-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.pw-ai-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.pw-btn-quiet {
+  background: transparent;
+  color: var(--pw-dim);
+}
+
+.pw-ai-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--pw-border);
+  border-radius: 4px;
+  background: var(--pw-canvas);
+}
+
+.pw-ai-block-guard {
+  border-color: rgba(217, 164, 65, 0.45);
+}
+
+.pw-ai-block-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.pw-ai-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.1rem;
+}
+
+.pw-ai-facts > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.pw-ai-fact-key {
+  color: var(--pw-faint);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.pw-ai-fact-val {
+  color: var(--pw-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The answer keeps the service's line structure: it is prose with labelled
+ * sections, and collapsing it into a single flowing paragraph would merge the
+ * WHAT / WHY / EVIDENCE / IMPACT structure the service writes on purpose. */
+.pw-ai-prose {
+  margin: 0;
+  color: var(--pw-ink);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.pw-ai-prose-prior {
+  color: var(--pw-dim);
+  font-size: var(--text-xs);
+  padding-top: 0.35rem;
+}
+
+.pw-ai-none {
+  margin: 0;
+  color: var(--pw-faint);
+  font-size: var(--text-xs);
+  font-style: italic;
+}
+
+.pw-ai-failure {
+  margin: 0;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--pw-border);
+  border-left: 3px solid var(--pw-faint);
+  border-radius: 3px;
+  background: var(--pw-canvas);
+  color: var(--pw-dim);
+  font-size: var(--text-sm);
+}
+
+.pw-ai-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.pw-ai-turn summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  cursor: pointer;
+  color: var(--pw-dim);
+  font-size: var(--text-xs);
+}
+
+.pw-ai-q {
+  color: var(--pw-ink-dim, var(--pw-dim));
+}
+
+.pw-ai-ask {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.pw-ai-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--pw-border);
+  border-radius: 3px;
+  background: var(--pw-canvas);
+  color: var(--pw-ink);
+  font-size: var(--text-sm);
+}
+
+.pw-ai-input:focus-visible {
+  border-color: var(--pw-accent);
+  outline: none;
+}

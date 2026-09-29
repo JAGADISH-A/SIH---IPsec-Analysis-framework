@@ -1,0 +1,59 @@
+{
+  "fixture": "ah_substitution_state.jsonl",
+  "derived_from": {
+    "path": "results/e2e-verification/parser/tunnel_v4/state.jsonl",
+    "artifact_sha256": "0cefd78120fa3e61ab98ea423a533d38da2471717d3099c43f10031011f5214a",
+    "description": "Real ebpf.ipsec_state_builder snapshot recorded by the e2e verification parser run; the validated ESP-only IPv4 state."
+  },
+  "kind": "disclosed_derived_observation",
+  "not_a_capture": "This file is NOT a packet capture and not a recording of any real system. It is a derived test input. No PCAP accompanies it, and no evidence reference in the system points at it as a capture.",
+  "edits": [
+    {
+      "field": "esp_seen",
+      "from": true,
+      "to": false,
+      "detail": "the substantive change: ESP is no longer the protection in force"
+    },
+    {
+      "field": "ah_seen",
+      "from": false,
+      "to": true,
+      "detail": "the substantive change: AH replaces ESP, so integrity without confidentiality"
+    },
+    {
+      "field": "last_esp_timestamp_ns",
+      "from": 1789284785518292992,
+      "to": null,
+      "detail": "a consequence of esp_seen, not an independent change: no ESP packet is now observed"
+    },
+    {
+      "field": "last_ah_timestamp_ns",
+      "from": null,
+      "to": 1789284785518292992,
+      "detail": "a consequence of ah_seen: the observed traffic is now AH"
+    },
+    {
+      "field": "spis[].active",
+      "from": true,
+      "to": false,
+      "detail": "a consequence of the presence change: the recorded SPI is no longer active"
+    },
+    {
+      "field": "transitions[type]",
+      "from": "IPSEC_TRAFFIC_OBSERVED",
+      "to": "IPSEC_TRAFFIC_INACTIVE",
+      "detail": "a consequence: the same packets now evidence AH traffic, not an active ESP SA"
+    }
+  ],
+  "unchanged": "endpoints, the observation window, all packet/byte counters, the SPI value itself and its per-SPI counters and sequence arithmetic, and the IPSEC_IPSEC_START transition record are the real recorded values, byte for byte",
+  "why": "Every real recorded capture in this repository reports the same security posture (IPv4, ESP present, AH absent), so no real pair exercises a protection change. The derivation is declared field by field so the resulting drift is attributable to exactly two booleans.",
+  "expected_drift": {
+    "variables": [
+      "esp.presence",
+      "ah.presence"
+    ],
+    "unchanged": [
+      "address_family"
+    ]
+  }
+}

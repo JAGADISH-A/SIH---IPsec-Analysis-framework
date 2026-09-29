@@ -59,6 +59,7 @@ Configuration is environment-first. CLI flags win over the environment.
 | `ANALYTICS_API_HOST` | `127.0.0.1` | Bind address. Loopback by default. |
 | `ANALYTICS_API_PORT` | `8081` | Bind port. |
 | `ANALYTICS_API_ALLOWED_ORIGINS` | loopback dev origins | Comma-separated CORS allow-list. |
+| `ANALYTICS_API_CAPTURE_FEED` | recorded live-tap journal | Path to the `xdp_monitor` packet journal served read-only at `/api/v1/capture/events` (see §6.6). |
 
 ```bash
 # a real deployment: bind all interfaces, allow exactly one dashboard origin
@@ -302,6 +303,146 @@ partial list.
 `source` and `authoritative` are echoed verbatim. `comparison-engine` is never
 presented as `observation/state-builder`, and `ml` is never presented as
 authoritative. `observation/state-builder` is the only authoritative source.
+
+### 6.6 Capture feed (the live-traffic / packet view)
+
+The capture feed is a **read-only tail** of the gateway's `xdp_monitor` packet
+journal. It does not aggregate, decode or re-invent anything: each raw XDP JSON
+event is normalized through the existing streaming adapter
+(`correlation/streaming/live_adapter.py`) and served in the canonical stream
+shape fields the rest of the API already uses (`timestamp`, `interface`,
+`protocol`, `source`, `destination`, `spi`, `sequence`, `packet_length`,
+`source_port`, `destination_port`, `classification`, `direction`).
+
+| Route | Notes |
+|---|---|
+| `GET /api/v1/capture/events?cursor=&limit=` | Tail of the packet journal. `cursor` is a byte offset the server returns; resume is exact. `limit` caps a page (default 200, max 2000). |
+
+**Policy (must be preserved by any client):**
+
+- **No fabricated packets.** With no journal attached the route returns a
+  structured `503` `capture_feed_unavailable`. With a journal attached but no
+  packets yet it returns `200` with `present: false` and a human `reason` —
+  the explicit "no current traffic yet" state, which the UI renders as
+  `LIVE · 0 pkt/s` + "No current IPsec traffic observed.". Both states are
+  rendered, never filled.
+- **Currentness is backend-decided, never approximated.** Every envelope
+  carries the server's own `current` verdict: a journal is current only while
+  it is actively being written (write activity within `freshness_window_ms`,
+  default 8000, overridable via `ANALYTICS_API_CAPTURE_FRESHNESS_MS`). A
+  journal that exists but is not being written reports `current: false` — its
+  rows are **recorded history, not current live traffic**, and the workspace
+  must present them as history (empty live table + explicit note) rather than
+  as live rows.
+- **No packet parsing in the browser.** The feed computes `protocol_label`
+  ("ESP", "AH", "IKE", "ESP_IN_UDP", "UDP", "TCP", "ICMP", "DNS", …) and an
+  `info` string (SPI/seq for IPsec, port pairs otherwise). The frontend formats
+  only.
+- **Risk is a verbatim projection of the assessment store.** Each packet's
+  `risk` block is built by joining the packet SPI against the SPIs each
+  assessment observed, copying `severity`/`risk_score`/`finding_count` and the
+  `assessment_id` unchanged. A SPI no assessment observed renders
+  `risk.present: false` — the UI draws an em dash, it never scores the packet.
+
+Attaching the feed:
+
+```bash
+# explicit
+python -m correlation.api.app --phase10 --capture-feed results/observed-state/xdp/live_events.jsonl
+
+# or via the environment
+ANALYTICS_API_CAPTURE_FEED=/path/to/live_events.jsonl python -m correlation.api.app --phase10
+```
+
+With `--phase10` on and no explicit path, the recorded live-tap journal
+`results/observed-state/live_events_full.jsonl` is attached as the default. It
+is a **static recorded artifact**, so under the currentness policy it reports
+`current: false` and the workspace shows the recorded-history empty state
+rather than presenting those 93 real packets as live traffic. A gateway monitor
+writing to the same path (or the live path above) makes the view genuinely
+live. The journal is **never written** from a request.
+
+Response shape (all fields always present):
+
+```json
+{
+  "api": "capture-events-v1",
+  "schema": "packet",
+  "state": "available | waiting",
+  "read_only": true,
+  "present": true,
+  "reason": null,
+  "source": "live_events_full.jsonl",
+  "frame": "Passive capture of the gateway traffic path (xdp_monitor). …",
+  "cursor": 11573,
+  "start_cursor": 0,
+  "size": 11573,
+  "total": 93,
+  "count": 2,
+  "limit": 2,
+  "has_more": true,
+  "current": false,
+  "freshness_window_ms": 8000,
+  "last_write_age_ms": 86400000,
+  "journal_mtime_ms": 1726063049755,
+  "server_time_ms": 1726149449755,
+  "newest_observed_at_ms": 1726062927854,
+  "events": [
+    {
+      "id": "<sha256 of offset:raw line>",
+      "source": "live_events_full.jsonl",
+      "offset": 0,
+      "timestamp_ns": 17260803212308,
+      "schema": "packet",
+      "packet": { "timestamp": 17260803212308, "interface": "",
+                  "protocol": 50, "source": "192.168.100.1",
+                  "destination": "192.168.100.2", "spi": 3450011795,
+                  "sequence": 7, "packet_length": 154, "source_port": 0,
+                  "destination_port": 0, "classification": "ESP",
+                  "direction": null, "sensor_type": "ESP" },
+      "protocol_label": "ESP",
+      "info": "SPI 0xcda30093, seq 7",
+      "spi": 3450011795,
+      "direction": null,
+      "risk": { "present": true, "highest_severity": "INFO",
+                "highest_risk_score": 0,
+                "assessments": [{ "assessment_id": "dataset-20260924-003710:1:nat-t",
+                                  "severity": "INFO", "risk_score": 0,
+                                  "finding_count": 0 }] }
+    }
+  ]
+}
+```
+
+The `id` is a content+offset digest, so it is deterministic across polls and
+stable as the journal grows. Only complete (newline-terminated) lines are ever
+served, so a torn final line being written by the sensor is never surfaced, and
+a rotated/truncated journal (cursor past EOF) retails itself from the top.
+
+**The liveness fields** (all additive, present in every envelope `status()`
+return):
+
+- `current` (boolean) — the backend's verdict that the journal is being
+  actively written. Decided server-side from `last_write_age_ms <=
+  freshness_window_ms`, never by the client. `false` means: whatever the
+  journal holds is recorded history, and the workspace must not render it as a
+  live packet table.
+- `freshness_window_ms` (int) — the server's write-freshness window (default
+  8000; `ANALYTICS_API_CAPTURE_FRESHNESS_MS`, minimum 1000). Also used for the
+  capture view's automated freshness display.
+- `last_write_age_ms` (int | null) — how long ago the journal file's mtime was
+  updated; `null` when no journal exists.
+- `journal_mtime_ms` (int | null) — the journal's own last-write wall clock.
+- `server_time_ms` (int) — when the envelope was built.
+- `newest_observed_at_ms` (int | null) — wall-clock time of the newest complete
+  (newline-terminated) line, best-effort from the trailing content;
+  informational only, never used to decide `current` (write activity is, so a
+  replay that only re-writes header bytes is still not "live").
+
+The workspace renders live rows **only** when `current` is `true`. Otherwise it
+shows `LIVE · 0 pkt/s` with "No current IPsec traffic observed." and a note
+explaining that held journal rows are recorded history (they remain reachable
+in the findings/evidence surfaces, never as the live stream).
 
 ---
 

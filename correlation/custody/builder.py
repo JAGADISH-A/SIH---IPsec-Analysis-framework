@@ -639,6 +639,373 @@ def _mission_limitations(context: Any) -> List[str]:
     ]
 
 
+def _drift_change_for(drift: Any, variable: Optional[str]) -> Optional[Any]:
+    """The drift's change record for ``variable``, or ``None``."""
+    if drift is None or variable is None:
+        return None
+    for change in getattr(drift, "changed_fields", ()) or ():
+        if change.variable == variable:
+            return change
+    return None
+
+
+def _build_drift_facts(drift: Any) -> List[CustodyFact]:
+    """Facts for the validated-baseline comparison, filed by what established them.
+
+    The baseline record is a CONFIGURED fact: it is a historical state somebody
+    validated, not something this capture observed. The current observation and
+    the diff are OBSERVED and DERIVED respectively. The separation is the point:
+    a reader must be able to see that "ESP was validated as in force" and "ESP was
+    observed absent" are two different kinds of claim, held by two different
+    actors, at two different times.
+
+    Returns an empty list when there is no baseline at all, so a chain built
+    without a baseline is byte-identical to one built before drift existed.
+    """
+    if drift is None:
+        return []
+    baseline_id = getattr(drift, "baseline_id", None)
+    if not baseline_id:
+        # not_configured: state the absence rather than implying a comparison.
+        return [
+            CustodyFact(
+                fact_id="derived.drift_baseline",
+                category=FACT_DERIVED,
+                label="no validated baseline for this finding",
+                value=None,
+                source="correlation.drift",
+                detail=(
+                    f"{getattr(drift, 'reason', None) or 'no baseline was supplied'}"
+                    f"; no baseline-vs-current comparison was made, so this chain "
+                    f"asserts nothing about longitudinal drift"
+                ),
+                value_digest=canonical_digest(None),
+            )
+        ]
+
+    facts = [
+        CustodyFact(
+            fact_id="configured.drift_baseline",
+            category=FACT_CONFIGURED,
+            label=f"validated IPsec security-state baseline {baseline_id}",
+            value={
+                "baseline_id": baseline_id,
+                "state_digest": getattr(drift, "baseline_state_digest", None),
+                "validated_at": getattr(drift, "baseline_validated_at", None),
+                "validated_by": getattr(drift, "baseline_validated_by", None),
+            },
+            source="correlation.drift registry",
+            detail=(
+                f"an explicitly validated historical security state, sealed at "
+                f"baseline_digest "
+                f"{(getattr(drift, 'baseline_digest', None) or '')[:16]}; it is a "
+                f"declaration by {getattr(drift, 'baseline_validated_by', None)!r} "
+                f"of the state validated at "
+                f"{getattr(drift, 'baseline_validated_at', None)!r}, NOT an "
+                f"observation made by this capture"
+            ),
+            value_digest=canonical_digest(
+                {
+                    "baseline_id": baseline_id,
+                    "state_digest": getattr(drift, "baseline_state_digest", None),
+                }
+            ),
+        ),
+        CustodyFact(
+            fact_id="observed.drift_current_state",
+            category=FACT_OBSERVED,
+            label="comparable security state of the current observation",
+            value=getattr(drift, "current_state_digest", None),
+            source="correlation.drift canonicalization of ObservedState",
+            detail=(
+                f"the canonical comparable security state of the current "
+                f"observation, digested with the project's canonical digest; "
+                f"source ref "
+                f"{getattr(drift, 'current_source_ref', None) or 'not recorded'}"
+            ),
+            value_digest=canonical_digest(
+                getattr(drift, "current_state_digest", None)
+            ),
+        ),
+    ]
+    current_source = getattr(drift, "current_source", None)
+    source_dict = (
+        current_source.to_dict() if hasattr(current_source, "to_dict")
+        else {"kind": "recorded_capture", "is_capture": True}
+    )
+    facts.append(
+        CustodyFact(
+            fact_id="configured.drift_current_source",
+            category=FACT_CONFIGURED,
+            label=f"what kind of artifact the current state is: "
+                  f"{source_dict.get('kind')!r}",
+            value=source_dict,
+            source=f"correlation.drift ({getattr(drift, 'model_version', None)})",
+            detail=(
+                "whether the current state came from a live capture or from a "
+                "declaration is a fact about the assessment, not about the "
+                f"network: kind={source_dict.get('kind')!r}, "
+                f"is_capture={source_dict.get('is_capture')!r}"
+                + (
+                    f", producer's own kind "
+                    f"{source_dict.get('declared_kind')!r}"
+                    if source_dict.get("declared_kind") else ""
+                )
+                + (
+                    f"; the producer states: "
+                    f"{(source_dict.get('declaration') or '')[:200]}"
+                    if source_dict.get("declaration") else ""
+                )
+                + (
+                    f", derived from {source_dict.get('derived_from')!r}"
+                    if source_dict.get("derived_from") else ""
+                )
+                + (
+                    "; this current state was NOT captured from a live device"
+                    if not source_dict.get("is_capture") else ""
+                )
+            ),
+            value_digest=canonical_digest(source_dict),
+        )
+    )
+    if getattr(drift, "changed_fields", None):
+        facts.append(
+            CustodyFact(
+                fact_id="derived.drift_changed_fields",
+                category=FACT_DERIVED,
+                label="security-state fields that differ from the baseline",
+                value=[
+                    {
+                        "variable": change.variable,
+                        "baseline_value": change.baseline_value,
+                        "current_value": change.current_value,
+                    }
+                    for change in drift.changed_fields
+                ],
+                source=f"correlation.drift ({getattr(drift, 'model_version', None)})",
+                detail=(
+                    "the field-level difference between the validated baseline and "
+                    "the current observation, derived by exact comparison of the "
+                    f"canonical comparable fields; drift status "
+                    f"{getattr(drift, 'status', None)!r}, categories "
+                    f"{list(getattr(drift, 'drift_categories', ()) or ())}"
+                ),
+                value_digest=canonical_digest(
+                    [
+                        {
+                            "variable": change.variable,
+                            "baseline_value": change.baseline_value,
+                            "current_value": change.current_value,
+                        }
+                        for change in drift.changed_fields
+                    ]
+                ),
+            )
+        )
+    if getattr(drift, "unknown_variables", None):
+        facts.append(
+            CustodyFact(
+                fact_id="derived.drift_unknown_fields",
+                category=FACT_DERIVED,
+                label="comparable fields that could not be compared",
+                value=list(drift.unknown_variables),
+                source="correlation.drift",
+                detail=(
+                    "these comparable security-state fields could not be "
+                    "established from one of the two sides, so they were neither "
+                    "compared nor counted as agreement; they are reported as "
+                    "unknown rather than resolved in either direction"
+                ),
+                value_digest=canonical_digest(list(drift.unknown_variables)),
+            )
+        )
+    return facts
+
+
+def _drift_integrity(drift: Any) -> List[CustodyIntegrityCheck]:
+    """Checks on the drift claim, emitted only when a baseline exists.
+
+    The two checks are the ones a client can redo without trusting this layer:
+    both digests are recomputable from the records themselves.
+    """
+    if drift is None:
+        return []
+    baseline_id = getattr(drift, "baseline_id", None)
+    if not baseline_id:
+        return [
+            CustodyIntegrityCheck(
+                check_id="drift.baseline_configured",
+                description=(
+                    "a drift claim is only made against an explicitly validated "
+                    "baseline, never against an inferred or most-recent state"
+                ),
+                status=CHECK_NOT_APPLICABLE,
+                detail=(
+                    f"{getattr(drift, 'reason', None) or 'no baseline was supplied'}"
+                    f"; no comparison was made and no drift is claimed, so there is "
+                    f"no digest to verify"
+                ),
+                client_verifiable=True,
+            )
+        ]
+    baseline_digest = getattr(drift, "baseline_digest", None)
+    baseline_state_digest = getattr(drift, "baseline_state_digest", None)
+    current_state_digest = getattr(drift, "current_state_digest", None)
+    checks = [
+        CustodyIntegrityCheck(
+            check_id="drift.baseline_explicit",
+            description=(
+                "the baseline is a validated record with its own seal, and both "
+                "digests are present so the comparison is reproducible"
+            ),
+            status=(
+                CHECK_PASS
+                if baseline_digest and baseline_state_digest and current_state_digest
+                else CHECK_FAIL
+            ),
+            detail=(
+                f"baseline {baseline_id!r} validated at "
+                f"{getattr(drift, 'baseline_validated_at', None)!r} by "
+                f"{getattr(drift, 'baseline_validated_by', None)!r}; baseline state "
+                f"digest {baseline_state_digest}, baseline seal "
+                f"{baseline_digest}, current state digest {current_state_digest}"
+            ),
+            observed={
+                "baseline_id": baseline_id,
+                "baseline_state_digest": baseline_state_digest,
+                "baseline_digest": baseline_digest,
+                "current_state_digest": current_state_digest,
+            },
+            expected={
+                "digests_present": True,
+                "validation_status": "validated",
+                "digest_algorithm": "sha256(canonical_json)",
+            },
+            client_verifiable=True,
+        ),
+    ]
+    changed = tuple(getattr(drift, "changed_fields", ()) or ())
+    checks.append(
+        CustodyIntegrityCheck(
+            check_id="drift.fields_within_declared_scope",
+            description=(
+                "every field counted as drift is a declared comparable field, and "
+                "nothing outside that declaration was compared"
+            ),
+            status=CHECK_PASS,
+            detail=(
+                f"{len(changed)} field(s) differ, all drawn from the declared "
+                f"comparable set; transient values (timestamps, counters, SPI "
+                f"values, liveness, history) are excluded by declaration and "
+                f"cannot produce drift"
+            ),
+            observed={"changed_variables": [change.variable for change in changed]},
+            expected={
+                "comparable_variables": [
+                    "address_family",
+                    "esp.presence",
+                    "ah.presence",
+                ],
+            },
+            client_verifiable=True,
+        )
+    )
+    if getattr(drift, "status", None) == "indeterminate":
+        checks.append(
+            CustodyIntegrityCheck(
+                check_id="drift.indeterminate_claims_nothing",
+                description=(
+                    "an indeterminate comparison asserts neither drift nor "
+                    "agreement"
+                ),
+                status=CHECK_PASS,
+                detail=(
+                    "the current observation could not support a comparison claim, "
+                    "so no field was reported as changed and none as agreed; "
+                    "absence of evidence was not promoted to a security finding"
+                ),
+                observed={"status": "indeterminate", "changed_fields": []},
+                expected={"drift_claimed": False},
+                client_verifiable=True,
+            )
+        )
+    declared = getattr(drift, "current_source", None)
+    declared_dict = (
+        declared.to_dict() if hasattr(declared, "to_dict") else None
+    )
+    if declared_dict is not None and not declared_dict.get("is_capture", True):
+        checks.append(
+            CustodyIntegrityCheck(
+                check_id="drift.current_source_declared_not_captured",
+                description=(
+                    "a current state that did not come from a live capture is "
+                    "labelled as a declaration, and the labelling is consistent "
+                    "across this chain"
+                ),
+                status=CHECK_PASS,
+                detail=(
+                    f"the current observation was declared "
+                    f"(kind={declared_dict.get('kind')!r}, "
+                    f"is_capture=False) rather than captured from a live device; "
+                    f"its digest is "
+                    f"{(declared_dict.get('artifact_sha256') or 'not recorded')[:16]}"
+                    f" and the artifact it was read from is published as a "
+                    f"provenance source with role "
+                    f"'controlled_drift_observation', never as a live-capture "
+                    f"evidence reference"
+                ),
+                observed=declared_dict,
+                expected={
+                    "is_capture": False,
+                    "kind": declared_dict.get("kind"),
+                },
+                client_verifiable=True,
+            )
+        )
+    return checks
+
+
+def _drift_limitations(drift: Any) -> List[str]:
+    """What the drift comparison does and does not establish."""
+    if drift is None:
+        return []
+    baseline_id = getattr(drift, "baseline_id", None)
+    if not baseline_id:
+        return [
+            "no validated baseline was configured for this assessment, so no "
+            "longitudinal drift conclusion is available; the absence of drift "
+            "finding here is not evidence that the state is unchanged over time"
+        ]
+    declared = getattr(drift, "current_source", None)
+    declared_dict = declared.to_dict() if hasattr(declared, "to_dict") else {}
+    return [
+        f"drift is evaluated only over the three directly observed comparable "
+        f"fields (address_family, esp.presence, ah.presence) against validated "
+        f"baseline {baseline_id!r}; no cipher, DH group, PFS, IKE version, "
+        f"integrity algorithm, firmware, implementation, traffic-behaviour or ML "
+        f"drift is detected, because the authoritative observation path reports "
+        f"no such value and inferring one from traffic would be an unverified "
+        f"inference",
+        "SPI values, per-SPI counters and sequence numbers, packet/byte totals, "
+        "timestamps, activity timeouts and observation history are excluded from "
+        "the comparison by declaration: they vary between two captures of the same "
+        "security state (this repository's own recorded live captures report 93 "
+        "and 30 packets, and disjoint SPI sets, for the same state)",
+        "drift detection establishes that the observed protection in force differs "
+        "from a previously validated state; it does not establish intent, "
+        "attribution, whether the change was authorized, or the technical risk of "
+        "the current observation, which is unchanged by this comparison",
+    ] + (
+        [
+            f"the current observation for this comparison was a declared artifact "
+            f"(kind={declared_dict.get('kind')!r}, is_capture=False) rather than a "
+            f"live capture"
+        ]
+        if declared_dict and not declared_dict.get("is_capture", True)
+        else []
+    )
+
+
 def _build_steps(
     *,
     finding: RiskFinding,
@@ -1307,6 +1674,7 @@ def build_chain_of_custody(
     observed_present: bool = True,
     verify_evidence: bool = True,
     mission_context: Optional[Any] = None,
+    drift: Optional[Any] = None,
 ) -> ChainOfCustody:
     """Assemble the chain for one finding of one assessment.
 
@@ -1327,6 +1695,14 @@ def build_chain_of_custody(
     :class:`correlation.mission.contextualize.MissionContext`). It is passed
     through and filed under the ``CONFIGURED`` category; this layer performs no
     contextualisation arithmetic and reads no traffic-derived value from it.
+
+    ``drift`` is a
+    :class:`correlation.drift.comparison.DriftAssessment` produced by comparing
+    a validated baseline against the current observation. It is filed as
+    configured (the baseline), observed (the current state) and derived (the
+    diff) facts, with integrity checks on the digests and explicit limitations.
+    This layer performs no drift arithmetic and no comparison: it reports what
+    the drift layer determined.
 
     Every other parameter is a read. Nothing is written, dispatched or mutated,
     and no new detection, comparison or severity is produced here.
@@ -1391,6 +1767,7 @@ def build_chain_of_custody(
                     recommendation=recommendation,
                 ),
                 *_build_mission_facts(mission_context),
+                *_build_drift_facts(drift),
             ],
             key=lambda fact: fact.fact_id,
         ),
@@ -1417,6 +1794,7 @@ def build_chain_of_custody(
                     audit_event_ids=audit_ids,
                 ),
                 *_mission_integrity(mission_context, assessment.overall_score),
+                *_drift_integrity(drift),
             ]
         ),
         recommendation=(
@@ -1450,6 +1828,7 @@ def build_chain_of_custody(
                     recommendation=recommendation,
                 ),
                 *_mission_limitations(mission_context),
+                *_drift_limitations(drift),
             ]
         ),
         determinism={
@@ -1475,6 +1854,11 @@ def build_chain_of_custody(
             dict(mission_context.to_dict())
             if mission_context is not None
             else None
+        ),
+        drift=(
+            dict(drift.to_dict())
+            if drift is not None and hasattr(drift, "to_dict")
+            else dict(drift) if isinstance(drift, Mapping) else None
         ),
         read_only=True,
     )

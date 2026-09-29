@@ -1,0 +1,88 @@
+{
+  "planner_version": "v1",
+  "dataset_schema_version": 0,
+  "target_samples": 2,
+  "traffic_quota": {
+    "voip": 1,
+    "video": 1
+  },
+  "posture_planned": {
+    "STRONG": 1,
+    "GOOD": 1,
+    "MEDIUM": 0,
+    "WEAK": 0,
+    "WORST": 0
+  },
+  "posture_unique_configuration_count": {
+    "STRONG": 1,
+    "GOOD": 1,
+    "MEDIUM": 0,
+    "WEAK": 0,
+    "WORST": 0
+  },
+  "posture_configuration_reuses": {
+    "STRONG": 0,
+    "GOOD": 0,
+    "MEDIUM": 0,
+    "WEAK": 0,
+    "WORST": 0
+  },
+  "catalogue": {
+    "total_candidates": 0,
+    "accepted": 0,
+    "rejected": 0,
+    "per_posture": {
+      "STRONG": 0,
+      "GOOD": 0,
+      "MEDIUM": 0,
+      "WEAK": 0,
+      "WORST": 0
+    }
+  },
+  "samples": [
+    {
+      "sequence": 1,
+      "traffic_profile": "voip",
+      "security_posture": "STRONG",
+      "configuration_id": "tunnel-ipv4-aes128gcm16-none-modp2048-true",
+      "ipsec_configuration": {
+        "mode": "tunnel",
+        "address_family": "ipv4",
+        "ike": {
+          "version": 2,
+          "encryption": "aes256",
+          "integrity": "sha256",
+          "dh_group": "modp2048"
+        },
+        "esp": {
+          "encryption": "aes128gcm16",
+          "integrity": null,
+          "dh_group": "modp2048",
+          "pfs": true
+        }
+      }
+    },
+    {
+      "sequence": 2,
+      "traffic_profile": "video",
+      "security_posture": "GOOD",
+      "configuration_id": "transport-ipv6-aes256cbc-sha256-modp2048-true",
+      "ipsec_configuration": {
+        "mode": "transport",
+        "address_family": "ipv6",
+        "ike": {
+          "version": 2,
+          "encryption": "aes256",
+          "integrity": "sha256",
+          "dh_group": "modp2048"
+        },
+        "esp": {
+          "encryption": "aes256cbc",
+          "integrity": "sha256",
+          "dh_group": "modp2048",
+          "pfs": true
+        }
+      }
+    }
+  ]
+}

@@ -34,6 +34,7 @@ from .executor import (
     terminate_sas,
     verify_ipsec,
     test_connectivity,
+    ensure_live_observation,
     validate_config,
     destroy,
 )
@@ -43,6 +44,7 @@ from . import features as features_mod
 from . import dataset as dataset_mod
 from . import timing as timing_mod
 from . import reuse as reuse_mod
+from . import experiment_manifest as manifest_mod
 
 DEFAULT_CAMPAIGN = "campaign.json"
 
@@ -199,6 +201,22 @@ def execute_trial_pipeline(experiment_id, config, traffic_cfg, tmp_dir,
         ipsec = verify_ipsec(mode, address_family)
     log("IPsec status IKE=ESTABLISHED CHILD=INSTALLED")
 
+    # Observation readiness gate (tunnel sensor): after the deploy-or-reuse
+    # path verifies IPsec and BEFORE connectivity/traffic, the live XDP
+    # monitor must be running and writing the live journal.  Raises
+    # ObservationReadinessError instead of silently running without
+    # observation.  For a reused topology the running monitor is verified and
+    # reused; only if it died is it restarted.
+    with timing_mod.stage(recorder, "observation"):
+        observation = ensure_live_observation(mode, address_family, log=log)
+    if observation.get("status") == "live":
+        log(
+            f"live XDP observation ready on "
+            f"{observation.get('container')}:{observation.get('interface')} "
+            f"(action={observation.get('action')})"
+        )
+    manifest_mod.publish_session_boundary(config, observation, log=log)
+
     connectivity = test_connectivity(mode, address_family)
     if connectivity["status"] != "PASS":
         raise RuntimeError(f"connectivity verification failed: {connectivity}")
@@ -266,6 +284,7 @@ def execute_trial_pipeline(experiment_id, config, traffic_cfg, tmp_dir,
         "pcap_path": pcap_path,
         "ipsec": ipsec,
         "connectivity": connectivity,
+        "observation": observation,
         "runtime_ctx": runtime_ctx,
         "capture_wan_ip": cap_wan_ip,
     }

@@ -28,6 +28,7 @@ Raw sensor labels are honoured as evidence, never re-invented by heuristics.
 """
 
 import ipaddress
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
 
@@ -143,11 +144,31 @@ def classify_udp_4500(sensor_type: Optional[str], sport: int, dport: int) -> Nat
 
 @dataclass
 class XdpEventAdapter:
-    """Normalizes raw XDP/eBPF packet dicts into canonical stream events."""
+    """Normalizes raw XDP/eBPF packet dicts into canonical stream events.
+
+    ``realtime_offset_ns`` converts the sensor's CLOCK_MONOTONIC ``ts`` (ns
+    since boot, from ``bpf_ktime_get_ns()``) into a realtime epoch so the
+    canonical ``PacketEvent.timestamp`` is always a wall-clock nanosecond
+    timestamp — never an uptime that a client could mistake for wall time. The
+    offset is sampled once at construction: it is linear in monotonic time, so
+    it maps every event of a journal written on this host, including ones
+    captured slightly after the sample. Tests may pass an explicit offset to
+    keep the mapping deterministic.
+    """
 
     capture_ip: Optional[str] = None
     endpoints: Dict[str, str] = field(default_factory=dict)
     source: str = "live_xdp"
+    realtime_offset_ns: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        if self.realtime_offset_ns is None:
+            # CLOCK_MONOTONIC in the sensor container is the host's monotonic
+            # clock (no time namespace), so the offset is the same map the
+            # analytics server can compute for itself.
+            self.realtime_offset_ns = time.time_ns() - time.clock_gettime_ns(
+                time.CLOCK_MONOTONIC
+            )
 
     # -- classification ----------------------------------------------------
 
@@ -201,11 +222,17 @@ class XdpEventAdapter:
         except (TypeError, ValueError):
             return None
 
+    def _wall_clock(self, ts: int) -> int:
+        if ts <= 0:
+            return 0
+        return ts + (self.realtime_offset_ns or 0)
+
     def normalize(self, raw: Dict[str, Any]) -> Dict[str, Any]:
         """Canonical packet payload (timestamp + identity + type + geometry)."""
         ts = int(raw.get("ts", raw.get("timestamp", raw.get("ts_ns", 0))) or 0)
         if isinstance(ts, float):
             ts = int(ts)
+        ts = self._wall_clock(ts)
         classification = self.classify(raw)
         return {
             "timestamp": ts,

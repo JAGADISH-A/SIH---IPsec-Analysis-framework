@@ -2,6 +2,7 @@ import argparse
 import json
 
 from .config import CONFIG
+from .traffic import DEFAULT_DURATION, DURATION_RANGE, PROFILES as TRAFFIC_PROFILES
 from .validate import validate_config
 from .executor import run_experiment
 
@@ -83,6 +84,27 @@ def main():
         default=CONFIG["esp"]["pfs"],
     )
 
+    parser.add_argument(
+        "--traffic-profile",
+        choices=list(TRAFFIC_PROFILES),
+        default=None,
+        help=(
+            "run a traffic profile during the experiment; the profile is "
+            "recorded in the manifest so the current-run annex can materialize "
+            "the expected state and assess the observed live SPIs"
+        ),
+    )
+
+    parser.add_argument(
+        "--traffic-duration",
+        type=int,
+        default=None,
+        help=(
+            "traffic profile duration in seconds "
+            f"({DURATION_RANGE[0]}-{DURATION_RANGE[1]}, default {DEFAULT_DURATION})"
+        ),
+    )
+
     args = parser.parse_args()
 
     if args.esp_integrity is None:
@@ -108,6 +130,11 @@ def main():
         },
     }
 
+    if args.traffic_profile is not None:
+        config["traffic"] = {"profile": args.traffic_profile}
+        if args.traffic_duration is not None:
+            config["traffic"]["duration"] = args.traffic_duration
+
     validate_config(config)
 
     CONFIG.clear()
@@ -123,6 +150,11 @@ def main():
     print(f"ESP encryption: {config['esp']['encryption']}")
     print(f"ESP integrity:  {config['esp']['integrity']}")
     print(f"PFS:            {config['esp']['pfs']}")
+    if "traffic" in config:
+        print(
+            f"Traffic:        {config['traffic']['profile']} "
+            f"({config['traffic'].get('duration', DEFAULT_DURATION)}s)"
+        )
 
     result = run_experiment(config)
 

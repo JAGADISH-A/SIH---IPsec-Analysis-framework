@@ -20,6 +20,9 @@ Stage names mirror the shared pipeline in ``campaign.execute_trial_pipeline``:
   "configs"         load_generated_configs (deployed configs are loaded),
   "ipsec_init"      initiate_ipsec,
   "ipsec_verify"    verify_ipsec (IKE ESTABLISHED / CHILD INSTALLED / mode),
+  "observation"     ensure_live_observation (XDP monitor ready on this mode's
+                     passive sensor: clab-ipsec-sensor for tunnel,
+                     clab-ipsec-transport-sensor for transport),
   "connectivity"    test_connectivity (PASS gate, before capture),
   "capture"         start_capture + stop_capture + copy_capture,
   "traffic"         start_receiver / wait_receiver / run_sender / stop_receiver

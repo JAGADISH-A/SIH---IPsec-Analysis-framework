@@ -571,6 +571,15 @@ class ChainOfCustody(JsonModel):
     #: and stays independently loadable; :meth:`build_chain_of_custody` accepts
     #: the richer object and serializes it here.
     mission_context: Optional[Dict[str, Any]] = None
+    #: The validated-baseline comparison this finding was raised by, or ``None``
+    #: when the assessment declared no baseline. A ``dict`` (not a custody type)
+    #: for the same reason as ``mission_context``: this layer keeps no import
+    #: edge to the drift package and stays independently loadable.
+    #: :func:`build_chain_of_custody` accepts the richer object and serializes it
+    #: here. When present it records the baseline id, both digests, the changed
+    #: field and its two values, so the drift claim is auditable from the chain
+    #: alone.
+    drift: Optional[Dict[str, Any]] = None
     #: Always True. There is no mutation path anywhere in this layer.
     read_only: bool = True
 
@@ -669,6 +678,7 @@ class ChainOfCustody(JsonModel):
             "mission_context": (
                 dict(self.mission_context) if self.mission_context is not None else None
             ),
+            "drift": dict(self.drift) if self.drift is not None else None,
         }
 
     @classmethod
@@ -788,6 +798,7 @@ class ChainOfCustody(JsonModel):
                 if data.get("mission_context") is not None
                 else None
             ),
+            drift=dict(data["drift"]) if data.get("drift") is not None else None,
         )
 
 

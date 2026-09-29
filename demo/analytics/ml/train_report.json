@@ -1,0 +1,199 @@
+{
+  "created_at": "2026-09-24T14:15:00+00:00",
+  "git_commit": "28beb6d245534cc14d96e8013c15053e96d8ba96",
+  "seed": 7,
+  "library_versions": {
+    "python": "3.14.4",
+    "numpy": "2.5.3",
+    "scikit-learn": "1.9.1",
+    "joblib": "1.6.0",
+    "shap": "0.52.0",
+    "matplotlib": "3.11.2"
+  },
+  "dataset_run_ids": [
+    "dataset-20260923-221430",
+    "dataset-20260924-003710"
+  ],
+  "input_fingerprints": {
+    "dataset-20260923-221430": "6d4df9c8d3653d64affda09d7f43e3651d99a3a938f15b28156f898924af878a",
+    "dataset-20260924-003710": "aaee80ff8868704ca1d4f3090ab7882650d2135ab64629c407f568643449eef3"
+  },
+  "sample_counts": {
+    "total": 300,
+    "train": 212,
+    "validation": 42,
+    "test": 46
+  },
+  "per_split_target": {
+    "train": {
+      "voip": 35,
+      "video": 38,
+      "messaging": 37,
+      "email": 33,
+      "web": 34,
+      "icmp": 35
+    },
+    "validation": {
+      "voip": 9,
+      "video": 6,
+      "messaging": 6,
+      "email": 7,
+      "web": 7,
+      "icmp": 7
+    },
+    "test": {
+      "voip": 7,
+      "video": 7,
+      "messaging": 7,
+      "email": 10,
+      "web": 8,
+      "icmp": 7
+    }
+  },
+  "feature_schema": {
+    "declared_features": 59,
+    "constant_features_removed": [
+      "burst_packet_ratio",
+      "ike_packet_count"
+    ],
+    "used_features": [
+      "packet_count",
+      "total_bytes",
+      "mean_packet_size",
+      "packet_size_std",
+      "min_packet_size",
+      "max_packet_size",
+      "packet_size_p10",
+      "packet_size_p50",
+      "packet_size_p90",
+      "packet_size_p95",
+      "packet_size_p99",
+      "unique_packet_size_count",
+      "packet_size_entropy",
+      "small_packet_ratio",
+      "large_packet_ratio",
+      "mean_inter_arrival_time",
+      "inter_arrival_time_std",
+      "min_inter_arrival_time",
+      "max_inter_arrival_time",
+      "packets_per_second",
+      "bytes_per_second",
+      "flow_duration",
+      "outbound_packet_count",
+      "inbound_packet_count",
+      "outbound_bytes",
+      "inbound_bytes",
+      "outbound_packet_ratio",
+      "inbound_packet_ratio",
+      "outbound_byte_ratio",
+      "inbound_byte_ratio",
+      "outbound_mean_packet_size",
+      "inbound_mean_packet_size",
+      "outbound_packets_per_second",
+      "inbound_packets_per_second",
+      "outbound_packet_size_p10",
+      "outbound_packet_size_p50",
+      "outbound_packet_size_p90",
+      "outbound_packet_size_p95",
+      "outbound_packet_size_p99",
+      "inbound_packet_size_p10",
+      "inbound_packet_size_p50",
+      "inbound_packet_size_p90",
+      "inbound_packet_size_p95",
+      "inbound_packet_size_p99",
+      "burst_count",
+      "mean_burst_packets",
+      "mean_burst_duration",
+      "burst_count_10ms",
+      "mean_burst_packets_10ms",
+      "burst_count_50ms",
+      "mean_burst_packets_50ms",
+      "burst_count_200ms",
+      "mean_burst_packets_200ms",
+      "ike_datagram_bytes",
+      "ike_min_packet_size",
+      "ike_max_packet_size",
+      "ike_mean_packet_size"
+    ],
+    "feature_schema_version": "v2"
+  },
+  "hyperparameters": {
+    "bootstrap": true,
+    "ccp_alpha": 0.0,
+    "class_weight": "balanced_subsample",
+    "criterion": "gini",
+    "max_depth": null,
+    "max_features": "sqrt",
+    "max_leaf_nodes": null,
+    "max_samples": null,
+    "min_impurity_decrease": 0.0,
+    "min_samples_leaf": 2,
+    "min_samples_split": 2,
+    "min_weight_fraction_leaf": 0.0,
+    "monotonic_cst": null,
+    "n_estimators": 500,
+    "n_jobs": -1,
+    "oob_score": true,
+    "random_state": 7,
+    "verbose": 0,
+    "warm_start": false
+  },
+  "class_mapping": {
+    "voip": 0,
+    "video": 1,
+    "messaging": 2,
+    "email": 3,
+    "web": 4,
+    "icmp": 5
+  },
+  "target_classes": [
+    "voip",
+    "video",
+    "messaging",
+    "email",
+    "web",
+    "icmp"
+  ],
+  "oob_score": 1.0,
+  "cv": {
+    "accuracy": [
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "macro_f1": [
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "accuracy_mean": 1.0,
+    "accuracy_std": 0.0,
+    "macro_f1_mean": 1.0,
+    "macro_f1_std": 0.0
+  },
+  "cv_error": null,
+  "split": {
+    "path": "results/ml/split_v1.json",
+    "hash": "fbf04c326bb68d3579c4792dea76fb0baf68fcbd4f384f04487d92ccc2b233d4",
+    "counts": {
+      "train": 212,
+      "validation": 42,
+      "test": 46
+    },
+    "strategy": "grouped_stratified_greedy_by_configuration_id",
+    "ratios": {
+      "train": 0.7,
+      "validation": 0.15,
+      "test": 0.15
+    },
+    "seed": 7
+  },
+  "model_artifact": {
+    "path": "results/ml/model_traffic_rf_v1.joblib",
+    "sha256": "1f31b76ebb56cba8ca91229fd1d83e3d374d4dae359c97f885c1f849d52cb938"
+  }
+}

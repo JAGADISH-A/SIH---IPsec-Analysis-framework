@@ -7,9 +7,20 @@ topology:
       kind: linux
       image: ipsec-transport-host:24.04
       privileged: true
+      env:
+        # HOST-C is the authoritative observation point for the transport
+        # topology.  In transport mode the two hosts ARE the IPsec endpoints,
+        # so host-c's own eth1 carries IKE + ESP for both directions.  The
+        # entrypoint mirrors eth1 (ingress + egress) copy-only into the
+        # in-container tap (audit-tap0) AND copy-only into eth2, a direct
+        # veth feed to the passive sensor (sensor:eth1).  The sensor is an
+        # observation sink, never an inline member of the host-to-host link.
+        AUDIT_TAP_IFACE: "eth1"
+        AUDIT_TAP_TARGET: "eth2"
       cmd: /bin/sh -c "/usr/local/bin/transport-entrypoint.sh"
       binds:
         - ../../scripts/transport-entrypoint.sh:/usr/local/bin/transport-entrypoint.sh
+        - ../../scripts/audit-tap-setup.sh:/usr/local/bin/audit-tap-setup.sh
         - ../../configs/transport/host-c/swanctl:/etc/swanctl
       exec:
         - ip addr add 10.20.1.10/24 dev eth1
@@ -31,6 +42,30 @@ topology:
         - ip -6 addr add 2001:db8:20::20/64 dev eth1 nodad
         - ip -6 route add 2001:db8:20::10/128 dev eth1
 
+    sensor:
+      kind: linux
+      image: ipsec-transport-host:24.04
+      # Passive XDP observation sink for the transport topology.  It carries
+      # the SAME live journal the tunnel sensor writes, so Packet Analysis is
+      # mode-agnostic: one host-visible file
+      # (results/observed-state/xdp/live_events.jsonl) bind-mounted at
+      # /opt/xdp-journal, written by the one xdp_monitor the controller
+      # manages.  The sensor has no addresses, no routes and forwarding off.
+      binds:
+        - ../../results/observed-state/xdp:/opt/xdp-journal
+      cmd: /bin/sh -c "sleep infinity"
+      exec:
+        - sh -c "echo 0 > /proc/sys/net/ipv4/ip_forward 2>/dev/null || true"
+        - sh -c "echo 0 > /proc/sys/net/ipv6/conf/all/forwarding 2>/dev/null || true"
+
   links:
 
+    # IPsec host-to-host link: transport mode encapsulates the original
+    # addresses, so this single L2 segment carries both IKE and ESP.
     - endpoints: ["host-c:eth1", "host-d:eth1"]
+
+    # HOST-C -> sensor passive observation feed (direct veth, NOT in the IPsec
+    # data path).  host-c mirrors eth1 (IKE + ESP, both directions)
+    # copy-only into eth2; the sensor receives the mirrored stream on eth1
+    # (no IP, no forwarding, sink only).
+    - endpoints: ["host-c:eth2", "sensor:eth1"]

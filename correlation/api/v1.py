@@ -5,6 +5,8 @@ Complements the Phase-8 contract WITHOUT touching it:
     GET /api/v1/health                      -> component health
     GET /api/v1/metrics                     -> Prometheus text exposition
     GET /api/v1/traffic-generator           -> traffic generator status
+    GET /api/v1/capture/events              -> read-only tail of the xdp packet
+                                              journal (capture / live-traffic)
     GET /api/v1/evidence                    -> registered evidence references
     GET /api/v1/evidence/{evidence_id}      -> evidence reference + integrity
     GET /api/v1/evidence/{evidence_id}/pcap -> binary PCAP download (or 404)
@@ -37,7 +39,7 @@ or a target; enforcement stays behind the two-layer gateway.
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
 
-from .audit_routes import handle_audit_get, is_audit_path
+from .audit_routes import AUDIT_EVENTS_PATH, gated_empty_audit_payload, handle_audit_get, is_audit_path
 from .custody_routes import (
     handle_assessment_finding_explanation,
     handle_finding_explanation,
@@ -50,6 +52,15 @@ from .discovery import (
     handle_run,
     handle_runs,
 )
+from .drift_routes import (
+    ASSESSMENT_DRIFT_SUFFIX,
+    DRIFT_BASELINES_PATH,
+    DRIFT_PATH,
+    handle_assessment_drift,
+    handle_drift,
+    handle_drift_baselines,
+)
+from .capture_feed import CaptureFeedService
 from .evidence_routes import (
     EVIDENCE_LIST_PATH,
     RESPONSE_EVIDENCE_PREFIX,
@@ -72,6 +83,7 @@ CONTENT_TYPE_PCAP = "application/vnd.tcpdump.pcap"
 HEALTH_PATH = "/api/v1/health"
 METRICS_PATH = "/api/v1/metrics"
 TRAFFIC_GENERATOR_PATH = "/api/v1/traffic-generator"
+CAPTURE_EVENTS_PATH = "/api/v1/capture/events"
 EVIDENCE_PREFIX = "/api/v1/evidence/"
 GOVERNANCE_PATH = "/api/v1/governance"
 GOVERNANCE_PREFIX = "/api/v1/governance/"
@@ -81,6 +93,9 @@ ASSESSMENTS_PATH = "/api/v1/assessments"
 ASSESSMENTS_PREFIX = "/api/v1/assessments/"
 FINDINGS_PATH = "/api/v1/findings"
 FINDINGS_PREFIX = "/api/v1/findings/"
+#: Longitudinal drift surface: what the run was compared against, the validated
+#: baselines themselves, and one assessment's comparison. Read-only.
+DRIFT_ASSESSMENT_SUFFIX = ASSESSMENT_DRIFT_SUFFIX
 #: Sub-resource of one finding inside one assessment. A finding id repeats
 #: across assessments, so the chain is addressed by the pair.
 FINDING_EXPLANATION_SUFFIX = "/explanation"
@@ -153,7 +168,26 @@ def handle_v1_audit(context, path: str, params: Optional[Mapping[str, Any]] = No
             "no analysis audit journal is attached; start the server with "
             "--audit-journal <path> (or --phase10) to expose audit evidence",
         )
-    return handle_audit_get(store, path, dict(params or {}))
+    qparams = dict(params or {})
+    annex = getattr(context, "annex", None)
+    gated = bool(
+        annex is not None
+        and getattr(annex, "feed", None) is not None
+        and annex.feed.experiment_gated
+    )
+    if gated and path == AUDIT_EVENTS_PATH:
+        # Same experiment-boundary gate as the capture feed: the live audit
+        # tail never replays recorded history. With no active experiment on
+        # THIS journal it serves zero rows; when one is active it serves only
+        # that run's events (run_id is an immutable boundary, capturing the
+        # experiment's observation start).
+        scope = annex.experiment_scope()
+        if scope is None:
+            return gated_empty_audit_payload(
+                "live feed closed: no active testbed experiment on this journal"
+            )
+        qparams.setdefault("run_id", scope["dataset_run_id"])
+    return handle_audit_get(store, path, qparams)
 
 
 def _store_or_503(store):
@@ -170,6 +204,30 @@ def _store_or_503(store):
             "no assessment store is attached to the /api/v1 surface",
         )
     return store
+
+
+def handle_v1_capture(context, params: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    """Read-only tail of the gateway packet journal. 503 when no feed is wired."""
+    feed = getattr(context, "capture_feed", None)
+    if feed is None:
+        raise ApiError(
+            503, "capture_feed_unavailable",
+            "no capture feed is attached; start the server with "
+            "--capture-feed <xdp.jsonl> (or --phase10) to expose the "
+            "xdp_monitor packet journal",
+        )
+    params = dict(params or {})
+    raw_cursor = params.get("cursor")
+    raw_limit = params.get("limit")
+    try:
+        cursor = int(raw_cursor) if raw_cursor not in (None, "") else 0
+    except (TypeError, ValueError):
+        cursor = 0
+    try:
+        limit = int(raw_limit) if raw_limit not in (None, "") else 200
+    except (TypeError, ValueError):
+        limit = 200
+    return feed.poll(cursor=cursor, limit=limit)
 
 
 def handle_v1_get(
@@ -197,6 +255,8 @@ def handle_v1_get(
         return handle_v1_metrics(context.metrics), CONTENT_TYPE_PROMETHEUS
     if path == TRAFFIC_GENERATOR_PATH:
         return handle_v1_traffic_generator(context.traffic_generator), CONTENT_TYPE_JSON
+    if path == CAPTURE_EVENTS_PATH:
+        return handle_v1_capture(context, params), CONTENT_TYPE_JSON
     if is_audit_path(path):
         # The evidence sub-resource answers "what evidence backed this stage?"
         # for one recorded event; everything else audit-shaped goes to the
@@ -266,6 +326,12 @@ def handle_v1_get(
         raise ApiError(404, "unknown_route", f"unknown route {path!r}")
     if path == ASSESSMENTS_PATH:
         return handle_assessments_v1(_store_or_503(store), params), CONTENT_TYPE_JSON
+    if path == DRIFT_PATH:
+        return handle_drift(_store_or_503(store)), CONTENT_TYPE_JSON
+    if path == DRIFT_BASELINES_PATH:
+        # Checked before the generic /api/v1/drift/ prefix so this concrete
+        # sub-resource is never shadowed by it.
+        return handle_drift_baselines(_store_or_503(store)), CONTENT_TYPE_JSON
     if path.startswith(ASSESSMENTS_PREFIX):
         remainder = path[len(ASSESSMENTS_PREFIX):]
         if not remainder:
@@ -290,6 +356,14 @@ def handle_v1_get(
                     handle_assessment_findings(
                         _store_or_503(store), assessment_id, params
                     ),
+                    CONTENT_TYPE_JSON,
+                )
+        elif remainder.endswith(DRIFT_ASSESSMENT_SUFFIX):
+            # /api/v1/assessments/{assessment_id}/drift
+            assessment_id = remainder[: -len(DRIFT_ASSESSMENT_SUFFIX)]
+            if assessment_id and "/" not in assessment_id:
+                return (
+                    handle_assessment_drift(_store_or_503(store), assessment_id),
                     CONTENT_TYPE_JSON,
                 )
         elif "/" not in remainder:

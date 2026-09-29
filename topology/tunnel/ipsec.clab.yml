@@ -59,6 +59,13 @@ topology:
     sensor:
       kind: linux
       image: ipsec-test-gateway:6.0.3
+      # The live XDP journal must be host-visible: the analytics API (host
+      # process) tails the xdp_monitor output as the capture feed. Bind a host
+      # directory so the sensor's xdp_monitor writes into it directly and the
+      # journal is shared, not copied. xdp_monitor remains the single capture
+      # source; this only changes where its journal lands.
+      binds:
+        - ../../results/observed-state/xdp:/opt/xdp-journal
       cmd: /bin/sh -c "sleep infinity"
       exec:
         - sysctl -w net.ipv4.ip_forward=0

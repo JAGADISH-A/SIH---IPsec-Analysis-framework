@@ -54,6 +54,7 @@
     { key: "QUEUED", label: "Queued" },
     { key: "DEPLOY", label: "Deploying Topology" },
     { key: "IPSEC", label: "Establishing IPsec" },
+    { key: "OBSERVATION", label: "Preparing Live Observation" },
     { key: "CONNECTIVITY", label: "Verifying Connectivity" },
     { key: "TRAFFIC", label: "Generating Traffic" },
     { key: "COMPLETED", label: "Complete" },
@@ -64,6 +65,7 @@
     RUNNING: "Starting",
     DEPLOY: "Deploying Topology",
     IPSEC: "Establishing IPsec",
+    OBSERVATION: "Preparing Live Observation",
     CONNECTIVITY: "Verifying Connectivity",
     TRAFFIC: "Generating Traffic",
     COMPLETED: "Completed",
@@ -457,6 +459,7 @@
   function stageCaptionText(stageKey) {
     if (stageKey === "DEPLOY") return "deploying the Containerlab topology.";
     if (stageKey === "IPSEC") return "establishing the IPsec security associations.";
+    if (stageKey === "OBSERVATION") return "attaching the live XDP observation feed.";
     if (stageKey === "CONNECTIVITY") return "verifying end-to-end connectivity.";
     if (stageKey === "TRAFFIC") return "generating the selected traffic profile.";
     return "";
@@ -555,6 +558,9 @@
     }
     if (/traffic|profile|bitrate|listener/.test(d)) {
       return { stage: "Generating Traffic", message: detail };
+    }
+    if (/xdp|observation|monitor|live journal/.test(d)) {
+      return { stage: "Live Observation", message: detail };
     }
     return { stage: "Controller", message: detail || "The experiment could not be run." };
   }

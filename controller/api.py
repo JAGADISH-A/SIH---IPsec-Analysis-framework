@@ -119,7 +119,7 @@ def get_configurations():
     }
 
 
-PIPELINE_STAGES = ("DEPLOY", "IPSEC", "CONNECTIVITY", "TRAFFIC")
+PIPELINE_STAGES = ("DEPLOY", "IPSEC", "OBSERVATION", "CONNECTIVITY", "TRAFFIC")
 
 
 def execute_job(job_id, config):
@@ -134,7 +134,7 @@ def execute_job(job_id, config):
             jobs[job_id]["stage"] = stage
 
     try:
-        result = run_experiment(config, on_stage=report_stage)
+        result = run_experiment(config, on_stage=report_stage, job_id=job_id)
 
         with jobs_lock:
             jobs[job_id]["status"] = "COMPLETED"

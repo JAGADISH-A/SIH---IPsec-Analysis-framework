@@ -1,5 +1,6 @@
 """Phase 10 — XDP/eBPF live adapter tests (NAT-T seam, no inference)."""
 
+import time
 import unittest
 
 from correlation.streaming.live_adapter import (
@@ -65,7 +66,9 @@ class TestClassifyUdp4500(unittest.TestCase):
 
 class TestXdpEventAdapter(unittest.TestCase):
     def setUp(self):
-        self.adapter = XdpEventAdapter(capture_ip="198.51.100.10")
+        # A pinned realtime offset keeps every timestamp assertion
+        # deterministic; the auto-computed live offset is covered separately.
+        self.adapter = XdpEventAdapter(capture_ip="198.51.100.10", realtime_offset_ns=0)
 
     def test_classify_protocols(self):
         self.assertEqual(self.adapter.classify({"proto": 50}), CLASSIFICATION_ESP)
@@ -123,6 +126,27 @@ class TestXdpEventAdapter(unittest.TestCase):
         self.assertEqual(out["classification"], CLASSIFICATION_ESP_IN_UDP)
         self.assertEqual(out["direction"], "inbound")
         self.assertNotIn("crypto_algorithm", out)
+
+    def test_normalize_maps_monotonic_to_realtime_epoch(self):
+        # The sensor writes CLOCK_MONOTONIC (ns since boot). The canonical
+        # timestamp must be a realtime epoch; a pinned offset proves the math.
+        adapter = XdpEventAdapter(realtime_offset_ns=1_700_000_000_123_456_789)
+        out = adapter.normalize({"proto": 6, "ts": 42_000_000_000})
+        self.assertEqual(out["timestamp"], 1_700_000_042_123_456_789)
+
+    def test_default_realtime_offset_reaches_the_wall_clock(self):
+        # With no explicit offset the adapter must map a monotonic value
+        # captured just now to approximately the current realtime clock.
+        adapter = XdpEventAdapter()
+        now = time.time_ns()
+        monotonic_now = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
+        wall = adapter.realtime_offset_ns + monotonic_now
+        self.assertLess(abs(wall - now), 1_000_000_000)
+        self.assertGreater(adapter.realtime_offset_ns, 1_000_000_000_000_000_000)
+
+    def test_zero_timestamp_is_not_offset(self):
+        out = self.adapter.normalize({"proto": 6, "ts": 0})
+        self.assertEqual(out["timestamp"], 0)
 
     def test_to_stream_event_ike_type(self):
         raw = {"proto": 17, "type": "IKE-NAT-T", "sport": 4500, "dport": 4500,

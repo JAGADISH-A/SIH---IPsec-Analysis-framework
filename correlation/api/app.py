@@ -49,11 +49,13 @@ from .config import (
     DEFAULT_HOST,
     DEFAULT_PORT,
     ENV_ALLOWED_ORIGINS,
+    ENV_CAPTURE_FEED,
     ENV_HOST,
     ENV_PORT,
     ServerConfig,
     describe,
 )
+from .capture_feed import DEFAULT_CAPTURE_FEED_PATH
 from .cors import (
     PREFLIGHT_DENIED_STATUS,
     PREFLIGHT_STATUS,
@@ -125,6 +127,10 @@ def handle_combined(store, context, path: str, params: Optional[dict] = None) ->
     it). The Phase-8 contract is path-only apart from ``/api/assessments``
     pagination, and is unaffected.
     """
+    if context is not None:
+        annex = getattr(context, "annex", None)
+        if annex is not None:
+            annex.sync()
     if is_v1_path(path):
         if context is None:
             raise ApiError(503, "phase10_unavailable",
@@ -564,6 +570,12 @@ def main(argv=None) -> None:
                         help="expose this analysis audit journal (JSONL written "
                              "by correlation.audit.AuditJournal) read-only at "
                              "/api/v1/audit/*; the file is never written here")
+    parser.add_argument("--capture-feed", default=None,
+                        help="expose this xdp_monitor packet journal (JSONL write "
+                             "side of the passive gateway capture) read-only at "
+                             "/api/v1/capture/events; the file is never written "
+                             f"here. Default: ${ENV_CAPTURE_FEED} or "
+                             f"{DEFAULT_CAPTURE_FEED_PATH} when --phase10 is on")
     parser.add_argument("--evidence-root", default=os.getcwd(),
                         help="root directory that evidence references must "
                              "resolve inside before they are served as metadata "
@@ -617,6 +629,43 @@ def main(argv=None) -> None:
             print("[analytics-api] warning: journal path does not exist; audit "
                   "routes will report zero events (nothing will be fabricated)",
                   file=sys.stderr)
+
+    if phase10 is not None:
+        from .capture_feed import (
+            CaptureFeedService,
+            build_risk_index,
+        )
+
+        feed_path = (
+            args.capture_feed
+            or os.environ.get(ENV_CAPTURE_FEED)
+            or DEFAULT_CAPTURE_FEED_PATH
+        )
+        feed = CaptureFeedService(feed_path, risk_index=build_risk_index(store))
+        phase10.attach_capture_feed(feed)
+        from .run_annex import CurrentRunAnnex
+
+        phase10.annex = CurrentRunAnnex(store=store, feed=feed)
+        # The annex also provides the experiment boundary: when gating is
+        # enabled (real testbed deployment via start-live-analytics.sh) the
+        # feed serves ONLY this experiment's journal bytes.
+        feed.boundary_provider = phase10.annex.boundary
+        gated = "1" if feed.experiment_gated else "0"
+        print("[phase10] current-run annex attached (binds live journal "
+              "packets to the current testbed experiment when its manifest is "
+              "present and the feed is current)")
+        print(f"[phase10] capture experiment boundary gate enabled={gated} "
+              "(ANALYTICS_CAPTURE_EXPERIMENT_GATED)" if gated == "1" else
+              "[phase10] capture experiment boundary gate disabled; live feed "
+              "serves the full journal (legacy/demo/replay mode)")
+        status = feed.status()
+        if status["present"]:
+            print(f"[phase10] capture feed attached ({status['events']} packet(s) "
+                  f"in {status['source']}, read-only tail)")
+        else:
+            print(f"[analytics-api] capture feed configured but not present yet: "
+                  f"{status['reason']}; the capture view will report its waiting "
+                  f"state (nothing will be fabricated)", file=sys.stderr)
 
     if phase10 is not None and args.evidence_root:
         from .evidence_routes import register_journal_evidence

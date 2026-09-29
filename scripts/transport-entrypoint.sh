@@ -29,19 +29,24 @@ swanctl --load-all
 
 echo "[IPsec] StrongSwan ready"
 
-# Observation lifecycle: start the eBPF/XDP packet observer on the IPsec link
-# (eth1).  The binary is staged into the image by the transport Dockerfile.
-# Monitoring must never block IPsec startup, hence a soft failure path.
-if command -v xdp_monitor >/dev/null 2>&1; then
-    xdp_monitor eth1 --json > /var/log/xdp_monitor.jsonl 2> /var/log/xdp_monitor.err &
-    sleep 1
-    if kill -0 "$!" 2>/dev/null; then
-        echo "[IPsec] xdp_monitor started (pid $!; generic/SKB XDP on eth1)"
+# --- Passive audit observation (authoritative transport host) -------------
+# When AUDIT_TAP_IFACE is set (host-c only) provision the passive mirror +
+# observation feed used by the audit layer.  This is a pure copy path
+# (`tc mirred ... mirror`, ingress + egress) and never alters IPsec
+# forwarding.  The mirrored frames are handed to the passive sensor
+# (clab-ipsec-transport-sensor) on sensor:eth1, where the ONE xdp_monitor the
+# controller manages writes the shared live journal.  Runs here so it is
+# reproduced on every containerlab deploy / container (re)create.  A failure
+# must not block charon.
+if [ -n "${AUDIT_TAP_IFACE:-}" ]; then
+    echo "[IPsec] provisioning passive observation on ${AUDIT_TAP_IFACE}"
+    if [ -x /usr/local/bin/audit-tap-setup.sh ]; then
+        /usr/local/bin/audit-tap-setup.sh "${AUDIT_TAP_IFACE}" || {
+            echo "[IPsec] WARNING: audit observation not provisioned" >&2
+        }
     else
-        echo "[IPsec] WARNING: xdp_monitor exited immediately; see /var/log/xdp_monitor.err"
+        echo "[IPsec] WARNING: audit-tap-setup.sh not present in image/bind" >&2
     fi
-else
-    echo "[IPsec] WARNING: xdp_monitor not installed in this image"
 fi
 
 exec sleep infinity
