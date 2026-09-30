@@ -1,63 +1,124 @@
 # IPsec Analysis Framework Architecture
 
-```mermaid
-flowchart TD
-    A[Dataset Traffic] --> B[IPsec / StrongSwan Testbed]
-
-    B --> C[Live Path]
-    B --> D[Evidence Path]
-
-    C --> E[eBPF / XDP]
-    D --> F[PCAP]
-    F --> G[TShark / Zeek]
-
-    E --> H[IKE / ESP / AH]
-    H --> I[IKE State]
-    H --> J[ESP/AH Metadata]
-
-    I --> K[IPsec State Engine]
-    J --> K
-    G --> L[Parser / Feature Engine]
-    K --> L
-
-    L --> M[100-ms Windows]
-    M --> N[ML / AI Engine]
-
-    N --> O[Traffic Type Classification]
-    N --> P[Anomaly Detection]
-
-    O --> Q[Expected vs Observed Correlation]
-    P --> Q
-
-    Q --> R[Risk Engine]
-    Q --> S[XAI]
-
-    R --> T[Audit Layer<br/>JSONL + Hash Chain]
-    S --> T
-
-    T --> U[Response / Policy]
-    T --> V[Evidence<br/>PCAP Reference]
-
-    U --> W[Analyst Approval]
-    W --> X[XDP Action]
-    X --> Y[Dashboard]
+```text
+┌─────────────────────────────┐
+│      IPsec TESTBED          │
+│ Containerlab • strongSwan   │
+│ IKE / ESP / AH traffic      │
+└──────────────┬──────────────┘
+               │
+      traffic + SA state + config
+               │
+ ┌─────────────┴─────────────┐
+ │                           │
+ ▼                           ▼
+┌──────────────────────────┐  ┌──────────────────────────┐
+│   LIVE OBSERVATION       │  │    EVIDENCE CAPTURE      │
+│   eBPF / XDP             │  │    PCAP • TShark • Zeek  │
+│   mirrored traffic       │  │    durable packet record │
+└────────────┬─────────────┘  └────────────┬─────────────┘
+             │                             │
+             └──────────────┬──────────────┘
+                            │
+                    observed IPsec
+                    events + metadata
+                            │
+                            ▼
+              ┌───────────────────────────────┐
+              │       IPsec STATE ENGINE      │
+              │ IKE / SA / ESP / AH metadata  │
+              └──────────────┬────────────────┘
+                             │
+                      normalized state
+                             │
+                             ▼
+              ┌───────────────────────────────┐
+              │       FEATURE / STATE ENGINE  │
+              │     100-ms observation windows│
+              └──────────────┬────────────────┘
+                             │
+                             ▼
+╔══════════════════════════════════════════════════════════════════════╗
+║              CORRELATION & ASSESSMENT CORE                           ║
+║                                                                      ║
+║  ┌────────────────┐      ┌──────────────────────────────┐           ║
+║  │ OBSERVED STATE │─────►│ EXPECTED vs OBSERVED         │           ║
+║  └────────────────┘      │ CORRELATION                  │           ║
+║                          └──────────────┬───────────────┘           ║
+║                                         │                           ║
+║  ┌────────────────┐                     ▼                           ║
+║  │   BASELINE     │────────────► DRIFT DETECTION                    ║
+║  └────────────────┘                                                 ║
+║                                         │                           ║
+║                          ┌──────────────▼───────────────┐           ║
+║                          │ FUNDAMENTAL IPsec ASSESSMENT │           ║
+║                          └──────────────┬───────────────┘           ║
+║                                         │                           ║
+╚═════════════════════════════════════════╪═══════════════════════════╝
+                                          │
+                         security findings + evidence
+                                          │
+                     ┌────────────────────┴───────────────┐
+                     │                                    │
+                     ▼                                    ▼
+          ┌──────────────────────┐             ┌──────────────────────┐
+          │    ML / XAI ENGINE   │             │   MISSION CONTEXT    │
+          │    RF • SHAP         │             │   asset / mission    │
+          │    classification    │             │   profile            │
+          └──────────┬───────────┘             └──────────┬───────────┘
+                     │                                    │
+                     └────────────────┬───────────────────┘
+                                      │
+                                      ▼
+                         ┌─────────────────────────┐
+                         │ CROSS-SIGNAL            │
+                         │ DISAGREEMENT            │
+                         └────────────┬────────────┘
+                                      │
+                             contextualized risk
+                                      │
+                                      ▼
+                    ┌────────────────────────────────┐
+                    │     EVIDENCE / AUDIT LAYER     │
+                    │ JSONL • hash chain • custody   │
+                    └───────────────┬────────────────┘
+                                    │
+                             verified findings
+                                    │
+                    ┌───────────────┴────────────────┐
+                    │                                │
+                    ▼                                ▼
+         ┌────────────────────┐           ┌────────────────────┐
+         │ GEMINI / AI        │           │ RESPONSE / POLICY  │
+         │ explanation        │           │ recommendations    │
+         └──────────┬─────────┘           └──────────┬─────────┘
+                    │                                │
+                    └──────────────┬─────────────────┘
+                                   │
+                                   ▼
+                    ┌──────────────────────────────┐
+                    │      SENTINEL DASHBOARD      │
+                    │ traffic • findings • drift   │
+                    │ evidence • recommendations   │
+                    └──────────────────────────────┘
 ```
 
 ## Architecture Flow
 
-1. **Dataset Traffic** enters the IPsec / StrongSwan testbed.
-2. Traffic is processed through two paths:
-   - **Live Path:** eBPF / XDP captures IKE, ESP, and AH information.
-   - **Evidence Path:** PCAP data is analyzed using TShark and Zeek.
-3. The live path extracts IKE state and ESP/AH metadata for the **IPsec State Engine**.
-4. State and evidence data are combined by the **Parser / Feature Engine**.
-5. Features are organized into **100-millisecond windows**.
-6. The **ML / AI Engine** performs:
-   - Traffic type classification
-   - Anomaly detection
-7. Results are compared through **Expected vs. Observed Correlation**.
-8. The **Risk Engine** and **XAI** components support explainable risk assessment.
-9. The **Audit Layer** records JSONL events with a hash chain for integrity.
-10. The system generates response policies and evidence references.
-11. An analyst approves the response before an **XDP Action** is applied.
-12. Results and system status are displayed on the **Dashboard**.
+1. The **IPsec testbed**, built with Containerlab and strongSwan, generates IKE, ESP, and AH traffic together with security-association state and configuration data.
+2. Traffic is processed through two complementary paths:
+   - **Live Observation:** eBPF/XDP captures mirrored traffic and real-time IPsec metadata.
+   - **Evidence Capture:** PCAP, TShark, and Zeek provide a durable packet record for investigation and verification.
+3. The live and evidence paths provide observed IPsec events and metadata to the **IPsec State Engine**.
+4. The **IPsec State Engine** normalizes IKE, SA, ESP, and AH state.
+5. The **Feature / State Engine** organizes normalized state into 100-millisecond observation windows.
+6. The **Correlation & Assessment Core** combines observed state with configured baselines to perform:
+   - Expected-versus-observed correlation
+   - Drift detection
+   - Fundamental IPsec security assessment
+7. Security findings and supporting evidence are evaluated by the **ML / XAI Engine**, which uses random-forest classification and SHAP-based explanations.
+8. **Mission Context** contributes asset and mission profiles so findings can be interpreted according to operational importance.
+9. The **Cross-Signal Disagreement** component compares assessment signals and produces contextualized risk.
+10. The **Evidence / Audit Layer** records verified findings, JSONL events, hash-chain integrity data, and chain-of-custody information.
+11. **Gemini / AI** produces explanations, while the **Response / Policy** component generates recommended actions.
+12. The **Sentinel Dashboard** presents traffic, findings, drift, evidence, explanations, and recommendations.
