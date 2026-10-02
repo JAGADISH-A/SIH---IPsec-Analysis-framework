@@ -1,106 +1,106 @@
 # IPsec Analysis Framework Architecture
 
 ```text
-┌─────────────────────────────┐
-│      IPsec TESTBED          │
-│ Containerlab • strongSwan   │
-│ IKE / ESP / AH traffic      │
-└──────────────┬──────────────┘
-               │
-      traffic + SA state + config
-               │
- ┌─────────────┴─────────────┐
- │                           │
- ▼                           ▼
-┌──────────────────────────┐  ┌──────────────────────────┐
-│   LIVE OBSERVATION       │  │    EVIDENCE CAPTURE      │
-│   eBPF / XDP             │  │    PCAP • TShark • Zeek  │
-│   mirrored traffic       │  │    durable packet record │
-└────────────┬─────────────┘  └────────────┬─────────────┘
-             │                             │
-             └──────────────┬──────────────┘
-                            │
-                    observed IPsec
-                    events + metadata
-                            │
-                            ▼
-              ┌───────────────────────────────┐
-              │       IPsec STATE ENGINE      │
-              │ IKE / SA / ESP / AH metadata  │
-              └──────────────┬────────────────┘
-                             │
-                      normalized state
-                             │
-                             ▼
-              ┌───────────────────────────────┐
-              │       FEATURE / STATE ENGINE  │
-              │     100-ms observation windows│
-              └──────────────┬────────────────┘
-                             │
-                             ▼
-╔══════════════════════════════════════════════════════════════════════╗
-║              CORRELATION & ASSESSMENT CORE                           ║
-║                                                                      ║
-║  ┌────────────────┐      ┌──────────────────────────────┐           ║
-║  │ OBSERVED STATE │─────►│ EXPECTED vs OBSERVED         │           ║
-║  └────────────────┘      │ CORRELATION                  │           ║
-║                          └──────────────┬───────────────┘           ║
-║                                         │                           ║
-║  ┌────────────────┐                     ▼                           ║
-║  │   BASELINE     │────────────► DRIFT DETECTION                    ║
-║  └────────────────┘                                                 ║
-║                                         │                           ║
-║                          ┌──────────────▼───────────────┐           ║
-║                          │ FUNDAMENTAL IPsec ASSESSMENT │           ║
-║                          └──────────────┬───────────────┘           ║
-║                                         │                           ║
-╚═════════════════════════════════════════╪═══════════════════════════╝
-                                          │
-                         security findings + evidence
-                                          │
-                     ┌────────────────────┴───────────────┐
-                     │                                    │
-                     ▼                                    ▼
-          ┌──────────────────────┐             ┌──────────────────────┐
-          │    ML / XAI ENGINE   │             │   MISSION CONTEXT    │
-          │    RF • SHAP         │             │   asset / mission    │
-          │    classification    │             │   profile            │
-          └──────────┬───────────┘             └──────────┬───────────┘
-                     │                                    │
-                     └────────────────┬───────────────────┘
-                                      │
-                                      ▼
-                         ┌─────────────────────────┐
-                         │ CROSS-SIGNAL            │
-                         │ DISAGREEMENT            │
-                         └────────────┬────────────┘
-                                      │
-                             contextualized risk
-                                      │
-                                      ▼
-                    ┌────────────────────────────────┐
-                    │     EVIDENCE / AUDIT LAYER     │
-                    │ JSONL • hash chain • custody   │
-                    └───────────────┬────────────────┘
-                                    │
-                             verified findings
-                                    │
-                    ┌───────────────┴────────────────┐
-                    │                                │
-                    ▼                                ▼
-         ┌────────────────────┐           ┌────────────────────┐
-         │ GEMINI / AI        │           │ RESPONSE / POLICY  │
-         │ explanation        │           │ recommendations    │
-         └──────────┬─────────┘           └──────────┬─────────┘
-                    │                                │
-                    └──────────────┬─────────────────┘
+                         ┌─────────────────────────────┐
+                         │      IPsec TESTBED          │
+                         │ Containerlab • strongSwan   │
+                         │ IKE / ESP / AH traffic      │
+                         └──────────────┬──────────────┘
+                                        │
+                         traffic + SA state + config
+                                        │
+              ┌─────────────────────────┴─────────────────────────┐
+              │                                                   │
+              ▼                                                   ▼
+ ┌──────────────────────────┐                     ┌──────────────────────────┐
+ │   LIVE OBSERVATION       │                     │    EVIDENCE CAPTURE      │
+ │   eBPF / XDP             │                     │    PCAP • TShark • Zeek  │
+ │   mirrored traffic       │                     │    durable packet record │
+ └────────────┬─────────────┘                     └────────────┬─────────────┘
+              │                                                │
+              └───────────────────┬────────────────────────────┘
+                                  │
+                           observed IPsec
+                           events + metadata
+                                  │
+                                  ▼
+                 ┌───────────────────────────────────┐
+                 │       IPsec STATE ENGINE          │
+                 │ IKE / SA / ESP / AH metadata      │
+                 └─────────────────┬─────────────────┘
+                                   │
+                            normalized state
                                    │
                                    ▼
-                    ┌──────────────────────────────┐
-                    │      SENTINEL DASHBOARD      │
-                    │ traffic • findings • drift   │
-                    │ evidence • recommendations   │
-                    └──────────────────────────────┘
+                 ┌───────────────────────────────────┐
+                 │       FEATURE / STATE ENGINE      │
+                 │     100-ms observation windows    │
+                 └─────────────────┬─────────────────┘
+                                   │
+                                   ▼
+        ╔══════════════════════════════════════════════════════════════╗
+        ║              CORRELATION & ASSESSMENT CORE                  ║
+        ║                                                              ║
+        ║  ┌────────────────┐      ┌──────────────────────────────┐   ║
+        ║  │ OBSERVED STATE │─────►│ EXPECTED vs OBSERVED         │   ║
+        ║  └────────────────┘      │ CORRELATION                  │   ║
+        ║                          └──────────────┬───────────────┘   ║
+        ║                                         │                   ║
+        ║  ┌────────────────┐                     ▼                   ║
+        ║  │   BASELINE     │────────────► DRIFT DETECTION           ║
+        ║  └────────────────┘                                         ║
+        ║                                         │                   ║
+        ║                          ┌──────────────▼───────────────┐   ║
+        ║                          │ FUNDAMENTAL IPsec ASSESSMENT │   ║
+        ║                          └──────────────┬───────────────┘   ║
+        ║                                         │                   ║
+        ╚═════════════════════════════════════════╪═══════════════════╝
+                                                  │
+                              security findings + evidence
+                                                  │
+                         ┌────────────────────────┴───────────────┐
+                         │                                        │
+                         ▼                                        ▼
+             ┌──────────────────────┐                ┌──────────────────────┐
+             │    ML / XAI ENGINE   │                │   MISSION CONTEXT    │
+             │    RF • SHAP         │                │   asset / mission    │
+             │    classification    │                │   profile            │
+             └──────────┬───────────┘                └──────────┬───────────┘
+                        │                                       │
+                        └─────────────────┬─────────────────────┘
+                                          │
+                                          ▼
+                              ┌─────────────────────────┐
+                              │ CROSS-SIGNAL            │
+                              │ DISAGREEMENT            │
+                              └────────────┬────────────┘
+                                           │
+                                  contextualized risk
+                                           │
+                                           ▼
+                         ┌────────────────────────────────┐
+                         │     EVIDENCE / AUDIT LAYER     │
+                         │ JSONL • hash chain • custody   │
+                         └───────────────┬────────────────┘
+                                         │
+                                  verified findings
+                                         │
+                         ┌───────────────┴────────────────┐
+                         │                                │
+                         ▼                                ▼
+              ┌────────────────────┐          ┌────────────────────┐
+              │ GEMINI / AI        │          │ RESPONSE / POLICY  │
+              │ explanation        │          │ recommendations    │
+              └──────────┬─────────┘          └──────────┬─────────┘
+                         │                               │
+                         └──────────────┬────────────────┘
+                                        │
+                                        ▼
+                         ┌──────────────────────────────┐
+                         │      SENTINEL DASHBOARD      │
+                         │ traffic • findings • drift   │
+                         │ evidence • recommendations   │
+                         └──────────────────────────────┘
 ```
 
 ## Architecture Flow
