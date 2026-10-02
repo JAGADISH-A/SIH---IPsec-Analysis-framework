@@ -77,7 +77,7 @@ remainder as unverified.
         what was planned                    what the wire actually shows
    ┌──────────────────────┐            ┌───────────────────────────────────┐
    │  mode                │            │  ESP / AH protocol number         │ ✔
-   │  address family      │            │  outer IP header version           │ ✔
+   │  address family      │            │  outer IP header version          │ ✔
    │  SPI, endpoints      │            │  SPI, src, dst                    │ ✔
    │  traffic activity    │            │  packet counts, rates, profiles   │ ✔
    │  ike.version         │            │  —                                │ ✖ UNKNOWN
@@ -222,26 +222,26 @@ code in this repository, not the intent of any design document.
 ```text
                       TESTBED  (Containerlab + strongSwan 6.0.3)
  ┌───────────────────────────────────────────────────────────────────────────┐
- │  host-a ── gw-a ══[ br-wan ]══ gw-b ── host-b          sensor (passive)    │
- │  10.10.1.10   │                  │       10.10.2.10      ip_forward=0    │
+ │  host-a ── gw-a ══[ br-wan ]══ gw-b ── host-b          sensor (passive)   │
+ │  10.10.1.10   │                  │       10.10.2.10      ip_forward=0     │
  │               └ eth2 ──tc mirred─┴──> eth3 ──veth──> eth1 (sink only)     │
  │                 ├──> audit-tap0   (in-gateway tap, tshark)                │
- │                 └──> sensor ──eBPF/XDP──> JSONL journal (host-visible)     │
+ │                 └──> sensor ──eBPF/XDP──> JSONL journal (host-visible)    │
  └───────────────────────────────────────────────────────────────────────────┘
         │                                                  │
         │ offline path: PCAP                    live path: XDP JSONL
         ▼                                                  ▼
  ┌───────────────────────────────────────────────────────────────────────────┐
- │ TShark / Zeek ──> normalized events ──> 100 ms windows ──> 59 features      │
- │                          (controller/)  ebpf/xdp_window_aggregator.py      │
+ │ TShark / Zeek ──> normalized events ──> 100 ms windows ──> 59 features    │
+ │                          (controller/)  ebpf/xdp_window_aggregator.py     │
  └───────────────────────────────────────────────────────────────────────────┘
         │  ExpectedState (from plan)          ObservedState (from windows)
         ▼                                          ▼
  ┌───────────────────────────────────────────────────────────────────────────┐
  │ SA correlation (RFC 4303) ──> 23 comparison rules ──> 7 risk rules        │
  │ ──> deterministic score ──> findings + custody + evidence refs            │
- │ ──> drift (3 fields) ──> mission context ──> governance journal          │
- │                                    (correlation/)                          │
+ │ ──> drift (3 fields) ──> mission context ──> governance journal           │
+ │                                    (correlation/)                         │
  └───────────────────────────────────────────────────────────────────────────┘
         │                          │                          │
         ▼                          ▼                          ▼
@@ -263,11 +263,11 @@ code in this repository, not the intent of any design document.
      │ Zeek     │                                  │ aggregator.py │
      │ controller/zeek.py                          │ 100 ms windows│
      └────┬─────┘                                  └──────┬────────┘
-          │  normalized events                             │
-          └───────────────────┬────────────────────────────┘
+          │  normalized events                            │
+          └───────────────────┬───────────────────────────┘
                               ▼
           ┌───────────────────────────────────────────┐
-          │  controller/features.py                  │
+          │  controller/features.py                   │
           │  ONE computation · 59 features · schema v2│
           └───────────────────┬───────────────────────┘
                               ▼
@@ -293,12 +293,12 @@ code in this repository, not the intent of any design document.
 
 ```text
   ┌── PLAN ───────────────┐        ┌── OBSERVATION ──────────────┐
-  │ campaigns/*.json      │        │ PCAP · XDP · 100 ms windows  │
-  │ dataset planner       │        │ controller/features.py       │
-  └───────────┬───────────┘        └──────────────┬───────────────┘
-              │ ExpectedState                      │ ObservedState
-              │ adapters/expected_state.py         │ models/observed.py
-              └────────────────┬───────────────────┘
+  │ campaigns/*.json      │        │ PCAP · XDP · 100 ms windows │
+  │ dataset planner       │        │ controller/features.py      │
+  └───────────┬───────────┘        └──────────────┬──────────────┘
+              │ ExpectedState                     │ ObservedState
+              │ adapters/expected_state.py        │ models/observed.py
+              └────────────────┬──────────────────┘
                                ▼
               ┌─────────────────────────────────────┐
               │ SA correlation — RFC 4303           │  SPI · src · dst · selectors
@@ -330,14 +330,14 @@ code in this repository, not the intent of any design document.
        │  sha256 digest + byte size
        ▼
   EvidenceRegistry ─────────────────┐
-       │                             │ digest verified before serving
-       ▼                             ▼
+       │                            │ digest verified before serving
+       ▼                            ▼
   EvidenceRef                  GET /api/v1/evidence/{id}/pcap
        │                        out-of-root request ⇒ refused
        │ travels with every stage
        ▼
   ┌──────────────────────────────────────────────────────────────┐
-  │ ChainOfCustody — keyed by the (assessment_id, finding_id) pair│
+  │ChainOfCustody — keyed by the (assessment_id, finding_id) pair│
   │   fact → source artifact → digest → verification state       │
   └──────────────────────────────────────────────────────────────┘
        │
@@ -404,15 +404,15 @@ code in this repository, not the intent of any design document.
   ├──────────────────────────────────────────────────────────────┤
   │  PIPELINE         controller/          dataset → ML          │
   ├──────────────────────────────────────────────────────────────┤
-  │  ASSESSMENT       correlation/         expected → observed  │
-  │                                     → risk                 │
+  │  ASSESSMENT       correlation/         expected → observed   │
+  │                                     → risk                   │
   ├──────────────────────────────────────────────────────────────┤
-  │  SURFACES         correlation/api     correlation/ai        │
-  │                    sentinel-frontend/                       │
+  │  SURFACES         correlation/api     correlation/ai         │
+  │                    sentinel-frontend/                        │
   ├──────────────────────────────────────────────────────────────┤
-  │  LAB              topology/  configs/  scripts/  images/    │
+  │  LAB              topology/  configs/  scripts/  images/     │
   ├──────────────────────────────────────────────────────────────┤
-  │  PROOF            tests/  demo/analytics/  docs/            │
+  │  PROOF            tests/  demo/analytics/  docs/             │
   └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -504,10 +504,10 @@ require root. `install.sh` and `status.sh` run unprivileged.
 ```
      LAN-A                    WAN                          LAN-B
   ┌─────────┐          ┌───────────────┐             ┌─────────┐
-  │ host-a  │ eth1      │               │      eth1   │ host-b  │
-  │.10.1.10 ├──────────► gw-a ═══ br-wan ═══ gw-b ├─────────►.10.2.10
-  │         │      eth2 │  .10.1.1      │  .100.2   │         │
-  └─────────┘          │  .100.1       │  .10.2.1  └─────────┘
+  │ host-a  │ eth1     │               │      eth1   │ host-b  │
+  │.10.1.10 ├──────────► gw-a ═══ br-wan ═══ gw-b    ├─────────►.10.2.10
+  │         │      eth2│  .10.1.1      │  .100.2     │         │
+  └─────────┘          │  .100.1       │  .10.2.1    └─────────┘
                        └───────┬───────┘
                                │ eth3 (veth, copy-only mirror)
                                ▼
@@ -819,9 +819,9 @@ which submits a question and mutates nothing.
 ```
   ┌──────────────────────────────────────────────────────────────────┐
   │  POST · PUT · PATCH · DELETE   →   405 on every path             │
-  │  Allow: GET, HEAD, OPTIONS                                        │
+  │  Allow: GET, HEAD, OPTIONS                                       │
   ├──────────────────────────────────────────────────────────────────┤
-  │  single exception:  POST /ai/explain  — takes a question,       │
+  │  single exception:  POST /ai/explain  — takes a question,        │
   │                                     changes nothing              │
   └──────────────────────────────────────────────────────────────────┘
 ```
@@ -932,17 +932,17 @@ the two can never execute concurrently.
 ```
   schema v2 · 59 declared
   ┌───────────────────────────────────────────────────────────────┐
-  │  59 declared features                                        │
-  │      │                                                       │
-  │      ├── burst_packet_ratio  ─┐  constant across every       │
-  │      └── ike_packet_count    ─┘  recorded sample ⇒ excluded   │
+  │  59 declared features                                         │
+  │      │                                                        │
+  │      ├── burst_packet_ratio  ─┐  constant across every        │
+  │      └── ike_packet_count    ─┘  recorded sample ⇒ excluded  │
   │            │                                                  │
   │            ▼                                                  │
-  │  57 features ──> ordering frozen ──> artifact must match     │
-  │                                              │               │
-  │                                              ▼  mismatch     │
-  │                                        fails loudly, never  │
-  │                                        predicts misaligned   │
+  │  57 features ──> ordering frozen ──> artifact must match      │
+  │                                              │                │
+  │                                              ▼  mismatch      │
+  │                                        fails loudly, never    │
+  │                                        predicts misaligned    │
   └───────────────────────────────────────────────────────────────┘
 
   validation   NaN / inf · bool · str · extra key · missing key  ⇒ reject
