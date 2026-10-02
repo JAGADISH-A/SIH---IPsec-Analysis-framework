@@ -402,6 +402,30 @@ npm run verify       # full smoke-harness suite
 `sentinel-frontend/` is the current dashboard. `frontend/` is the superseded
 vanilla-JS UI that `controller/api.py` still serves at `/` and `/static`.
 
+#### Dashboard routes
+
+`sentinel-frontend/src/router.tsx` defines 13 canonical routes. Canonical URLs
+name product concepts rather than modules; the legacy implementation-shaped URLs
+are kept working as redirects so nothing that already points at them breaks.
+
+| Canonical | Purpose |
+| --- | --- |
+| `/` | Overview / packet workspace. |
+| `/assessments`, `/assessments/:assessmentId` | Assessment list and detail. |
+| `/findings`, `/findings/:assessmentId/:findingId` | Cross-cutting finding list; finding detail keyed by the `(assessment, finding)` pair. |
+| `/reports` | Report surface. |
+| `/run`, `/run/:jobId` | Start a testbed experiment; watch its progress. |
+| `/activity` | Analyst console (live activity feed). |
+| `/evidence` | Evidence registry browser. |
+| `/explainability` | XAI view. |
+| `/analysis` | ML view. |
+| `/system` | Component and pipeline status. |
+
+Redirects: `/console → /activity`, `/overview → /`, `/xai → /explainability`,
+`/ml → /analysis`, `/experiments → /run`. `/experiments/:jobId` still resolves
+to the experiment result page. A render-time error boundary shows a plain message
+with a link home and never dumps a stack trace into the UI.
+
 ### Demo without the lab
 
 The committed fixture lets the analytics surface be exercised with no Docker, no
@@ -692,7 +716,8 @@ invariants, each of which has a tripwire test:
 
 1. Passive observation stays passive.
 2. `UNKNOWN` never becomes a vulnerability.
-3. Every finding carries an evidence reference.
+3. Every finding carries a validated `rule_id` and `evidence_type`, and evidence
+   references are attached wherever an artifact exists to point at.
 4. Scoring stays deterministic and documented in `RiskPolicy`, not in the engine.
 5. The analytics API stays read-only and answers `405` for every mutating verb.
 6. Real crypto parameters are never inferred from passive metadata.
@@ -704,4 +729,3 @@ invariants, each of which has a tripwire test:
 **No `LICENSE` file exists in this repository.** Until one is added, the code is
 unlicensed and no rights are granted. Do not redistribute or build on it until
 licensing is resolved.
-
