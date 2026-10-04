@@ -110,7 +110,16 @@ class TestNativeEsp(unittest.TestCase):
 
 
 class TestNatT(unittest.TestCase):
-    """UDP/4500, with and without the optional RFC 3948 non-ESP marker."""
+    """UDP/4500 ESP-in-UDP vs IKE-over-NAT-T.
+
+    RFC 3948 puts IKE and ESP on one port and separates them with a four-byte
+    non-ESP marker of 00 00 00 00, which occupies exactly the position where an
+    ESP SPI would sit.  The marker belongs to IKE only - it is never prepended
+    to an ESP datagram - so a leading zero word means "this is IKE" and no SPI
+    may be reported for it.  This matches classify_nat_t_udp() in
+    ebpf/xdp_monitor.bpf.c, so the PCAP reader and the live XDP classifier
+    cannot disagree about the same bytes.
+    """
 
     def test_ipv4_natt_without_marker_reads_the_spi(self):
         frame = _ethernet(
@@ -121,12 +130,12 @@ class TestNatT(unittest.TestCase):
             rec = feats.read_pcap_esp_with_spi(_write_pcap([frame], tmp=tmp))
         self.assertEqual(rec[0][5], SPI_A)
 
-    def test_ipv4_natt_with_marker_still_reads_the_spi(self):
-        """The marker case strongSwan omits but other peers emit.
+    def test_ipv4_natt_ike_marker_is_not_esp_and_yields_no_spi(self):
+        """A marked UDP/4500 frame is IKE and must contribute no SPI.
 
-        Reading the SPI at a fixed offset gives 0 here, which the identity
-        resolver turns into ``UNKNOWN no_spi_available`` and the whole tunnel
-        silently becomes unresolvable.
+        Stepping over the marker and reading the next four bytes would take
+        them out of the ISAKMP header and publish them as an ESP SPI.  That
+        number is real, so it would not look missing, but it identifies no SA.
         """
         frame = _ethernet(
             0x0800,
@@ -135,10 +144,10 @@ class TestNatT(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as tmp:
             rec = feats.read_pcap_esp_with_spi(_write_pcap([frame], tmp=tmp))
-        self.assertEqual(len(rec), 1)
-        self.assertEqual(rec[0][5], SPI_A)
+        self.assertEqual(rec, [])
 
-    def test_marker_and_no_marker_agree_on_the_spi(self):
+    def test_marked_ike_and_unmarked_esp_do_not_both_report_the_spi(self):
+        """Only the genuine ESP frame may contribute an SPI."""
         plain = _ethernet(
             0x0800,
             _ip4("10.0.0.1", "10.0.0.2", 17, _udp(4500, 4500, _esp(SPI_A))),
@@ -150,13 +159,22 @@ class TestNatT(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as tmp:
             rec = feats.read_pcap_esp_with_spi(_write_pcap([plain, marked], tmp=tmp))
-        self.assertEqual([r[5] for r in rec], [SPI_A, SPI_A])
+        self.assertEqual([r[5] for r in rec], [SPI_A])
 
-    def test_ipv6_natt_with_marker_reads_the_spi(self):
+    def test_ipv6_natt_ike_marker_is_not_esp_and_yields_no_spi(self):
         frame = _ethernet(
             0x86DD,
             _ip6(V6_A, V6_B, 17,
                  _udp(4500, 4500, b"\x00" * 4 + _esp(SPI_B))),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            rec = feats.read_pcap_esp_with_spi(_write_pcap([frame], tmp=tmp))
+        self.assertEqual(rec, [])
+
+    def test_ipv6_natt_without_marker_reads_the_spi(self):
+        frame = _ethernet(
+            0x86DD,
+            _ip6(V6_A, V6_B, 17, _udp(4500, 4500, _esp(SPI_B))),
         )
         with tempfile.TemporaryDirectory() as tmp:
             rec = feats.read_pcap_esp_with_spi(_write_pcap([frame], tmp=tmp))

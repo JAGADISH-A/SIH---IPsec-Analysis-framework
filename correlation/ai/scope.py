@@ -37,7 +37,9 @@ from .models import (
     INTENT_DECISION_REQUEST,
     INTENT_EVIDENCE,
     INTENT_EXPECTED_VS_OBSERVED,
+    INTENT_ASSET_CRITICALITY,
     INTENT_GENERAL,
+    INTENT_ROOT_CAUSE,
     INTENT_RISK,
     INTENT_TERMINOLOGY,
     OUT_OF_SCOPE_ANSWER,
@@ -74,6 +76,22 @@ SYSTEM_TERMS: Tuple[str, ...] = (
     "observed", "comparison", "compare", "unassessed", "configuration",
     "config", "classif", "ml", "model", "confidence", "anomaly", "traffic profile",
     "packet", "capture", "traffic", "analyst", "investigation", "pcap",
+)
+
+#: Vocabulary that points at *the selected record* rather than at IPsec or at
+#: this product's output nouns. "How critical is this asset?" names no IPsec
+#: term and no system noun, yet it is exactly one of the questions an analyst
+#: asks about a selected assessment -- and refusing it would make the asset and
+#: root-cause grounding unreachable.
+#:
+#: These are counted only when ``has_context`` is true. Without a selected
+#: assessment there is no "this" to point at, and "is the asset critical?" would
+#: otherwise become a generic question with nothing to answer from.
+_CONTEXT_REFERENCE_TERMS: Tuple[str, ...] = (
+    "root cause", "cause", "criticality", "how critical", "critical",
+    "asset", "mission", "experiment", "job", "this assessment", "this finding",
+    "this record", "recorded", "record", "why did this", "why did it",
+    "why did the", "what happened", "go wrong", "fail",
 )
 
 _TERMINOLOGY_TERMS: Tuple[str, ...] = (
@@ -186,6 +204,8 @@ def classify(
     text = _normalise(raw)
     ipsec_hits = _find_terms(text, IPSEC_TERMS)
     system_hits = _find_terms(text, SYSTEM_TERMS)
+    # Only meaningful once something is selected; see _CONTEXT_REFERENCE_TERMS.
+    context_hits = _find_terms(text, _CONTEXT_REFERENCE_TERMS) if has_context else ()
     off_topic = _find_terms(text, _OFF_TOPIC)
     decision_hits = _find_terms(text, _DECISION_TERMS)
     risk_hits = _find_terms(text, _RISK_TERMS)
@@ -217,6 +237,12 @@ def classify(
         or risk_hits
         or expected_hits
         or evidence_hits
+        # A question that names the selected record is about this assessment
+        # even when it names no IPsec term: "How critical is this asset?" and
+        # "What was the root cause?" are the two questions the grounding layer
+        # carries the context for. Empty unless has_context, so nothing here
+        # widens scope when no assessment is selected.
+        or context_hits
     )
     if not in_domain:
         return ScopeDecision(
@@ -239,6 +265,33 @@ def classify(
                 "explicitly declined"
             ),
             matched_terms=decision_hits,
+        )
+
+    if has_context and _find_terms(text, ("root cause", "cause", "why did this",
+                                          "why did it", "what happened",
+                                          "go wrong")):
+        return ScopeDecision(
+            in_scope=True,
+            intent=INTENT_ROOT_CAUSE,
+            reason=(
+                "the question asks why the recorded run failed; the answer is the "
+                "controller's recorded verdict, and when none was recorded the "
+                "assistant says so rather than inferring one"
+            ),
+            matched_terms=context_hits,
+        )
+
+    if has_context and _find_terms(text, ("criticality", "how critical", "asset",
+                                          "mission")):
+        return ScopeDecision(
+            in_scope=True,
+            intent=INTENT_ASSET_CRITICALITY,
+            reason=(
+                "the question asks how critical the asset is; that is declared "
+                "operator input, and an undeclared asset is reported as not "
+                "recorded rather than as not critical"
+            ),
+            matched_terms=context_hits,
         )
 
     if risk_hits or ("why" in text and has_finding):
@@ -280,6 +333,17 @@ def classify(
                 "from the protocol rather than from a specific assessment"
             ),
             matched_terms=terminology_hits,
+        )
+
+    if has_context and context_hits:
+        return ScopeDecision(
+            in_scope=True,
+            intent=INTENT_GENERAL,
+            reason=(
+                "the question refers to the selected assessment, so it is "
+                "answerable from the recorded context"
+            ),
+            matched_terms=tuple(context_hits),
         )
 
     if has_context:

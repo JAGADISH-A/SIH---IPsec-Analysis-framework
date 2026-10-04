@@ -355,7 +355,11 @@ await act(async () => realBox.root.unmount())
       'xai entry point is present',
       /Explain this finding/.test(mlText),
     )
-    check('ask-ai entry point is present', /Ask AI/.test(mlText) && /Analyze with AI/.test(mlText))
+    // The entry-point control is labelled "Explain with AI" (it explains what is
+    // already recorded) and the thread's follow-up is "Ask AI". Both must be in
+    // the ML tab, because that is where the analyst reads the confidence section
+    // the assistant is explicitly not allowed to replace.
+    check('ask-ai entry point is present', /Ask AI/.test(mlText) && /Explain with AI/.test(mlText))
 
     // --- Risk (assessment/packet) vs finding severity stay two concepts. ---
     const packetRisk = mlBox.host.querySelector('[data-packet-risk]')

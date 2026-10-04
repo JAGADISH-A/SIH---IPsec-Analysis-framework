@@ -31,11 +31,14 @@ Authority boundaries (all verified by tests/test_live_correlation_seam.py):
   plan through the existing :class:`ExpectedStateAdapter`; this module never
   derives expected state from ML, observed state, risk or XAI output.
 * **Observed values are only what a passive observer can evidence.**  A passive
-  non-inline observer sees that ESP/AH was observed, so ``mode`` is derived from
-  ``ObservedState.tunnel_seen``.  Crypto parameters (cipher, integrity, DH
-  group, PFS) are deliberately NOT supplied: the state engine refuses to infer
-  them, and mirroring the expected values into the observed channel -- as the
-  demo store does -- would fabricate observation.
+  non-inline observer sees ESP/AH frames, but it cannot tell tunnel from
+  transport: both put protocol-50 ESP on the wire.  ``mode`` is therefore taken
+  only from ``ObservedState.mode``, the authoritative encapsulation mode of the
+  deployed SA (strongSwan ``swanctl --list-sas``); with no authoritative source
+  the channel is empty and the comparison reports UNKNOWN.  Crypto parameters
+  (cipher, integrity, DH group, PFS) are deliberately NOT supplied: the state
+  engine refuses to infer them, and mirroring the expected values into the
+  observed channel -- as the demo store does -- would fabricate observation.
 * **Protocol comparison is untouched by ML.**  Protocol matches / mismatches /
   unknowns / not_applicable and the overall comparison status come exclusively
   from the existing ``ComparisonEngine``.  ML outcomes are attached as
@@ -87,12 +90,15 @@ from ebpf.xdp_window_aggregator import WINDOW_SIZE_MS
 from ..adapters import ExpectedStateAdapter, MaterializedExpectedState
 from ..comparison import ComparisonEngine, ComparisonEngineOptions
 from ..models import (
+    MODE_TRANSPORT,
+    MODE_TUNNEL,
     CorrelationIdentity,
     CorrelationResult,
     ExpectedState,
     LiveFeatureWindow,
     MLResult,
     ObservedState,
+    normalize_authoritative_mode,
 )
 from ..risk import RiskEngine, RiskPolicy
 from ..sa_correlation import SaResolver
@@ -107,6 +113,7 @@ __all__ = [
     "correlate_live_window",
     "feature_windows_from_events",
     "load_rf_artifact",
+    "normalize_authoritative_mode",
     "observed_state_from_events",
     "observed_state_from_windows",
     "observed_values_from_state",
@@ -119,11 +126,12 @@ __all__ = [
 #: deterministic and never calls a wall clock for expected state.
 DEFAULT_MATERIALIZED_AT = "2026-09-20T00:00:00+00:00"
 
-#: ``mode`` is the one comparison variable a passive observer can evidence.
-#: Every other expected variable is either a configuration property (unknown to
-#: a passive sensor) or a crypto parameter the state engine must never infer.
-OBSERVED_MODE_TUNNEL = "tunnel"
-OBSERVED_MODE_TRANSPORT = "transport"
+#: ``mode`` is NOT a variable a passive observer can evidence: transport-mode
+#: and tunnel-mode IPsec are byte-identical on the wire (ESP, protocol 50).
+#: These constants name the two values an authoritative SA report may carry;
+#: they are never inferred from observed traffic.
+OBSERVED_MODE_TUNNEL = MODE_TUNNEL
+OBSERVED_MODE_TRANSPORT = MODE_TRANSPORT
 
 
 def load_rf_artifact(model_path=None) -> Dict[str, Any]:
@@ -264,22 +272,29 @@ def observed_state_from_windows(
 def observed_values_from_state(observed: ObservedState) -> Dict[str, Any]:
     """Observed-value channel containing only what passive observation supports.
 
-    A non-inline observer sees ESP/AH frames, so tunnel-vs-transport is
-    observable.  It cannot see the negotiated cipher, integrity algorithm, DH
-    group or PFS state, and the state engine deliberately never infers them, so
-    those variables are left absent and the comparison rules report them as
-    unknown rather than matching a value nobody observed.
+    A passive non-inline observer sees ESP/AH frames on the observation path but
+    can NEVER establish the encapsulation mode from them: transport-mode IPsec
+    puts exactly the same protocol-50 ESP (with the SPI directly in the ESP
+    header) on the wire as tunnel mode.  Deriving ``mode`` from
+    ``esp_seen``/``ah_seen`` therefore reports ``"tunnel"`` for every genuine
+    transport-mode sample, which the comparison layer turns into a false
+    ``RISK-MODE-MISMATCH`` at ``SEVERITY_HIGH``.
 
-    ``mode`` is derived from ``esp_seen or ah_seen`` -- the encapsulating
-    protocols themselves -- and deliberately NOT from ``tunnel_seen``: the state
-    engine sets ``tunnel_seen`` for *any* observed traffic on the IPsec
-    observation path, so using it would report "tunnel" for a cleartext capture
-    that happened to be observed.
+    ``mode`` is consequently taken ONLY from ``ObservedState.mode``, which
+    carries the authoritative encapsulation mode reported by the real
+    deployed security association (strongSwan ``swanctl --list-sas``).  When no
+    authoritative source is available the channel is empty and
+    :func:`correlation.comparison.rules.compare_mode` reports the variable as
+    UNKNOWN -- never a guess, never a match, never a mismatch.
+
+    Crypto parameters (cipher, integrity, DH group, PFS) remain deliberately
+    absent: the state engine refuses to infer them, and mirroring the expected
+    values into the observed channel would fabricate observation.
     """
-    encapsulating = observed.esp_seen or observed.ah_seen
-    return {
-        "mode": OBSERVED_MODE_TUNNEL if encapsulating else OBSERVED_MODE_TRANSPORT
-    }
+    values: Dict[str, Any] = {}
+    if getattr(observed, "mode", None):
+        values["mode"] = observed.mode
+    return values
 
 
 @dataclass(frozen=True)

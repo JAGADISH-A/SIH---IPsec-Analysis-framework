@@ -117,6 +117,10 @@ export async function analyzeWithAI(
         question,
         assessment_id: request_.entityId,
         finding_id: request_.findingId ?? null,
+        // Sent only when the surface knows the job. The service treats an
+        // absent or unresolvable job as "root cause not recorded" and the
+        // assistant says so; it never invents a cause from the finding.
+        experiment_id: request_.experimentId ?? null,
         history,
       },
       signal: options.signal,

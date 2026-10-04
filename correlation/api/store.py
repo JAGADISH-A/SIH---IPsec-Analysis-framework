@@ -105,6 +105,10 @@ class RecordedCase:
     capture: str
     description: str
     address_family: str
+    #: The IPsec encapsulation mode this capture was taken in. Transport and
+    #: tunnel put byte-identical protocol-50 ESP on the wire, so a capture is
+    #: paired with a plan sample only when the mode matches too.
+    mode: str = "tunnel"
 
 
 RECORDED_CASES: Tuple[RecordedCase, ...] = (
@@ -141,6 +145,22 @@ RECORDED_CASES: Tuple[RecordedCase, ...] = (
         ),
         address_family="ipv4",
     ),
+    RecordedCase(
+        name="transport-v6",
+        state_path="results/e2e-verification/parser/transport_v6_live/state.jsonl",
+        window_path=None,
+        capture="results/e2e-verification/parser/transport_v6_live/events.jsonl",
+        description=(
+            "live transport-mode capture of the same asset under an IPv6 "
+            "configuration: outer SA endpoints 2001:db8:20::10<->.20, two real "
+            "SPIs, ESP in force and AH absent. Recorded alongside the "
+            "transport/IPv4 baseline of the same topology and encapsulation "
+            "mode, so the two differ on the outer address family and on "
+            "nothing else"
+        ),
+        address_family="ipv6",
+        mode="transport",
+    ),
 )
 
 #: Posture bands drawn from the real plan, one sample per documented band. The
@@ -156,6 +176,7 @@ SCENARIO_SLOTS = (
     "pfs-weak",
     "tunnel-v4",
     "tunnel-v6",
+    "transport-v6",
     "nat-t",
     "ml-mismatch",
     "unknown",
@@ -722,7 +743,8 @@ class AssessmentStore:
     def _attach_drift(self, assessment_id: str, sequence: int, slot: str, *,
                       expected, observed, correlation, ml_result,
                       observation: Optional[RecordedObservation],
-                      evidence_refs, sources, custody_sources) -> None:
+                      evidence_refs, sources, custody_sources,
+                      run_id: str = DATASET_RUN_ID) -> None:
         """Compare the current observation with the validated baseline, once.
 
         The comparison itself is always attached to the plan-based assessment,
@@ -732,6 +754,12 @@ class AssessmentStore:
         right: a drift finding is a real :class:`RiskAssessment` produced by the
         real risk engine, and nothing downstream -- custody, integrity, the
         explanation endpoint -- can reach a finding that is not registered.
+
+        ``run_id`` names the dataset run the comparison belongs to. It defaults
+        to the recorded plan run, so every existing caller is unaffected. A
+        live testbed run passes its own real ``testbed-<job_id>`` so that both
+        the recorded comparison identity and the drift-origin assessment id are
+        derived from the run that actually produced the observation.
         """
         declared = self.drift_observations.get(slot)
         # The current state is the declared observation when the caller supplied
@@ -773,7 +801,7 @@ class AssessmentStore:
         drift = assess_drift(
             self.baselines.get(self.baseline_id),
             current,
-            run_id=DATASET_RUN_ID,
+            run_id=run_id,
             sequence=sequence,
             current_source_ref=current_source.public_path,
             current_source=current_source,
@@ -795,7 +823,7 @@ class AssessmentStore:
             return
 
         drift_slot = f"{slot}-drift"
-        drift_id = f"{DATASET_RUN_ID}:{sequence}:{drift_slot}"
+        drift_id = f"{run_id}:{sequence}:{drift_slot}"
         drift_xai = ExplainabilityEngine().explain(
             drift.risk,
             correlation=correlation,
@@ -984,7 +1012,7 @@ class AssessmentStore:
                 _scenario_label(slot, sequence or 0, band, case),
                 None,
             )
-        if slot in ("tunnel-v4", "tunnel-v6", "nat-t"):
+        if slot in ("tunnel-v4", "tunnel-v6", "transport-v6", "nat-t"):
             case = next(item for item in RECORDED_CASES if item.name == slot)
             sequence = self._case_sequence(plan, case)
             return (
@@ -1035,14 +1063,16 @@ class AssessmentStore:
         error rather than a silent fallback to the first row.
         """
         family = case.address_family
+        mode = case.mode
         for sample in plan:
             config = sample.get("ipsec_configuration") or {}
-            if config.get("mode") != "tunnel":
+            if config.get("mode") != mode:
                 continue
             if config.get("address_family") == family:
                 return int(sample["sequence"])
         raise ValueError(
-            f"no plan sample declares address_family {family!r} in tunnel mode, "
+            f"no plan sample declares address_family {family!r} in {mode!r} "
+            f"mode, "
             f"so capture {case.name!r} cannot be scored against a real expected "
             f"state; refusing to pair it with an unrelated sample"
         )

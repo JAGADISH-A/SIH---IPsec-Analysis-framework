@@ -63,6 +63,19 @@ class TestClassifyUdp4500(unittest.TestCase):
             NatTClassification("MADE_UP", "nope")
         NatTClassification(CLASSIFICATION_UNKNOWN, "ok", nat_t=True)
 
+    def test_esp_nat_t_sensor_label_is_nat_t_data(self):
+        """``ESP-NAT-T`` is a real ESP header seen inside UDP/4500."""
+        result = classify_udp_4500("ESP-NAT-T", 4500, 4500)
+        self.assertEqual(result.classification, CLASSIFICATION_ESP_IN_UDP)
+        self.assertTrue(result.nat_t)
+        self.assertIn("RFC 3948", result.reason)
+
+    def test_ike_nat_t_stays_ike_and_is_never_esp_data(self):
+        """IKE over NAT-T must never be promoted to ESP data."""
+        result = classify_udp_4500("IKE-NAT-T", 4500, 4500)
+        self.assertEqual(result.classification, CLASSIFICATION_IKE)
+        self.assertNotEqual(result.classification, CLASSIFICATION_ESP_IN_UDP)
+
 
 class TestXdpEventAdapter(unittest.TestCase):
     def setUp(self):
@@ -104,6 +117,49 @@ class TestXdpEventAdapter(unittest.TestCase):
         self.assertEqual(self.adapter.spi_of({"spi": 42}), 42)
         self.assertIsNone(self.adapter.spi_of({"spi": ""}))
         self.assertIsNone(self.adapter.spi_of({"spi": 0}))
+
+    def test_normalize_esp_nat_t_keeps_real_spi_and_seq(self):
+        """A sensor-parsed ESP-in-UDP event keeps its real SPI/sequence.
+
+        Values below are the ones actually observed on the wire from a genuine
+        MASQUERADE between the peers (SPI 0xc6711f27, seq 1 and 2).
+        """
+        for seq in (1, 2):
+            raw = {
+                "ts_ns": 5000000000 + seq,
+                "proto": 17,
+                "type": "ESP-NAT-T",
+                "src": "10.30.1.20",
+                "dst": "10.20.1.10",
+                "spi": 0xC6711F27,
+                "seq": seq,
+                "len": 162,
+                "sport": 4500,
+                "dport": 4500,
+            }
+            out = self.adapter.normalize(raw)
+            self.assertEqual(out["classification"], CLASSIFICATION_ESP_IN_UDP)
+            self.assertEqual(out["spi"], 0xC6711F27)
+            self.assertEqual(out["sequence"], seq)
+            self.assertEqual(out["source_port"], 4500)
+            self.assertEqual(out["destination_port"], 4500)
+
+    def test_normalize_ike_nat_t_carries_no_spi(self):
+        """IKE over NAT-T must not report an SPI or sequence."""
+        raw = {
+            "ts_ns": 5000000000,
+            "proto": 17,
+            "type": "IKE-NAT-T",
+            "src": "10.30.1.20",
+            "dst": "10.20.1.10",
+            "len": 254,
+            "sport": 4500,
+            "dport": 4500,
+        }
+        out = self.adapter.normalize(raw)
+        self.assertEqual(out["classification"], CLASSIFICATION_IKE)
+        self.assertIsNone(out["spi"])
+        self.assertEqual(out["sequence"], 0)
 
     def test_normalize_shape(self):
         raw = {

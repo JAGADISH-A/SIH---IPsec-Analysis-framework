@@ -29,6 +29,12 @@ What the guard rejects
     A confidence figure the backend did not produce, or a confidence attributed
     to the assistant. ML confidence is backend data rendered in its own block;
     the assistant has no confidence of its own and may not imply that it does.
+``contradicted_verdict``
+    A drift status, traffic class or asset criticality that differs from the one
+    the deterministic backend recorded. These three are the verdicts this layer
+    newly restates to the model, so they needed the same protection the severity
+    and score already had: restating a verdict and then contradicting it in the
+    same answer is worse than saying nothing.
 
 What happens on violation
 -------------------------
@@ -41,7 +47,7 @@ would read a confident answer with no way to know the first one was wrong.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Pattern, Sequence, Set, Tuple, Union
+from typing import Any, Dict, FrozenSet, List, Pattern, Sequence, Set, Tuple, Union
 
 from .models import (
     GUARD_CLEAN,
@@ -58,6 +64,7 @@ VIOLATION_SCORE = "invented_score"
 VIOLATION_IDENTIFIER = "invented_identifier"
 VIOLATION_ALGORITHM = "invented_algorithm"
 VIOLATION_CONFIDENCE = "invented_confidence"
+VIOLATION_CONTRADICTION = "contradicted_verdict"
 
 #: Reported in this order so a client rendering the first violation shows the
 #: most serious one.
@@ -66,6 +73,7 @@ VIOLATION_ORDER: Tuple[str, ...] = (
     VIOLATION_DISMISSAL,
     VIOLATION_SEVERITY,
     VIOLATION_SCORE,
+    VIOLATION_CONTRADICTION,
     VIOLATION_IDENTIFIER,
     VIOLATION_ALGORITHM,
     VIOLATION_CONFIDENCE,
@@ -221,6 +229,74 @@ _ID_PATTERNS: Tuple[Pattern, ...] = (
     re.compile(r"\bdataset-\d{6,8}-\d{4,8}\b"),
     re.compile(r"\b0x[0-9a-fA-F]{4,16}\b"),
     re.compile(r"\b\d{1,6}:\d{1,6}:[A-Za-z0-9_.-]+\b"),
+    # The control plane's root-cause labels (``AUTHENTICATION_FAILURE``,
+    # ``UNSUPPORTED_CONFIGURATION``). Unambiguously identifiers, so naming one
+    # the context does not carry is the fabricated-evidence failure mode.
+    re.compile(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b"),
+)
+
+#: Each deterministic verdict the assistant restates, with the closed vocabulary
+#: it may use. The vocabulary is closed on purpose: these are values a finite
+#: backend decided, so a fifth traffic class or a sixth criticality is a
+#: fabrication rather than a synonym.
+#:
+#: Values are matched per sentence and only where an assertion cue is present,
+#: mirroring the algorithm check. "email traffic was seen on the wire" is a
+#: statement about packets; "the traffic was classified as email" is a statement
+#: about the model, and only the second one may be checked.
+_DRIFT_PHRASES: Dict[str, Tuple[str, ...]] = {
+    "no_drift": ("no drift", "no drift detected", "no detected drift", "unchanged"),
+    "drift": ("drift", "drifted", "drift detected"),
+    "indeterminate": ("indeterminate",),
+    "not_configured": ("not configured",),
+}
+
+TRAFFIC_CLASSES: FrozenSet[str] = frozenset(
+    {"voip", "video", "messaging", "email", "web", "icmp"}
+)
+
+CRITICALITY_VALUES: FrozenSet[str] = frozenset({"low", "high"})
+
+#: ``drift`` is also an ordinary noun -- "the drift result", "drift detection" --
+#: so the bare word only counts as an assertion when it is not heading one of
+#: those. Every other phrase is an unambiguous assertion of a verdict.
+_DRIFT_ASSERTION = re.compile(
+    r"\b(?:"
+    r"no[\s_-]?drift(?:ed)?"
+    r"|indeterminate"
+    r"|not[\s_-]?configured"
+    r"|drift(?:ed)?(?!\s+(?:result|results|detection|status|check|checks|analysis"
+    r"|assessment|assessments|monitoring|comparison|baseline|window|history"
+    r"|threshold|signal|rate|test|testing))"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_CLASSIFICATION_CUE = re.compile(
+    r"\b(?:classifi(?:ed|cation)|traffic[\s_-]?(?:class|profile)|"
+    r"(?:was|is|were)\s+classified|inferred|profile)\b",
+    re.IGNORECASE,
+)
+
+_TRAFFIC_ASSERTION = re.compile(
+    r"\b(" + "|".join(sorted(TRAFFIC_CLASSES)) + r")\b", re.IGNORECASE
+)
+
+_CRITICALITY_ASSERTION = re.compile(
+    r"\bcriticality\b[^.!?\n]{0,30}?\b(?P<trailing>low|high|medium|critical)\b"
+    r"|\b(?P<leading>low|high)[\s-]criticality\b",
+    re.IGNORECASE,
+)
+
+#: A severity word directly qualified by "criticality" is an asset-criticism
+#: value, not a severity assertion. Asset criticality was newly whitelisted into
+#: the prompt, so without this an honest answer saying "high criticality" would
+#: be refused for inventing a severity -- the two checks would collide on the
+#: same word.
+_CRITICALITY_SCOPED = re.compile(
+    r"\b(?:criticality\b[^.!?\n]{0,30}?\b(?:low|high|medium|critical)\b"
+    r"|(?:low|high)[\s-]criticality\b)",
+    re.IGNORECASE,
 )
 
 _SCORE_PATTERNS: Tuple[Pattern, ...] = (
@@ -279,9 +355,24 @@ _NORMALISED_TOKENS = frozenset(
     _normalise_token(token) for token in ALGORITHM_TOKENS
 )
 
+#: ``_DRIFT_PHRASES`` folded to the same form, so "no_drift", "no drift" and
+#: "no-drift" are recognised as one verdict rather than as a wording the guard
+#: had not seen. Reverse index: folded phrase -> the status it asserts.
+_DRIFT_PHRASE_TO_STATUS: Dict[str, str] = {
+    _normalise_token(phrase): status
+    for status, phrases in _DRIFT_PHRASES.items()
+    for phrase in phrases
+}
+
 
 def _sentences(text: str) -> List[str]:
     return [part.strip() for part in _SENTENCE.findall(text or "") if part.strip()]
+
+
+def _inside(span: Tuple[int, int], spans: Set[Tuple[int, int]]) -> bool:
+    """Whether ``span`` falls within any of ``spans``."""
+    start = span[0]
+    return any(low <= start and span[1] <= high for low, high in spans)
 
 
 class Guard:
@@ -349,6 +440,13 @@ class Guard:
                 + " is named for a configuration field the backend did not record"
             )
 
+        bad_verdicts = self._bad_verdicts(body)
+        if bad_verdicts:
+            found.add(VIOLATION_CONTRADICTION)
+            detail.append(
+                "; ".join(sorted(bad_verdicts))
+            )
+
         if not found:
             return GuardReport(status=GUARD_CLEAN)
         ordered = tuple(name for name in VIOLATION_ORDER if name in found)
@@ -383,11 +481,17 @@ class Guard:
     def _bad_severity(self, body: str) -> Set[str]:
         if not self._severities:
             return set()
-        return {
-            word.upper()
-            for word in _SEVERITY_RE.findall(body)
-            if word.upper() not in self._severities
-        }
+        found = set()
+        for sentence in _sentences(body):
+            scoped = {match.span() for match in _CRITICALITY_SCOPED.finditer(sentence)}
+            for match in _SEVERITY_RE.finditer(sentence):
+                word = match.group(0).upper()
+                if word in self._severities:
+                    continue
+                if _inside(match.span(), scoped):
+                    continue
+                found.add(word)
+        return found
 
     def _bad_score(self, body: str) -> Set[int]:
         if not self._scores:
@@ -417,6 +521,91 @@ class Guard:
         if token in self._allowed or token.lower() in self._allowed_lower:
             return True
         return bool(_HEX8.fullmatch(token))
+
+    def _bad_verdicts(self, body: str) -> Set[str]:
+        """Verdicts the deterministic backend decided, asserted differently.
+
+        Three checks, each reading one recorded verdict. When the context records
+        none at all, *any* assertion of that verdict is a fabrication, which is
+        the same rule the identifier check already applies to ids.
+        """
+        found: Set[str] = set()
+        found |= self._bad_drift(body)
+        found |= self._bad_traffic_class(body)
+        found |= self._bad_criticality(body)
+        return found
+
+    def _bad_drift(self, body: str) -> Set[str]:
+        context_drift = self._context.drift
+        recorded = context_drift.status if context_drift is not None else None
+        allowed = {str(recorded)} if recorded else frozenset()
+        found: Set[str] = set()
+        for match in _DRIFT_ASSERTION.finditer(body):
+            phrase = _normalise_token(match.group(0))
+            family = _DRIFT_PHRASE_TO_STATUS.get(phrase)
+            if family is None or family in allowed:
+                continue
+            if context_drift is None:
+                found.add(
+                    "a drift verdict is asserted but the context records no drift "
+                    f"assessment (asserted: {match.group(0)!r})"
+                )
+            else:
+                found.add(
+                    f"drift verdict {match.group(0)!r} contradicts the recorded "
+                    f"status {recorded!r}"
+                )
+        return found
+
+    def _bad_traffic_class(self, body: str) -> Set[str]:
+        context_ml = self._context.ml
+        recorded = (
+            _normalise_token(str(context_ml.traffic_class))
+            if context_ml is not None and context_ml.present and context_ml.traffic_class
+            else None
+        )
+        found: Set[str] = set()
+        for sentence in _sentences(body):
+            if not _CLASSIFICATION_CUE.search(sentence):
+                continue
+            for match in _TRAFFIC_ASSERTION.finditer(sentence):
+                token = _normalise_token(match.group(1))
+                if token == recorded:
+                    continue
+                if recorded is None:
+                    found.add(
+                        f"traffic class {match.group(1)!r} is asserted but the context "
+                        "records no classified traffic profile"
+                    )
+                else:
+                    found.add(
+                        f"traffic class {match.group(1)!r} contradicts the recorded "
+                        f"classification {context_ml.traffic_class!r}"
+                    )
+        return found
+
+    def _bad_criticality(self, body: str) -> Set[str]:
+        asset = self._context.asset or {}
+        recorded = None
+        profile = asset.get("profile") or {}
+        if isinstance(profile, dict) and profile.get("criticality"):
+            recorded = _normalise_token(str(profile["criticality"]))
+        found: Set[str] = set()
+        for match in _CRITICALITY_ASSERTION.finditer(body):
+            token = _normalise_token(match.group("trailing") or match.group("leading"))
+            if token == recorded or token not in CRITICALITY_VALUES:
+                continue
+            if recorded is None:
+                found.add(
+                    f"asset criticality {token!r} is asserted but the context "
+                    "records no criticality"
+                )
+            else:
+                found.add(
+                    f"asset criticality {token!r} contradicts the recorded "
+                    f"criticality {recorded!r}"
+                )
+        return found
 
     def _bad_algorithm(self, body: str) -> Set[str]:
         found = set()

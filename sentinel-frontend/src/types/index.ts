@@ -603,6 +603,91 @@ export type CustodyExplanation = {
   verification?: { performed?: boolean; reason?: string }
 }
 
+/* ------------------------------------------------------ asset mission context */
+
+/**
+ * The operator's declarations for one asset, as the backend read them from the
+ * profile file. These are inputs, not measurements: nothing here was inferred
+ * from traffic.
+ */
+export type MissionContextProfile = {
+  asset_id: string
+  role: string
+  criticality: string
+  mission_impact: string
+}
+
+/** The contextualized view: the same technical risk, placed in the declared context. */
+export type MissionContextRisk = {
+  technical_risk: number
+  technical_severity: string
+  contextualized_risk: number
+  contextualized_severity: string
+  context_index: number
+  multiplier_bp: number
+  criticality_weight: number
+  mission_impact_weight: number
+  model_version: string
+  formula?: string
+  score_cap: number
+  inferred_from_traffic: boolean
+}
+
+/**
+ * One asset's declared context and what it produced.
+ *
+ * `status` is the load-bearing field: when it is `not_configured` then `profile`
+ * and `risk` are null, so a consumer cannot mistake absent context for a benign
+ * one. `configured` is provided so a reader never has to infer it.
+ */
+export type MissionContext = {
+  status: 'configured' | 'not_configured' | string
+  configured: boolean
+  asset_id: string | null
+  profile: MissionContextProfile | null
+  risk: MissionContextRisk | null
+  context_source: string | null
+  context_source_path: string | null
+  context_source_sha256: string | null
+  reason: string | null
+  model_version: string
+  derived_from_observation: boolean
+}
+
+/** `GET /api/v1/assets` — the declared asset ids, for a selector. */
+export type AssetListResponse = {
+  api: string
+  read_only: true
+  configured: boolean
+  reason: string | null
+  store_asset_id: string | null
+  schema_version?: string
+  context_source?: string
+  source?: string | null
+  source_sha256?: string | null
+  assets: string[]
+  count: number
+  total: number
+}
+
+/**
+ * `GET /api/v1/assets/{asset_id}/context` — one selected asset's context.
+ *
+ * `technical_risk_source` says how the risk being contextualized was chosen:
+ * `assessment_header` because the caller named an assessment, or
+ * `store_highest_risk` because it did not.
+ */
+export type AssetContextResponse = {
+  api: string
+  read_only: true
+  asset_id: string
+  assessment_id: string | null
+  technical_risk_source: 'assessment_header' | 'store_highest_risk' | string
+  technical_risk: number
+  technical_severity: string
+  mission_context: MissionContext
+}
+
 /* --------------------------------------------------------- audit (analysis) */
 
 /**
@@ -728,11 +813,16 @@ export type RunAuditTrailResponse = {
 
 export type DriftChangedField = {
   variable?: string
+  label?: string
   category?: string
   baseline_value?: unknown
   current_value?: unknown
   change?: string
   severity?: string
+  comparison_rule?: string
+  drift_category?: string
+  finding_id?: string
+  security_relevance?: boolean
   [key: string]: unknown
 }
 
@@ -762,13 +852,45 @@ export type AssessmentDriftResponse = {
   status: string
   drift_detected: boolean
   reason?: string | null
-  baseline: Record<string, unknown> | null
-  current: Record<string, unknown> | null
+  /**
+   * Baseline identity and integrity as the drift layer recorded it. Typed for
+   * the fields the UI shows and left open (`Record`) because the endpoint may
+   * add more; nothing here is ever filled in client-side.
+   */
+  baseline: (Record<string, unknown> & {
+    baseline_id?: string
+    validation_status?: string
+    state_digest?: string
+    baseline_digest?: string
+    validated_at?: string | null
+    validated_by?: string | null
+    asset_id?: string | null
+  }) | null
+  /** The observed side the comparison was made against, with its provenance. */
+  current: (Record<string, unknown> & {
+    state_digest?: string
+    source_ref?: string | null
+    run_id?: string
+    sequence?: number
+    source?: Record<string, unknown>
+  }) | null
   changed_fields: DriftChangedField[]
   unchanged_variables?: string[]
   unknown_variables?: string[]
   drift_categories?: string[]
-  risk: Record<string, unknown> | null
+  risk: (Record<string, unknown> & {
+    overall_score?: number
+    severity?: string
+    findings?: {
+      finding_id?: string
+      severity?: string
+      category?: string
+      related_variable?: string
+      reason?: string
+    }[]
+  }) | null
+  model_version?: string
+  rule_id?: string
 }
 
 /* ------------------------------------------------- evidence & integrity */
@@ -902,6 +1024,18 @@ export type AiExplainResponse = {
   assessment_id: string | null
   finding_id: string | null
   model_version: string | null
+  /**
+   * Which reasoning provider actually produced `answer` -- "gemini" for a
+   * model-generated explanation, "none" when the deterministic template
+   * answered. Rendered rather than inferred from the prose.
+   */
+  provider?: string | null
+  /**
+   * Why a configured model did not answer (missing key, timeout, rate limit,
+   * provider error). Present only on the grounded fallback, so the analyst can
+   * tell "the model said this" from "the model was unavailable".
+   */
+  provider_unavailable_reason?: string | null
   scope: {
     in_scope: boolean
     intent: AiScopeIntent
@@ -943,6 +1077,12 @@ export type AiAnalysisRequest = {
   question?: string
   /** Narrows the answer to one finding of the assessment. */
   findingId?: string | null
+  /**
+   * The experiment job whose recorded verdict should ground the answer, so
+   * "why did this fail?" is answered from what the controller decided rather
+   * than inferred from the finding. Omitted when the surface has no job.
+   */
+  experimentId?: string | null
   /** Prior turns about the same context, oldest first. */
   history?: { question: string; answer: string }[]
 }

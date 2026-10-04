@@ -548,6 +548,69 @@ def openapi_document(base_url: str = "") -> Dict[str, Any]:
             **_ERROR_RESPONSES,
         })
 
+    paths["/api/v1/assets"] = _get(
+        "/api/v1/assets",
+        "getAssets",
+        "The asset ids an operator declared a mission profile for.",
+        tags=["mission"],
+        description=(
+            "The only legitimate source for an asset selector: a client that "
+            "hardcoded `gw-a`/`gw-b` would offer assets this deployment never "
+            "declared and hide assets it did.\n\n"
+            "Declaration is explicit. `configured: false` with an empty list means "
+            "no mission profile file was supplied to this store, which is not a "
+            "claim that the network has no assets -- assets are never inferred "
+            "from traffic, addresses or ML output. `store_asset_id` is the asset "
+            "this store was started with, the one the custody explanation reports."
+        ),
+        responses={
+            "200": {
+                "description": "The declared asset ids.",
+                "content": {_JSON: {"schema": _ref("AssetList")}},
+            },
+            **_ERROR_RESPONSES,
+        })
+    paths["/api/v1/assets/{asset_id}/context"] = _get(
+        "/api/v1/assets/{asset_id}/context",
+        "getAssetContext",
+        "One asset's mission context, at a stated technical risk.",
+        tags=["mission"],
+        description=(
+            "The mission-context surface addressed by a *selected* asset. The "
+            "custody route publishes the same document, but only for the asset the "
+            "store was started with, so a caller cannot ask about any other "
+            "declared asset.\n\n"
+            "This route computes nothing itself: it reads a technical "
+            "risk/severity pair from the store and passes them, with the "
+            "`asset_id` from the path, to the same `mission_context()` the "
+            "custody chain uses. Selecting an asset does not re-score anything "
+            "and does not rebind the store -- `store_asset_id` is unchanged, and "
+            "the custody explanation keeps reporting the startup asset.\n\n"
+            "The technical risk being contextualised is stated in the response "
+            "(`technical_risk`, `technical_severity`, `technical_risk_source`, "
+            "`assessment_id`), because the same asset contextualises a different "
+            "score against a different assessment. Omitting `assessment_id` uses "
+            "the store's highest-risk assessment and says so via "
+            "`technical_risk_source: store_highest_risk`.\n\n"
+            "An asset with no declared profile is not an error: `mission_context` "
+            "answers `status: not_configured` with a reason, `profile` and `risk` "
+            "null and no assumed criticality, so absent context can never be read "
+            "as benign context."
+        ),
+        params=[
+            _param("asset_id", "path", _STR, "Declared asset id.", required=True),
+            _param("assessment_id", "query", _STR,
+                   "Contextualise against this assessment instead of the store's "
+                   "highest-risk assessment. 404 when it is not in this store."),
+        ],
+        responses={
+            "200": {
+                "description": "The asset's mission context.",
+                "content": {_JSON: {"schema": _ref("AssetContext")}},
+            },
+            **_ERROR_RESPONSES,
+        })
+
     return {
         "openapi": OPENAPI_VERSION,
         "info": {
@@ -739,6 +802,186 @@ def openapi_document(base_url: str = "") -> Dict[str, Any]:
                             "items": _ref("ValidatedBaseline"),
                         },
                         "canonicalization": _ref("Canonicalization"),
+                    },
+                },
+                "MissionContext": {
+                    "type": "object",
+                    "nullable": True,
+                    "description": (
+                        "Externally supplied asset context and the "
+                        "contextualized risk it produced. `status` is "
+                        "`configured` when an operator declared a profile for "
+                        "this asset, and `not_configured` otherwise -- in which "
+                        "case `profile` and `risk` are null, no criticality is "
+                        "assumed, and the technical risk stands alone. Never "
+                        "inferred from traffic, addresses, payloads or ML "
+                        "output: `derived_from_observation` is always false."
+                    ),
+                    "required": ["status", "configured", "derived_from_observation"],
+                    "properties": {
+                        "status": {
+                            "type": "string",
+                            "enum": ["configured", "not_configured"],
+                        },
+                        "configured": {"type": "boolean"},
+                        "asset_id": {"type": "string", "nullable": True},
+                        "profile": {
+                            "type": "object",
+                            "nullable": True,
+                            "description": (
+                                "The operator's declarations. `role` is "
+                                "descriptive and never enters the calculation."
+                            ),
+                            "required": ["asset_id", "role", "criticality",
+                                         "mission_impact"],
+                            "properties": {
+                                "asset_id": _STR,
+                                "role": {
+                                    "type": "string",
+                                    "enum": ["development", "test",
+                                             "operational-communications",
+                                             "mission-support"],
+                                },
+                                "criticality": {
+                                    "type": "string",
+                                    "enum": ["low", "medium", "high"],
+                                },
+                                "mission_impact": {
+                                    "type": "string",
+                                    "enum": ["low", "medium", "high"],
+                                },
+                            },
+                        },
+                        "risk": {
+                            "type": "object",
+                            "nullable": True,
+                            "description": (
+                                "The contextualized view, over the "
+                                "assessment-level risk pair: "
+                                "`technical_risk` mirrors the response's "
+                                "`risk_score` and `technical_severity` mirrors "
+                                "`risk_severity`, both unchanged. The "
+                                "individual finding's own `severity` is a "
+                                "separate field and is not touched either. "
+                                "`contextualized_risk` is that score placed in "
+                                "the declared context, bounded by the same "
+                                "0-100 scale and never below the technical "
+                                "score."
+                            ),
+                            "required": ["technical_risk", "technical_severity",
+                                         "contextualized_risk",
+                                         "contextualized_severity", "model_version"],
+                            "properties": {
+                                "technical_risk": {"type": "integer"},
+                                "technical_severity": _STR,
+                                "contextualized_risk": {"type": "integer"},
+                                "contextualized_severity": _STR,
+                                "context_index": {"type": "integer"},
+                                "multiplier_bp": {
+                                    "type": "integer",
+                                    "description": "Basis points; 10000 is neutral.",
+                                },
+                                "criticality_weight": {"type": "integer"},
+                                "mission_impact_weight": {"type": "integer"},
+                                "model_version": _STR,
+                                "formula": _STR,
+                                "score_cap": {"type": "integer"},
+                                "inferred_from_traffic": {"type": "boolean", "const": False},
+                            },
+                        },
+                        "context_source": {"type": "string", "nullable": True},
+                        "context_source_path": {
+                            "type": "string",
+                            "nullable": True,
+                            "description": "Repository-relative; never absolute.",
+                        },
+                        "context_source_sha256": {"type": "string", "nullable": True},
+                        "reason": _STR,
+                        "model_version": _STR,
+                        "derived_from_observation": {
+                            "type": "boolean",
+                            "const": False,
+                        },
+                    },
+                },
+                "AssetList": {
+                    "type": "object",
+                    "description": (
+                        "The declared asset ids, for a selector. `configured: false` "
+                        "with an empty `assets` array means no mission profile file "
+                        "was supplied to this store -- not that the network has no "
+                        "assets."
+                    ),
+                    "required": ["configured", "store_asset_id", "assets",
+                                 "count", "total"],
+                    "properties": {
+                        "api": _STR,
+                        "read_only": {"type": "boolean", "const": True},
+                        "configured": {"type": "boolean"},
+                        "reason": {"type": "string", "nullable": True},
+                        "store_asset_id": {
+                            "type": "string",
+                            "nullable": True,
+                            "description": (
+                                "The asset this store was started with (`--asset-id`), "
+                                "which is the one the custody explanation reports. "
+                                "Unaffected by any asset selected elsewhere."
+                            ),
+                        },
+                        "schema_version": _STR,
+                        "context_source": _STR,
+                        "source": {
+                            "type": "string",
+                            "nullable": True,
+                            "description": "Repository-relative profile path; never absolute.",
+                        },
+                        "source_sha256": {"type": "string", "nullable": True},
+                        "assets": {
+                            "type": "array",
+                            "items": _STR,
+                            "description": "Declared asset ids, sorted.",
+                        },
+                        "count": {"type": "integer", "minimum": 0},
+                        "total": {"type": "integer", "minimum": 0},
+                    },
+                },
+                "AssetContext": {
+                    "type": "object",
+                    "description": (
+                        "One selected asset's mission context, plus the technical "
+                        "risk it was contextualised against. Read-only: selecting an "
+                        "asset neither re-scores anything nor rebinds the store."
+                    ),
+                    "required": ["asset_id", "assessment_id",
+                                 "technical_risk_source", "technical_risk",
+                                 "technical_severity", "mission_context"],
+                    "properties": {
+                        "api": _STR,
+                        "read_only": {"type": "boolean", "const": True},
+                        "asset_id": {
+                            "type": "string",
+                            "description": "The selected asset, echoed from the path.",
+                        },
+                        "assessment_id": {
+                            "type": "string",
+                            "nullable": True,
+                            "description": (
+                                "The assessment whose risk was contextualised; null "
+                                "when the store's highest-risk assessment was used."
+                            ),
+                        },
+                        "technical_risk_source": {
+                            "type": "string",
+                            "enum": ["assessment_header", "store_highest_risk"],
+                            "description": (
+                                "How `technical_risk`/`technical_severity` were "
+                                "chosen. Published so a reader can tell a "
+                                "caller-directed result from a store default."
+                            ),
+                        },
+                        "technical_risk": {"type": "integer", "minimum": 0},
+                        "technical_severity": _STR,
+                        "mission_context": _ref("MissionContext"),
                     },
                 },
                 "Canonicalization": {
@@ -1275,105 +1518,18 @@ def openapi_document(base_url: str = "") -> Dict[str, Any]:
                                 },
                             },
                         },
+                        # Extracted to a named component so the asset-context route
+                        # documents the identical shape instead of a second copy.
                         "mission_context": {
-                            "type": "object",
+                            "allOf": [_ref("MissionContext")],
                             "nullable": True,
                             "description": (
                                 "Externally supplied asset context and the "
-                                "contextualized risk it produced. `status` is "
-                                "`configured` when an operator declared a profile for "
-                                "this asset, and `not_configured` otherwise -- in which "
-                                "case `profile` and `risk` are null, no criticality is "
-                                "assumed, and the technical risk stands alone. Never "
-                                "inferred from traffic, addresses, payloads or ML "
-                                "output: `derived_from_observation` is always false."
+                                "contextualized risk it produced, for the asset this "
+                                "store was started with. The same document is served "
+                                "per selected asset at "
+                                "`/api/v1/assets/{asset_id}/context`."
                             ),
-                            "required": ["status", "configured", "derived_from_observation"],
-                            "properties": {
-                                "status": {
-                                    "type": "string",
-                                    "enum": ["configured", "not_configured"],
-                                },
-                                "configured": {"type": "boolean"},
-                                "asset_id": {"type": "string", "nullable": True},
-                                "profile": {
-                                    "type": "object",
-                                    "nullable": True,
-                                    "description": (
-                                        "The operator's declarations. `role` is "
-                                        "descriptive and never enters the calculation."
-                                    ),
-                                    "required": ["asset_id", "role", "criticality",
-                                                 "mission_impact"],
-                                    "properties": {
-                                        "asset_id": _STR,
-                                        "role": {
-                                            "type": "string",
-                                            "enum": ["development", "test",
-                                                     "operational-communications",
-                                                     "mission-support"],
-                                        },
-                                        "criticality": {
-                                            "type": "string",
-                                            "enum": ["low", "medium", "high"],
-                                        },
-                                        "mission_impact": {
-                                            "type": "string",
-                                            "enum": ["low", "medium", "high"],
-                                        },
-                                    },
-                                },
-                                "risk": {
-                                    "type": "object",
-                                    "nullable": True,
-                                    "description": (
-                                        "The contextualized view, over the "
-                                        "assessment-level risk pair: "
-                                        "`technical_risk` mirrors the response's "
-                                        "`risk_score` and `technical_severity` mirrors "
-                                        "`risk_severity`, both unchanged. The "
-                                        "individual finding's own `severity` is a "
-                                        "separate field and is not touched either. "
-                                        "`contextualized_risk` is that score placed in "
-                                        "the declared context, bounded by the same "
-                                        "0-100 scale and never below the technical "
-                                        "score."
-                                    ),
-                                    "required": ["technical_risk", "technical_severity",
-                                                 "contextualized_risk",
-                                                 "contextualized_severity", "model_version"],
-                                    "properties": {
-                                        "technical_risk": {"type": "integer"},
-                                        "technical_severity": _STR,
-                                        "contextualized_risk": {"type": "integer"},
-                                        "contextualized_severity": _STR,
-                                        "context_index": {"type": "integer"},
-                                        "multiplier_bp": {
-                                            "type": "integer",
-                                            "description": "Basis points; 10000 is neutral.",
-                                        },
-                                        "criticality_weight": {"type": "integer"},
-                                        "mission_impact_weight": {"type": "integer"},
-                                        "model_version": _STR,
-                                        "formula": _STR,
-                                        "score_cap": {"type": "integer"},
-                                        "inferred_from_traffic": {"type": "boolean", "const": False},
-                                    },
-                                },
-                                "context_source": {"type": "string", "nullable": True},
-                                "context_source_path": {
-                                    "type": "string",
-                                    "nullable": True,
-                                    "description": "Repository-relative; never absolute.",
-                                },
-                                "context_source_sha256": {"type": "string", "nullable": True},
-                                "reason": _STR,
-                                "model_version": _STR,
-                                "derived_from_observation": {
-                                    "type": "boolean",
-                                    "const": False,
-                                },
-                            },
                         },
                         "drift": {
                             "type": "object",

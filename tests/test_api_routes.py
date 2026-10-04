@@ -18,7 +18,8 @@ class HealthTest(_RoutesTestCase):
     def test_health(self):
         payload = handle_get(self.store, "/api/health")
         self.assertEqual(payload["status"], "ok")
-        self.assertEqual(payload["total_assessments"], 12)
+        # 13 = one assessment per scenario slot, including transport-v6.
+        self.assertEqual(payload["total_assessments"], 13)
         self.assertTrue(payload["read_only"])
 
     def test_unknown_route_404(self):
@@ -31,7 +32,7 @@ class AssessmentsListTest(_RoutesTestCase):
     def test_overview_and_headers(self):
         payload = handle_get(self.store, "/api/assessments")
         self.assertEqual(payload["api"], "assessments")
-        self.assertEqual(len(payload["headers"]), 12)
+        self.assertEqual(len(payload["headers"]), 13)
         required = {"assessment_id", "sequence", "experiment_id", "risk_score",
                     "severity", "finding_count", "correlation_status",
                     "traffic_profile", "security_posture"}
@@ -142,9 +143,9 @@ class SerializationTest(_RoutesTestCase):
 
     def test_serializable_snapshot_shapes(self):
         snap = serializable(self.store)
-        self.assertEqual(len(snap["headers"]), 12)
-        self.assertEqual(len(snap["assessments"]), 12)
-        self.assertEqual(snap["overview"]["total_assessments"], 12)
+        self.assertEqual(len(snap["headers"]), 13)
+        self.assertEqual(len(snap["assessments"]), 13)
+        self.assertEqual(snap["overview"]["total_assessments"], 13)
         for aid, bundle in snap["assessments"].items():
             self.assertEqual(bundle["assessment_id"], aid)
 

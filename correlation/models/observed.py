@@ -40,6 +40,39 @@ SPI_DIRECTION_A_TO_B = "A_TO_B"
 SPI_DIRECTION_B_TO_A = "B_TO_A"
 SPI_DIRECTIONS = (SPI_DIRECTION_A_TO_B, SPI_DIRECTION_B_TO_A)
 
+#: The two IPsec encapsulation modes, as ``ObservedState.mode`` carries them.
+MODE_TUNNEL = "tunnel"
+MODE_TRANSPORT = "transport"
+OBSERVED_MODES = (MODE_TUNNEL, MODE_TRANSPORT)
+
+#: A deployed SA report (strongSwan ``swanctl --list-sas``) states the
+#: encapsulation mode in upper case -- ``INSTALLED, TRANSPORT``.  These aliases
+#: map such a report onto the canonical lower-case observed-state form.
+_AUTHORITATIVE_MODE_ALIASES = {
+    "TUNNEL": MODE_TUNNEL,
+    "TRANSPORT": MODE_TRANSPORT,
+    "TUNNEL-MODE": MODE_TUNNEL,
+    "TRANSPORT-MODE": MODE_TRANSPORT,
+}
+
+
+def normalize_authoritative_mode(value: Any) -> Optional[str]:
+    """Canonicalize a deployed SA's encapsulation mode, or ``None``.
+
+    Accepts what strongSwan reports (``"TRANSPORT"``/``"TUNNEL"``, optionally
+    ``-mode`` suffixed, in any case) and the already-canonical lower-case form.
+    Anything else -- ``None``, empty strings, unrelated words, non-strings --
+    returns ``None`` so the comparison layer treats the variable as
+    UNOBSERVED instead of guessing.
+
+    Mode is authoritative only when it comes from the real security
+    association.  It is never derivable from the wire: tunnel and transport
+    mode place identical protocol-50 ESP on the wire.
+    """
+    if not isinstance(value, str):
+        return None
+    return _AUTHORITATIVE_MODE_ALIASES.get(value.strip().upper())
+
 
 @dataclass(frozen=True)
 class SpiObservation(JsonModel):
@@ -166,6 +199,16 @@ class ObservedState(JsonModel):
     endpoints: Dict[str, str] = field(default_factory=dict)  # {"a": ..., "b": ...}
     tunnel_seen: bool = False
     active: bool = False
+    # Authoritative IPsec *encapsulation mode* of the deployed security
+    # association ("tunnel" or "transport"), as reported by the real SA state
+    # (strongSwan ``swanctl --list-sas`` -> ``TUNNEL`` / ``TRANSPORT``).
+    #
+    # This is deliberately NOT derivable from the wire: BOTH modes place ESP
+    # (protocol 50) on the wire, so ``esp_seen``/``ah_seen`` cannot distinguish
+    # them and inferring one from the other fabricates observation.  ``None``
+    # means "no authoritative source supplied", which the comparison layer
+    # reports as unknown -- never as a match and never as a mismatch.
+    mode: Optional[str] = None
     packets_seen: int = 0
     bytes_seen: int = 0
     packets_a_to_b: int = 0
@@ -207,6 +250,11 @@ class ObservedState(JsonModel):
         if not isinstance(self.endpoints, dict):
             raise ValueError("endpoints must be a dict")
 
+        if self.mode is not None and self.mode not in ("tunnel", "transport"):
+            raise ValueError(
+                f"mode must be 'tunnel', 'transport' or None, got {self.mode!r}"
+            )
+
         for label in ("last_ike_timestamp_ns", "last_ike_nat_t_timestamp_ns",
                       "last_esp_timestamp_ns", "last_ah_timestamp_ns"):
             value = getattr(self, label)
@@ -236,6 +284,7 @@ class ObservedState(JsonModel):
             endpoints=data.get("endpoints") or {},
             tunnel_seen=data.get("tunnel_seen", False),
             active=data.get("active", False),
+            mode=data.get("mode"),
             packets_seen=data.get("packets_seen", 0),
             bytes_seen=data.get("bytes_seen", 0),
             packets_a_to_b=data.get("packets_a_to_b", 0),

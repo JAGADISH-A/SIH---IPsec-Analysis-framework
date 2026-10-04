@@ -2214,3 +2214,48 @@ select:disabled {
 .dist-col {
   min-width: 0;
 }
+
+/* ---- completed-experiment handoff (job id the backend issued) ---- */
+.result-note {
+  margin: 0.35rem 0 0;
+  font-size: 0.78rem;
+  color: var(--ink-faint, #6b7280);
+}
+.handoff {
+  margin: 0.85rem auto 0;
+  max-width: 30rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--edge, #2a2f3a);
+  border-radius: 0.5rem;
+  background: var(--panel-2, #12151b);
+  text-align: left;
+}
+.handoff-head {
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint, #6b7280);
+  margin-bottom: 0.4rem;
+}
+.handoff-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+.handoff-label {
+  font-size: 0.72rem;
+  color: var(--ink-dim, #9aa3b2);
+  flex: 0 0 auto;
+}
+.handoff-value {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.78rem;
+  word-break: break-all;
+  color: var(--ink, #e6e9ef);
+}
+.handoff-note {
+  margin: 0.5rem 0 0;
+  font-size: 0.74rem;
+  line-height: 1.5;
+  color: var(--ink-faint, #6b7280);
+}

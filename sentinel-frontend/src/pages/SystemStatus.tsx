@@ -119,10 +119,12 @@ export function SystemStatus() {
   const analytics = useResource((signal) => getAnalyticsHealth(signal))
   const analyticsV1 = useResource((signal) => getAnalyticsV1Health(signal))
   const control = useResource((signal) => getControlHealth(signal))
-  const ai = useResource((signal) => aiHealth().then((h) => {
-    if (!h) throw new Error('no response')
-    return h
-  }))
+  const ai = useResource((signal) =>
+    aiHealth({ signal }).then((health) => {
+      if (!health) throw new Error('the explanation service did not respond')
+      return health
+    }),
+  )
   const store = useResource((signal) => getAssessments({ limit: 1 }, signal))
 
   const overview = store.data?.overview ?? null

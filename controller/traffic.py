@@ -229,19 +229,33 @@ _ENDPOINTS = {
             "destination_ip": "2001:db8:20::20",
         },
     },
+    # NAT-T deployment of the transport topology: host-c sends from its LAN
+    # address and the destination is host-d's WAN address, reached only
+    # through the translator.
+    "transport-nat": {
+        "ipv4": {
+            "source_container": "clab-ipsec-transport-nat-host-c",
+            "source_ip": "10.20.1.10",
+            "destination_container": "clab-ipsec-transport-nat-host-d",
+            "destination_ip": "10.30.1.20",
+        },
+    },
 }
 
 
-def runtime(mode, address_family):
-    """Map mode + address family to the concrete sender/receiver endpoints.
+def runtime(mode, address_family, nat=False):
+    """Map mode + address family (+ NAT axis) to sender/receiver endpoints.
 
     Container names and data-plane IPs are taken from the Containerlab
-    topologies under topology/{mode}/ipsec.clab.yml.
+    topologies under topology/{deployment}/ipsec.clab.yml.  For a NAT sample the
+    destination is the peer's address on the far side of the translator, which
+    is what the traffic actually traverses.
     """
+    key = f"{mode}-nat" if nat else mode
     try:
-        return dict(_ENDPOINTS[mode][address_family])
+        return dict(_ENDPOINTS[key][address_family])
     except KeyError:
-        raise ValueError(f"Unsupported mode/address family: {mode}/{address_family}")
+        raise ValueError(f"Unsupported mode/address family: {key}/{address_family}")
 
 
 def _endpoint_container_for_ip(ip):

@@ -1,0 +1,89 @@
+name: ipsec-transport-nat
+
+topology:
+  nodes:
+
+    # NAT-T deployment of the transport topology.
+    #
+    # The IPsec mode is unchanged (`mode = transport` in swanctl); NAT is an
+    # orthogonal *deployment* property of the path, not a third analysis mode.
+    # host-c and host-d are separated by a genuine network address translator:
+    # host-c sits on the LAN side, host-d on the WAN side, and the `nat` node
+    # MASQUERADEs everything host-c sends.  strongSwan then detects the NAT
+    # itself (NATD_S_IP/NATD_D_IP), switches both IKE and ESP onto UDP/4500,
+    # and reports `INSTALLED, TRANSPORT-in-UDP`.
+    #
+    #   host-c 10.20.1.10/24 --(LAN)-- nat:eth1 10.20.1.1/24
+    #   nat:eth2 10.30.1.1/24 --(WAN)-- host-d 10.30.1.20/24
+    #
+    # host-c's peer address is host-d's real WAN address (10.30.1.20).
+    # host-d's peer address is the MASQUERADE address (10.30.1.1), because that
+    # is literally what host-d observes arriving from host-c.
+    host-c:
+      kind: linux
+      image: ipsec-transport-host:24.04
+      privileged: true
+      env:
+        # host-c remains the authoritative observation point: its eth1 is an
+        # IPsec endpoint's data-plane interface, so it carries the IKE
+        # exchange and the UDP/4500 ESP-in-UDP of the NAT-T data plane.  This
+        # is the PRE-NAT view, which is exactly what proves strongSwan chose
+        # UDP encapsulation.  Mirrored copy-only to eth2 -> sensor:eth1.
+        AUDIT_TAP_IFACE: "eth1"
+        AUDIT_TAP_TARGET: "eth2"
+      cmd: /bin/sh -c "/usr/local/bin/transport-entrypoint.sh"
+      binds:
+        - ../../scripts/transport-entrypoint.sh:/usr/local/bin/transport-entrypoint.sh
+        - ../../scripts/audit-tap-setup.sh:/usr/local/bin/audit-tap-setup.sh
+        - ../../configs/transport-nat/host-c/swanctl:/etc/swanctl
+      exec:
+        # LAN side.  host-d's WAN address is reachable only through the NAT
+        # node, so a /32 route pins the peer path (and can never silently
+        # fall back to a direct link).
+        - ip addr add 10.20.1.10/24 dev eth1
+        - ip route add 10.30.1.20/32 via 10.20.1.1 dev eth1
+
+    host-d:
+      kind: linux
+      image: ipsec-transport-host:24.04
+      privileged: true
+      cmd: /bin/sh -c "/usr/local/bin/transport-entrypoint.sh"
+      binds:
+        - ../../scripts/transport-entrypoint.sh:/usr/local/bin/transport-entrypoint.sh
+        - ../../configs/transport-nat/host-d/swanctl:/etc/swanctl
+      exec:
+        # WAN side.  The default route points at the NAT node, which is the
+        # only way back to host-c's address space.
+        - ip addr add 10.30.1.20/24 dev eth1
+        - ip route add default via 10.30.1.1 dev eth1
+
+    nat:
+      kind: linux
+      image: ipsec-transport-host:24.04
+      privileged: true
+      cmd: /bin/sh -c "/usr/local/bin/nat-entrypoint.sh"
+      binds:
+        - ../../scripts/nat-entrypoint.sh:/usr/local/bin/nat-entrypoint.sh
+      exec:
+        - ip addr add 10.20.1.1/24 dev eth1
+        - ip addr add 10.30.1.1/24 dev eth2
+
+    sensor:
+      kind: linux
+      image: ipsec-transport-host:24.04
+      # Passive XDP observation sink, identical to the direct transport
+      # topology: same live journal, no addresses, no routes, forwarding off.
+      binds:
+        - ../../results/observed-state/xdp:/opt/xdp-journal
+      cmd: /bin/sh -c "sleep infinity"
+      exec:
+        - sh -c "echo 0 > /proc/sys/net/ipv4/ip_forward 2>/dev/null || true"
+        - sh -c "echo 0 > /proc/sys/net/ipv6/conf/all/forwarding 2>/dev/null || true"
+
+  links:
+
+    - endpoints: ["host-c:eth1", "nat:eth1"]
+    - endpoints: ["nat:eth2", "host-d:eth1"]
+
+    # host-c -> sensor passive observation feed.  Not part of the IPsec path.
+    - endpoints: ["host-c:eth2", "sensor:eth1"]

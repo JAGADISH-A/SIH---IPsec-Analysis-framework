@@ -13,6 +13,15 @@
 
 #define RINGBUF_ENTRIES (1 << 18)
 
+/*
+ * RFC 3948 (UDP encapsulation of IPsec) framing.  A UDP/4500 payload that
+ * starts with this 4-byte non-ESP marker is NOT ESP - it carries IKE over
+ * NAT-T instead.  Because the marker's SPI field is zero, "leading SPI == 0"
+ * is the single test that separates NAT-T negotiation from NAT-T data.  See
+ * classify_nat_t_udp() below for the framing that actually appears on the wire.
+ */
+#define NAT_T_NON_ESP_MARKER 0x00000000
+
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
 	__uint(max_entries, COUNTER_MAX);
@@ -31,6 +40,56 @@ static __always_inline void increment(__u32 key)
 
 	if (value)
 		__sync_fetch_and_add(value, 1);
+}
+
+/*
+ * Classify a UDP/4500 datagram as ESP-in-UDP (NAT-T data) or IKE-over-NAT-T.
+ *
+ * RFC 3948 says a UDP/4500 payload starting with the 4-byte non-ESP marker
+ * (00 00 00 00) is NOT ESP, and since the marker's SPI field is zero that is
+ * exactly how the two are told apart.  IKE-over-NAT-T therefore reads a zero
+ * SPI at the start of the payload.
+ *
+ * IMPORTANT: the Linux kernel's UDP ESP encapsulation (XFRM_ENCAP, which is
+ * what strongSwan's charon-kernel-netlink uses) does NOT insert the non-ESP
+ * marker - the real ESP header starts immediately at the UDP payload.  Both
+ * encodings are therefore handled by the same rule:
+ *
+ *   - leading SPI == 0            -> IKE over NAT-T (marker present), no SPI
+ *                                    is invented
+ *   - leading SPI != 0            -> ESP-in-UDP, and the SPI/sequence are read
+ *                                    from the real ESP header, so NAT-T data
+ *                                    carries exactly the same SPI/sequence
+ *                                    evidence as native protocol-50 ESP.
+ */
+static __always_inline void classify_nat_t_udp(struct xdp_monitor_event *e,
+						struct udphdr *udp,
+						void *data_end)
+{
+	/* NOTE: (udp + 1) advances one whole struct udphdr (8 bytes); casting to
+	 * void* first and adding 1 would advance a single byte and read the SPI
+	 * out of the UDP header itself. */
+	void *payload = (void *)(udp + 1);
+	__u32 spi;
+
+	if ((void *)payload + 12 > data_end)
+		goto ike;
+	spi = *(__u32 *)payload;
+
+	/* Zero SPI == RFC 3948 non-ESP marker == IKE, never data. */
+	if (spi == 0)
+		goto ike;
+
+	/* ESP header: SPI(4) + sequence(4). */
+	e->spi = spi;
+	e->seq = *(__u32 *)((char *)payload + 4);
+	e->type = COUNTER_ESP_NATT;
+	increment(COUNTER_ESP_NATT);
+	return;
+
+ike:
+	e->type = COUNTER_IKE_NATT;
+	increment(COUNTER_IKE_NATT);
 }
 
 SEC("xdp")
@@ -125,8 +184,7 @@ int xdp_pass(struct xdp_md *ctx)
 		}
 
 		if (udp->source == bpf_htons(4500) || udp->dest == bpf_htons(4500)) {
-			e->type = COUNTER_IKE_NATT;
-			increment(COUNTER_IKE_NATT);
+			classify_nat_t_udp(e, udp, data_end);
 			goto submit;
 		}
 
@@ -198,8 +256,7 @@ int xdp_pass(struct xdp_md *ctx)
 		}
 
 		if (udp->source == bpf_htons(4500) || udp->dest == bpf_htons(4500)) {
-			e->type = COUNTER_IKE_NATT;
-			increment(COUNTER_IKE_NATT);
+			classify_nat_t_udp(e, udp, data_end);
 			goto submit;
 		}
 

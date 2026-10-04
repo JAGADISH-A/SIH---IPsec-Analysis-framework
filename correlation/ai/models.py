@@ -215,6 +215,11 @@ class GroundingContext(JsonModel):
     drift: Optional[GroundedDrift] = None
     ml: Optional[GroundedMl] = None
     asset: Optional[Dict[str, Any]] = None
+    #: The control plane's recorded verdict for the related experiment job.
+    #: ``None`` when no job was referenced or the controller recorded no cause.
+    #: Never inferred from the finding: "why did this fail" must be answered from
+    #: what the controller decided, or declared unrecorded.
+    root_cause: Optional[Dict[str, Any]] = None
 
     def identifiers(self) -> frozenset:
         """Every string this context licenses the assistant to name.
@@ -277,6 +282,8 @@ class GroundingContext(JsonModel):
                 allowed.add(_fmt_number(self.ml.classification_confidence))
         if self.asset:
             allowed.update(_flatten_strings(self.asset))
+        if self.root_cause:
+            allowed.update(_flatten_strings(self.root_cause))
         if self.risk_score is not None:
             allowed.add(str(self.risk_score))
         if self.finding is not None and self.finding.score_contribution is not None:
@@ -305,6 +312,8 @@ class GroundingContext(JsonModel):
             return self.drift is not None and self.drift.configured
         if name in ("asset",):
             return self.asset is not None
+        if name in ("root_cause",):
+            return bool(self.root_cause and self.root_cause.get("root_cause"))
         if name in ("evidence",):
             return bool(self.evidence_ids)
         if name in ("severity", "risk_score"):
@@ -349,6 +358,12 @@ INTENT_EXPECTED_VS_OBSERVED = "expected_vs_observed"
 INTENT_EVIDENCE = "evidence"
 INTENT_DECISION_REQUEST = "decision_request"
 INTENT_GENERAL = "general_ipsec"
+#: "Why did this experiment fail?" -- answered from the control plane's recorded
+#: verdict. When no verdict was recorded, the honest answer is that none was.
+INTENT_ROOT_CAUSE = "root_cause"
+#: "How critical is this asset?" -- answered from declared operator input, never
+#: inferred from traffic, addresses or ML output.
+INTENT_ASSET_CRITICALITY = "asset_criticality"
 
 INTENTS: Tuple[str, ...] = (
     INTENT_TERMINOLOGY,
@@ -357,6 +372,8 @@ INTENTS: Tuple[str, ...] = (
     INTENT_EVIDENCE,
     INTENT_DECISION_REQUEST,
     INTENT_GENERAL,
+    INTENT_ROOT_CAUSE,
+    INTENT_ASSET_CRITICALITY,
 )
 
 
@@ -497,6 +514,17 @@ class AiAnswer(JsonModel):
     read_only: bool = True
     decision_made: bool = False
     is_explanation: bool = True
+    #: Which reasoning provider produced ``answer`` -- ``"gemini"`` for a
+    #: model-generated explanation, ``"none"`` when the deterministic template
+    #: or a fixed refusal answered instead. The client renders this rather than
+    #: inferring the source from the prose.
+    provider: Optional[str] = None
+    #: Why the configured model did not answer, when one was configured and
+    #: failed (missing key, timeout, network, rate limit, provider error). It
+    #: is populated on the grounded fallback so an analyst can tell "the model
+    #: said this" from "the model was unavailable, so the recorded values are
+    #: being explained without it". It never replaces the explanation.
+    provider_unavailable_reason: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.origin not in ANSWER_ORIGINS:

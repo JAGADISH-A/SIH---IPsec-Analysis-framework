@@ -6,14 +6,16 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from .dataset_api import (
     DEFAULT_MAX_TARGET_SAMPLES,
     create_dataset_router,
 )
+from . import diagnose
 from .executor import run_experiment
 from .testbed_lock import EXPERIMENT, TESTBED_LOCK
+from .topology import resolve_topology
 from .traffic import (
     PROFILES,
     DEFAULT_DURATION,
@@ -71,9 +73,35 @@ class TrafficConfig(BaseModel):
 class ExperimentConfig(BaseModel):
     mode: str
     address_family: str = "ipv4"
+    nat: bool = False
     ike: IKEConfig
     esp: ESPConfig
     traffic: TrafficConfig | None = None
+
+    @model_validator(mode="after")
+    def _reject_unsupported_nat(self):
+        """Fail a request for a NAT deployment that does not exist.
+
+        ``nat`` used to be absent from this model. Pydantic drops unknown
+        fields, so ``nat: true`` never reached ``model_dump()``, the executor
+        always saw ``nat=False``, and a request for NAT-T silently deployed
+        the NON-NAT lab and reported PASS. Worse, an unsupported combination
+        such as IPv6 NAT-T was downgraded instead of refused.
+
+        The supported-NAT decision is NOT re-implemented here: ``resolve_topology``
+        is the executor's own gate, so the API accepts exactly what the executor
+        can run and surfaces the executor's own message verbatim. The executor's
+        rejection logic is untouched and still runs again inside the executor.
+
+        The check is skipped entirely when ``nat`` is false, so existing
+        non-NAT requests keep behaving exactly as before.
+        """
+        if self.nat:
+            try:
+                resolve_topology(self.mode, self.address_family, nat=True)
+            except ValueError as exc:
+                raise ValueError(str(exc)) from exc
+        return self
 
 
 jobs = {}
@@ -122,6 +150,34 @@ def get_configurations():
 PIPELINE_STAGES = ("DEPLOY", "IPSEC", "OBSERVATION", "CONNECTIVITY", "TRAFFIC")
 
 
+def _data_plane_classification(result):
+    """Return the classifier verdict a non-raising ``FAIL`` result already holds.
+
+    ``run_experiment`` reports a data-plane failure by returning (not raising),
+    so the classification lives under ``result["connectivity"]``. Returns
+    ``None`` for a passing run, or one without a classification, leaving those
+    jobs exactly as they were.
+    """
+    if not isinstance(result, dict):
+        return None
+
+    if result.get("status") != "FAIL":
+        return None
+
+    connectivity = result.get("connectivity")
+    if not isinstance(connectivity, dict):
+        return None
+
+    classification = connectivity.get("classification")
+    if not isinstance(classification, dict):
+        return None
+
+    if classification.get("root_cause") is None:
+        return None
+
+    return classification
+
+
 def execute_job(job_id, config):
     global active_job_id
 
@@ -136,16 +192,41 @@ def execute_job(job_id, config):
     try:
         result = run_experiment(config, on_stage=report_stage, job_id=job_id)
 
+        # A data-plane failure does not raise: ``run_experiment`` returns a
+        # result whose ``status`` is ``FAIL`` and whose connectivity block
+        # carries the classifier's verdict. Without lifting it here, that
+        # deterministic root cause would be invisible at job level while the
+        # raised-failure paths below report it. Additive only: ``status``,
+        # ``stage`` and ``result`` are untouched.
+        data_plane = _data_plane_classification(result)
+
         with jobs_lock:
             jobs[job_id]["status"] = "COMPLETED"
             jobs[job_id]["stage"] = "COMPLETED"
             jobs[job_id]["result"] = result
+            if data_plane:
+                jobs[job_id]["root_cause"] = data_plane["root_cause"]
+                jobs[job_id]["confidence"] = data_plane["confidence"]
+                jobs[job_id]["reason"] = data_plane["reason"]
+                jobs[job_id]["evidence"] = data_plane["evidence"]
 
     except ValueError as e:
         with jobs_lock:
             jobs[job_id]["status"] = "FAILED"
             jobs[job_id]["stage"] = "CONFIGURATION"
             jobs[job_id]["error"] = str(e)
+            # A configuration rejection is NOT an IPsec runtime failure: the
+            # pipeline never got far enough to negotiate anything. Label it so a
+            # result set never conflates "the device is misconfigured" with
+            # "the tunnel came up and then broke".
+            jobs[job_id]["root_cause"] = diagnose.UNSUPPORTED_CONFIGURATION
+            jobs[job_id]["confidence"] = diagnose.DETERMINISTIC
+            jobs[job_id]["reason"] = str(e)
+            jobs[job_id]["evidence"] = {
+                "requested_mode": config.get("mode"),
+                "requested_address_family": config.get("address_family"),
+                "requested_nat": config.get("nat"),
+            }
 
     except Exception as e:
         with jobs_lock:
@@ -155,6 +236,15 @@ def execute_job(job_id, config):
             jobs[job_id]["status"] = "FAILED"
             jobs[job_id]["stage"] = failed_stage
             jobs[job_id]["error"] = str(e)
+            # Deterministic root cause, when the failure produced one. This is
+            # purely additive: a failure without a classification simply has no
+            # ``root_cause`` field, exactly as before.
+            classification = getattr(e, "classification", None)
+            if classification:
+                jobs[job_id]["root_cause"] = classification["root_cause"]
+                jobs[job_id]["confidence"] = classification["confidence"]
+                jobs[job_id]["reason"] = classification["reason"]
+                jobs[job_id]["evidence"] = classification["evidence"]
 
     finally:
         with jobs_lock:
@@ -200,6 +290,12 @@ def create_experiment(config: ExperimentConfig):
             "stage": "QUEUED",
             "result": None,
             "error": None,
+            # Deterministic root-cause fields, absent until a failure actually
+            # classifies one. See controller/diagnose.py.
+            "root_cause": None,
+            "confidence": None,
+            "reason": None,
+            "evidence": None,
         }
 
         active_job_id = job_id

@@ -198,12 +198,168 @@ class TestDeployLifecycle(unittest.TestCase):
         self.assertTrue(issubclass(FatalTopologyError, RuntimeError))
 
     def test_reset_and_deploy_destroys_both_then_deploys(self):
+        # ``wait_for_ipsec_ready`` polls REAL containers via ``docker logs``.
+        # Mocking only destroy/deploy left it running against the host, so this
+        # test timed out (or passed) depending on whether the tunnel lab
+        # happened to be running. The readiness gate is a separate concern with
+        # its own tests, so it is stubbed here to keep this one hermetic.
         with patch.object(executor_mod, "destroy") as mock_destroy, \
-                patch.object(executor_mod, "deploy") as mock_deploy:
+                patch.object(executor_mod, "deploy") as mock_deploy, \
+                patch.object(
+                    executor_mod, "wait_for_ipsec_ready",
+                    return_value=True,
+                ) as mock_ready:
             reset_and_deploy("tunnel")
         mock_destroy.assert_any_call("tunnel")
         mock_destroy.assert_any_call("transport")
-        mock_deploy.assert_called_once_with("tunnel")
+        # nat=False is passed explicitly so the deployment key is resolved in
+        # one place; the direct tunnel path is still the plain "tunnel" lab.
+        mock_deploy.assert_called_once_with("tunnel", nat=False)
+        # The NAT lab is a separate deployment and must be torn down too.
+        mock_destroy.assert_any_call("transport", nat=True)
+        # Readiness is still awaited, and awaited for the deployment being
+        # deployed (not the one that was torn down).
+        mock_ready.assert_called_once_with("tunnel", nat=False)
+
+
+class TestTrafficNatPropagation(unittest.TestCase):
+    """``run_traffic`` must forward the experiment's NAT axis.
+
+    ``traffic.runtime`` resolves its endpoint table on
+    ``mode``/``address_family``/``nat``. A NAT deployment is a *different lab*
+    with different container names, so dropping ``nat`` made every NAT sample
+    resolve the non-NAT endpoints and copy the traffic payload into containers
+    that do not exist there. These tests assert the value that actually
+    reaches ``traffic_mod.runtime``: asserting only on the returned result would
+    not catch a silently dropped flag.
+    """
+
+    @staticmethod
+    def _config(**overrides):
+        base = {
+            "mode": "transport",
+            "address_family": "ipv4",
+            "nat": False,
+            "traffic": {"profile": "voip", "duration": 10},
+        }
+        base.update(overrides)
+        return base
+
+    def _patched(self, endpoints):
+        """Patch only the side-effecting traffic calls.
+
+        The module-level tables (``PROFILES``, ``DEFAULT_PORT``) must stay REAL,
+        because ``validate_traffic`` reads them; replacing the whole module would
+        make every profile look unsupported.
+        """
+        patches = {
+            "runtime": mock.DEFAULT,
+            "copy_trafficgen": mock.DEFAULT,
+            "start_receiver": mock.DEFAULT,
+            "wait_receiver": mock.DEFAULT,
+            "stop_receiver": mock.DEFAULT,
+        }
+        started = {}
+        for name in patches:
+            started[name] = patch.object(executor_mod.traffic_mod, name)
+        started["run_sender"] = patch.object(
+            executor_mod.traffic_mod, "run_sender",
+            return_value=("traffic log line", "PASS"),
+        )
+        mocks = {name: p.start() for name, p in started.items()}
+        self.addCleanup(lambda: [p.stop() for p in started.values()])
+        mocks["runtime"].return_value = endpoints
+        return mocks
+
+    @staticmethod
+    def _endpoints(source, destination, source_ip, destination_ip):
+        return {
+            "source_container": source,
+            "destination_container": destination,
+            "source_ip": source_ip,
+            "destination_ip": destination_ip,
+        }
+
+    def _run(self, config, endpoints):
+        mocks = self._patched(endpoints)
+        executor_mod.run_traffic(config)
+        return mocks
+
+    def test_nat_true_reaches_traffic_runtime(self):
+        eps = self._endpoints("clab-nat-src", "clab-nat-dst", "10.0.0.1", "10.0.0.2")
+        mocks = self._run(self._config(nat=True), eps)
+        args, kwargs = mocks["runtime"].call_args
+        self.assertIs(
+            kwargs.get("nat"),
+            True,
+            "nat=True was dropped before reaching traffic.runtime()",
+        )
+        self.assertEqual(args, ("transport", "ipv4"))
+
+    def test_nat_false_reaches_traffic_runtime_explicitly(self):
+        eps = self._endpoints("clab-src", "clab-dst", "10.0.0.1", "10.0.0.2")
+        mocks = self._run(self._config(nat=False), eps)
+        self.assertIs(mocks["runtime"].call_args.kwargs.get("nat"), False)
+
+    def test_missing_nat_key_defaults_to_false(self):
+        config = self._config()
+        config.pop("nat")
+        eps = self._endpoints("clab-src", "clab-dst", "10.0.0.1", "10.0.0.2")
+        mocks = self._run(config, eps)
+        self.assertIs(mocks["runtime"].call_args.kwargs.get("nat"), False)
+
+    def test_non_nat_traffic_config_is_unchanged(self):
+        # A non-NAT sample must keep addressing exactly the endpoints the
+        # non-NAT endpoint table declares.
+        from controller.traffic import runtime as real_runtime
+
+        expected = real_runtime("transport", "ipv4", nat=False)
+        self.assertEqual(expected["source_container"], "clab-ipsec-transport-host-c")
+
+        mocks = self._run(self._config(nat=False), expected)
+        self.assertEqual(mocks["runtime"].call_args.args, ("transport", "ipv4"))
+        self.assertIs(mocks["runtime"].call_args.kwargs.get("nat"), False)
+        copied = [c.args[0] for c in mocks["copy_trafficgen"].call_args_list]
+        self.assertEqual(copied[0], "clab-ipsec-transport-host-c")
+        self.assertEqual(copied[1], "clab-ipsec-transport-host-d")
+
+    def test_nat_traffic_uses_the_nat_lab_endpoints(self):
+        # End to end through the real endpoint table: a NAT sample must address
+        # the NAT lab's containers and its far-side (translated) address.
+        from controller.traffic import runtime as real_runtime
+
+        endpoints = real_runtime("transport", "ipv4", nat=True)
+        self.assertEqual(endpoints["source_container"],
+                         "clab-ipsec-transport-nat-host-c")
+        self.assertEqual(endpoints["destination_container"],
+                         "clab-ipsec-transport-nat-host-d")
+        self.assertEqual(endpoints["destination_ip"], "10.30.1.20")
+
+        mocks = self._run(self._config(nat=True), endpoints)
+        self.assertIs(mocks["runtime"].call_args.kwargs["nat"], True)
+        copied = [c.args[0] for c in mocks["copy_trafficgen"].call_args_list]
+        self.assertEqual(copied[0], "clab-ipsec-transport-nat-host-c")
+        self.assertEqual(copied[1], "clab-ipsec-transport-nat-host-d")
+        # The receiver must bind on the far side of the translator.
+        self.assertEqual(
+            mocks["start_receiver"].call_args.args[1], "10.30.1.20"
+        )
+
+    def test_ipv6_nat_is_rejected_before_traffic_is_addressed(self):
+        # The NAT rejection path must stay ahead of traffic addressing; the
+        # propagation fix must not weaken it.
+        from controller.validate import validate_config
+
+        config = self._config(address_family="ipv6", nat=True)
+        config.update({
+            "ike": {"version": 2, "encryption": "aes256",
+                    "integrity": "sha256", "dh_group": "modp2048"},
+            "esp": {"encryption": "aes128gcm16", "integrity": None,
+                    "dh_group": "modp4096", "pfs": True},
+        })
+        with self.assertRaises(ValueError) as ctx:
+            validate_config(config)
+        self.assertIn("No NAT deployment is defined", str(ctx.exception))
 
 
 if __name__ == "__main__":

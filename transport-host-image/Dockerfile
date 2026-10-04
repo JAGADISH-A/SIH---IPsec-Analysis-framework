@@ -15,6 +15,7 @@ RUN apt-get update && \
         strongswan-charon \
         python3 \
         tcpdump \
+        iptables \
         libbpf1 \
         libelf1 \
         zlib1g \

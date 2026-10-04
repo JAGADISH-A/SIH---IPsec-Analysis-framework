@@ -40,6 +40,7 @@ from .config import AiServerConfig, describe
 from .context import ContextSource
 from .engine import EXPLANATION_BANNER, AiExplanationEngine
 from .llm import provider_from_env
+from .dotenv import load_backend_env
 from .models import (
     ANSWER_ORIGIN_REFUSAL,
     MAX_QUESTION_CHARS,
@@ -107,6 +108,11 @@ def answer_to_dict(answer) -> Dict[str, Any]:
         "assessment_id": answer.assessment_id,
         "finding_id": answer.finding_id,
         "model_version": answer.model_version,
+        # Which reasoning provider actually produced this text. The browser must
+        # never be asked to guess: a Gemini answer is an AI-generated
+        # explanation and is never evidence, and a templated answer says so.
+        "provider": getattr(answer, "provider", None),
+        "provider_unavailable_reason": getattr(answer, "provider_unavailable_reason", None),
         "scope": answer.scope.to_dict(),
         "guard": {
             "status": answer.guard.status,
@@ -196,8 +202,9 @@ def parse_explain_request(
     body: Any,
     *,
     max_question_chars: int = MAX_QUESTION_CHARS,
-) -> Tuple[str, Optional[str], Optional[str], Tuple[Dict[str, str], ...]]:
-    """Validate one request body into its four parts.
+) -> Tuple[str, Optional[str], Optional[str], Optional[str],
+           Tuple[Dict[str, str], ...]]:
+    """Validate one request body into its parts.
 
     A question is required; everything else is optional. Unknown keys are
     rejected rather than ignored, because a client sending a field this service
@@ -207,7 +214,7 @@ def parse_explain_request(
     """
     if not isinstance(body, dict):
         raise AiApiError(400, "invalid_request", "the request body must be a JSON object")
-    known = {"question", "assessment_id", "finding_id", "history"}
+    known = {"question", "assessment_id", "finding_id", "experiment_id", "history"}
     unknown = sorted(set(body) - known)
     if unknown:
         raise AiApiError(
@@ -229,8 +236,9 @@ def parse_explain_request(
         )
     assessment_id = _optional_str(body, "assessment_id")
     finding_id = _optional_str(body, "finding_id")
+    experiment_id = _optional_str(body, "experiment_id")
     history = _history(body.get("history"))
-    return question, assessment_id, finding_id, history
+    return question, assessment_id, finding_id, experiment_id, history
 
 
 def _optional_str(body: Dict[str, Any], key: str) -> Optional[str]:
@@ -247,6 +255,25 @@ def _optional_str(body: Dict[str, Any], key: str) -> Optional[str]:
     return trimmed
 
 
+#: Accepted spellings of one prior turn, per role: the key to read the text
+#: from, and the role to record it as. The analyst console sends
+#: ``{question, answer}`` (see ``AiExplainer`` and ``AiAnalysisRequest`` in
+#: ``sentinel-frontend/src``); a generic OpenAI-shaped client sends
+#: ``{role, content}``. Both name the same thing, so both are honoured here.
+#:
+#: Previously only the OpenAI spelling was read, and every console turn fell
+#: through to ``continue``: the thread rendered in the panel while the model
+#: received no prior turn at all, so a follow-up like "and the other one?" had
+#: nothing to refer back to.
+#:
+#: A console dict carries an *exchange* -- a question and its answer -- so it
+#: contributes two turns, not one.
+_HISTORY_TURN_KEYS: Tuple[Tuple[str, str, str], ...] = (
+    ("user", "question", "content"),
+    ("assistant", "answer", "content"),
+)
+
+
 def _history(raw: Any) -> Tuple[Dict[str, str], ...]:
     if raw is None:
         return ()
@@ -254,17 +281,23 @@ def _history(raw: Any) -> Tuple[Dict[str, str], ...]:
         raise AiApiError(400, "invalid_request", "'history' must be a list when present")
     if len(raw) > MAX_HISTORY_TURNS * 2:
         raw = raw[-MAX_HISTORY_TURNS * 2:]
-    out = []
+    out: list = []
     for turn in raw:
         if not isinstance(turn, dict):
             continue
-        role = turn.get("role")
-        content = turn.get("content")
-        if role not in ("user", "assistant") or not isinstance(content, str):
+        declared = turn.get("role")
+        shared = turn.get("content")
+        if declared in ("user", "assistant") and isinstance(shared, str) and shared.strip():
+            # OpenAI spelling: one dict is one message, already labelled. It is
+            # not read a second time for the other role.
+            out.append({"role": declared, "content": shared.strip()[:MAX_QUESTION_CHARS]})
             continue
-        content = content.strip()
-        if content:
-            out.append({"role": role, "content": content[:MAX_QUESTION_CHARS]})
+        for role, own_key, _shared_key in _HISTORY_TURN_KEYS:
+            text = turn.get(own_key)
+            if not (isinstance(text, str) and text.strip()):
+                continue
+            resolved = declared if declared in ("user", "assistant") else role
+            out.append({"role": resolved, "content": text.strip()[:MAX_QUESTION_CHARS]})
     return tuple(out)
 
 
@@ -275,13 +308,14 @@ def handle_explain(
     max_question_chars: int = MAX_QUESTION_CHARS,
 ) -> Dict[str, Any]:
     """Answer one question. The only mutating-verb route, and it mutates nothing."""
-    question, assessment_id, finding_id, history = parse_explain_request(
+    question, assessment_id, finding_id, experiment_id, history = parse_explain_request(
         body, max_question_chars=max_question_chars
     )
     answer = engine.explain(
         question,
         assessment_id=assessment_id,
         finding_id=finding_id,
+        experiment_id=experiment_id,
         history=history,
     )
     return answer_to_dict(answer)
@@ -530,7 +564,7 @@ def build_source(config: AiServerConfig) -> ContextSource:
     if config.analytics_url:
         from .context import HttpContextSource
 
-        return HttpContextSource(config.analytics_url)
+        return HttpContextSource(config.analytics_url, control_url=config.control_url or "")
     if config.plan_path:
         from ..api.store import build_store
         from .context import StoreContextSource
@@ -571,7 +605,22 @@ def main(argv: Optional[list] = None) -> int:
     parser.add_argument("--allowed-origins", default=None)
     parser.add_argument("--plan", dest="plan_path", default=None)
     parser.add_argument("--analytics-url", default=None)
+    parser.add_argument(
+        "--control-url",
+        default=None,
+        help=(
+            "optional control-plane base URL, read with GET only, so the "
+            "assistant can ground 'why did this fail?' in the controller's "
+            "recorded root cause instead of inferring one"
+        ),
+    )
     args = parser.parse_args(argv)
+
+    # A gitignored .env keeps the Gemini key out of the start command line and
+    # out of shell history. This has to happen before anything reads the
+    # environment -- AiServerConfig.resolve included -- or the file would
+    # configure the provider but not the binding it is served on.
+    env_file_keys = load_backend_env()
 
     config = AiServerConfig.resolve(
         host=args.host,
@@ -579,10 +628,23 @@ def main(argv: Optional[list] = None) -> int:
         allowed_origins=args.allowed_origins,
         plan_path=args.plan_path,
         analytics_url=args.analytics_url,
+        control_url=args.control_url,
     )
+    # A gitignored .env keeps the Gemini key out of the start command line and
+    # out of shell history. It is read before the engine is built so the key is
+    # present when the provider is selected.
     engine = build_engine(config)
     info = engine.provider.info
     server = AiServer(config, engine)
+    if env_file_keys:
+        # Names only. A key is never printed, and printing the file that holds
+        # it would tell a reader which variable to go looking for.
+        print(
+            "[ai-explanation] configuration read from .env: " + ", ".join(
+                sorted(env_file_keys)
+            ),
+            flush=True,
+        )
     print(f"[ai-explanation] {describe(config)}", flush=True)
     print(
         f"[ai-explanation] context source: {engine.source.describe()}",

@@ -68,7 +68,11 @@ from correlation.drift import (
 )
 from correlation.drift.canonical import observation_is_informative
 from correlation.mission import mission_context
-from correlation.models.observed import ObservedState
+from correlation.models.observed import (
+    OBSERVED_MODES,
+    ObservedState,
+    normalize_authoritative_mode,
+)
 from correlation.risk.rules import MISMATCH_FINDING_SPECS, _esp_presence_severity
 
 FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures" / "drift"
@@ -938,15 +942,25 @@ class TestTheStoreOnlyComparesWhenTold(unittest.TestCase):
                                 baseline_id="baseline-e2e-v4")
         self.assertTrue(store.drift_summary()["configured"])
         self.assertTrue(store.drift_inputs)
+        counts = store.drift_summary()["status_counts"]
+        # Every slot is compared. The only slot that disagrees with this
+        # baseline is transport-v6: a real recorded capture of the same asset
+        # under an IPv6 configuration, whose outer address family genuinely
+        # differs from this IPv4 baseline. The other eleven share the
+        # baseline's state and therefore cannot drift.
+        self.assertEqual(counts.get(DRIFT_STATUS_NO_DRIFT, 0), 10)
+        self.assertEqual(counts.get(DRIFT_STATUS_INDETERMINATE), 2)
+        self.assertEqual(counts.get(DRIFT_STATUS_DRIFT), 2)
         for drift in store.drift_inputs.values():
-            self.assertIn(drift.status,
-                          {DRIFT_STATUS_NO_DRIFT, DRIFT_STATUS_INDETERMINATE})
-        self.assertEqual(
-            store.drift_summary()["status_counts"].get(DRIFT_STATUS_NO_DRIFT, 0), 10
-        )
-        self.assertEqual(
-            store.drift_summary()["status_counts"].get(DRIFT_STATUS_INDETERMINATE), 2
-        )
+            if drift.status != DRIFT_STATUS_DRIFT:
+                continue
+            # The disagreement is exactly the outer address family, and nothing
+            # else -- not a liveness field, a counter or an SPI.
+            self.assertEqual(
+                [change.variable for change in drift.changed_fields],
+                ["address_family"],
+            )
+            self.assertTrue(drift.current_source.is_capture)
 
     def test_an_unmatched_baseline_id_is_not_configured_not_no_drift(self):
         registry = BaselineRegistry()
@@ -1258,9 +1272,47 @@ class TestTheBoundariesAreEnforcedNotJustIntended(unittest.TestCase):
     def test_the_observation_model_was_not_rewritten(self):
         """Drift reads ObservedState; it must not have added crypto fields."""
         fields = set(ObservedState.__dataclass_fields__)
+        # These are the fields that would make drift detection circular: the
+        # comparison would be reading the expected configuration back out of the
+        # observation and declaring a MATCH on itself.  `mode` is NOT one of
+        # them -- it is an encapsulation property of the deployed SA, not a
+        # crypto parameter, and it is covered by its own guard below.
         for crypto in ("cipher", "encryption", "integrity", "dh_group", "pfs",
-                       "mode", "key_len"):
+                       "key_len"):
             self.assertNotIn(crypto, fields)
+
+    def test_encapsulation_mode_is_authoritative_and_never_wire_derived(self):
+        """`mode` may exist, but only as an authoritative, optional field.
+
+        Tunnel and transport mode place ESP (protocol 50) on the wire
+        identically, so no passive observer can derive one from the other:
+        doing so would fabricate an observation.  `mode` is therefore only ever
+        populated from the real SA report (`swanctl --list-sas`) and defaults
+        to None, which makes the comparison report UNKNOWN rather than inventing
+        a match or a mismatch.  This is the property that makes carrying the
+        field honest, so it is asserted directly rather than by banning the
+        field outright.
+        """
+        field = ObservedState.__dataclass_fields__["mode"]
+        self.assertIsNone(field.default, "mode must default to unobserved")
+        self.assertEqual(("tunnel", "transport"), OBSERVED_MODES)
+
+        # No authoritative SA report -> no mode, so drift cannot claim one.
+        self.assertIsNone(ObservedState(timestamp_ns=1).mode)
+
+        # The normalizer accepts only what the real SA reports, and refuses to
+        # guess from anything else (including wire-derived-looking values).
+        self.assertEqual("transport", normalize_authoritative_mode("TRANSPORT"))
+        self.assertEqual("tunnel", normalize_authoritative_mode("TUNNEL-MODE"))
+        for not_reported in (None, "", "esp", "ESP", "unknown", 50, "TRANSPORTED"):
+            self.assertIsNone(
+                normalize_authoritative_mode(not_reported),
+                f"must not invent a mode from {not_reported!r}",
+            )
+
+        # And an out-of-domain value is rejected outright, not coerced.
+        with self.assertRaises(ValueError):
+            ObservedState(timestamp_ns=1, mode="grease")
 
     def test_observed_evidence_values_is_still_empty(self):
         """The honest empty mapping must not have been quietly filled in."""

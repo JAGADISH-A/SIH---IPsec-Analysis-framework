@@ -129,25 +129,74 @@ def _ipv4_fields(data, offset):
     if len(data) < offset + 20:
         return None
     protocol = data[offset + 9]
-    if protocol != 50:  # ESP
-        return None
     ip_total = int.from_bytes(data[offset + 2:offset + 4], "big")
     src = data[offset + 12:offset + 16]
     dst = data[offset + 16:offset + 20]
-    return ip_total, src, dst
+    ihl = (data[offset] & 0x0F) * 4
+    if protocol == 50:  # native ESP
+        return ip_total, src, dst
+    if protocol == 17:  # UDP encapsulation (NAT-T)
+        udp_len = _natt_esp_length(data, offset + ihl)
+        if udp_len is None:
+            return None
+        return udp_len, src, dst
+    return None
+
+
+def _natt_esp_length(data, udp_offset):
+    """Length of the ESP datagram carried by a UDP/4500 frame, else None.
+
+    Only UDP/4500 qualifies: that is the single port on which IKE and ESP share
+    the wire, so anything else on UDP is ordinary traffic and must not be
+    folded into the ESP statistics.
+
+    RFC 3948 marks IKE on a shared port with a four-byte non-ESP marker of
+    00 00 00 00 ahead of the IKE header.  Because that marker occupies exactly
+    the position where an ESP SPI would sit, "leading word == 0" is the test
+    that separates NAT-T negotiation from NAT-T data, and it is the same test
+    the XDP classifier applies (see classify_nat_t_udp in
+    ebpf/xdp_monitor.bpf.c).  Getting this wrong is not cosmetic: IKE frames
+    would be reported as ESP, inflating the packet count and dragging the
+    size distribution toward negotiation messages.
+
+    The length reported is the UDP payload length, i.e. the size of the ESP
+    datagram itself.  Reporting the outer IP length instead would charge the
+    8-byte UDP header and the 28 bytes of outer IPv4 header to every packet as
+    "ESP overhead", which would silently inflate the overhead feature by
+    exactly the encapsulation cost that the feature is meant to measure.
+    """
+    if len(data) < udp_offset + 8:
+        return None
+    sport = int.from_bytes(data[udp_offset:udp_offset + 2], "big")
+    dport = int.from_bytes(data[udp_offset + 2:udp_offset + 4], "big")
+    if sport != 4500 and dport != 4500:
+        return None
+    udp_total = int.from_bytes(data[udp_offset + 4:udp_offset + 6], "big")
+    payload_len = udp_total - 8
+    if payload_len < 8:  # shorter than an ESP header/SPI + sequence number
+        return None
+    # RFC 3948 non-ESP marker => this is IKE over NAT-T, not data.
+    if int.from_bytes(data[udp_offset + 8:udp_offset + 12], "big") == 0:
+        return None
+    return payload_len
 
 
 def _ipv6_fields(data, offset):
     if len(data) < offset + 40:
         return None
     next_header = data[offset + 6]
-    if next_header != 50:  # ESP
-        return None
     payload_len = int.from_bytes(data[offset + 4:offset + 6], "big")
     ip_total = 40 + payload_len
     src = data[offset + 8:offset + 24]
     dst = data[offset + 24:offset + 40]
-    return ip_total, src, dst
+    if next_header == 50:  # native ESP
+        return ip_total, src, dst
+    if next_header == 17:  # UDP encapsulation (NAT-T)
+        udp_len = _natt_esp_length(data, offset + 40)
+        if udp_len is None:
+            return None
+        return udp_len, src, dst
+    return None
 
 
 def read_pcap_esp_with_spi(path):
@@ -265,28 +314,35 @@ def _esp_ipv4(data, offset):
         dport = int.from_bytes(data[udp_offset + 2:udp_offset + 4], "big")
         if dport != 4500:
             return None
-        return ip_total, src, dst, _esp_spi(data, _natt_esp_start(data, udp_offset))
+        esp_start = _natt_esp_start(data, udp_offset)
+        if esp_start is None:
+            return None
+        return ip_total, src, dst, _esp_spi(data, esp_start)
     return None
 
 
 def _natt_esp_start(data, udp_offset):
-    """Offset of the ESP header inside a UDP/4500 datagram.
+    """Offset of the ESP header inside a UDP/4500 datagram, or None for IKE.
 
-    RFC 3948 allows a four-byte zero "non-ESP marker" to precede the ESP
-    header on a NAT-T datagram.  It is optional and peers differ: strongSwan
-    omits it, several other implementations emit it.  Reading the SPI at a
-    fixed offset therefore gets it wrong in one direction or the other, and the
-    failure is silent -- a marker-emitting peer yields SPI 0, which the
-    identity resolver reports as ``UNKNOWN no_spi_available`` and the whole
-    tunnel becomes unresolvable rather than raising.
+    RFC 3948 marks IKE on a shared port with a four-byte zero "non-ESP marker"
+    ahead of the IKE header.  The marker is optional and peers differ:
+    strongSwan omits it, several other implementations emit it, so reading the
+    SPI at a fixed offset gets it wrong in one direction or the other.
 
-    So the marker is detected, exactly as :func:`_ike_udp_common` already does
-    for IKE on the same transport.  A zero first word is the marker; anything
-    else is taken to be the SPI itself.
+    A zero first word is therefore the marker, and it means this frame is NOT
+    ESP at all - it is IKE over NAT-T.  Returning None here (rather than
+    stepping over the marker and reading an SPI from what is really an IKE
+    header) is deliberate: skipping the marker would hand the caller the first
+    four bytes of the IKE header as if they were an ESP SPI.  That is a
+    fabricated SPI, it would be published as SA-correlation evidence, and
+    because it is a real number it would resolve against nothing while still
+    being wrong.  A frame that is IKE must be reported as IKE.
     """
     start = udp_offset + 8
-    if len(data) >= start + 4 and int.from_bytes(data[start:start + 4], "big") == 0:
-        start += 4
+    if len(data) < start + 4:
+        return None
+    if int.from_bytes(data[start:start + 4], "big") == 0:
+        return None  # RFC 3948 non-ESP marker: IKE, never an SA selector
     return start
 
 
@@ -307,7 +363,10 @@ def _esp_ipv6(data, offset):
         dport = int.from_bytes(data[udp_offset + 2:udp_offset + 4], "big")
         if dport != 4500:
             return None
-        return ip_total, src, dst, _esp_spi(data, _natt_esp_start(data, udp_offset))
+        esp_start = _natt_esp_start(data, udp_offset)
+        if esp_start is None:
+            return None
+        return ip_total, src, dst, _esp_spi(data, esp_start)
     return None
 
 

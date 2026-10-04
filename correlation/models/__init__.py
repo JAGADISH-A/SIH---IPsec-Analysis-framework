@@ -51,6 +51,9 @@ from .sa_identity import (  # noqa: F401
 )
 from .observed import (  # noqa: F401
     DOCUMENTED_TRANSITIONS,
+    MODE_TRANSPORT,
+    MODE_TUNNEL,
+    OBSERVED_MODES,
     SPI_DIRECTION_A_TO_B,
     SPI_DIRECTION_B_TO_A,
     SPI_DIRECTIONS,
@@ -60,6 +63,7 @@ from .observed import (  # noqa: F401
     TRANSITION_NO_TRAFFIC,
     TRANSITION_SPI_OBSERVED,
     ObservedState,
+    normalize_authoritative_mode,
     SpiObservation,
     TransitionObservation,
 )

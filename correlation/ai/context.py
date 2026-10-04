@@ -13,6 +13,14 @@ What it reads
   it, and the ``score_detail`` contribution the scorer already booked.
 * :meth:`StoreContextSource.custody` -- the provenance chain, stages as recorded.
 * :meth:`StoreContextSource.drift` -- the drift comparison computed at build time.
+* :meth:`StoreContextSource.mission_context` -- the operator-declared asset
+  context, as the store already resolved it.
+* :meth:`StoreContextSource.root_cause` -- the control plane's recorded verdict
+  for the selected experiment job, when one was named.
+
+Drift and ML are read at assessment level, not only when a finding is selected,
+because "did this drift?" and "what traffic was classified?" are questions about
+the assessment and must stay answerable when no single finding is in focus.
 
 :class:`HttpContextSource` is the same contract against a running analytics API,
 using only ``GET``. It exists so the assistant can read an assessment that was
@@ -88,6 +96,29 @@ class ContextSource:
         return None
 
     def drift(self, assessment_id: str) -> Optional[Dict[str, Any]]:
+        return None
+
+    def mission_context(
+        self, assessment_id: str, finding_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """The operator-declared asset context recorded for one assessment.
+
+        The analytics plane surfaces it on the chain-of-custody payload, which
+        is the only read-only route that carries it, so a finding id may be
+        needed to address it. ``None`` when nothing was declared -- and "nothing
+        declared" must never be reported as "not critical".
+        """
+        return None
+
+    def root_cause(self, experiment_id: str) -> Optional[Dict[str, Any]]:
+        """The control plane's recorded verdict for one experiment job.
+
+        Optional by design. Root cause is produced by the control plane, not by
+        the analytics store, so most sources cannot answer this and the base
+        implementation returns ``None``. ``None`` means "not recorded here", and
+        the assistant is required to say exactly that rather than infer a cause
+        from the finding.
+        """
         return None
 
     def describe(self) -> str:
@@ -176,6 +207,13 @@ class StoreContextSource(ContextSource):
             return None
         return None if found is None else found.to_dict()
 
+    def mission_context(
+        self, assessment_id: str, finding_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        return _mission_context_from_custody(
+            self.custody(assessment_id, finding_id) if finding_id else None
+        )
+
 
 class HttpContextSource(ContextSource):
     """Read-only access through the analytics API, using only ``GET``.
@@ -186,8 +224,14 @@ class HttpContextSource(ContextSource):
     none is attempted here.
     """
 
-    def __init__(self, base_url: str, *, timeout: float = 5.0, opener=None) -> None:
+    def __init__(self, base_url: str, *, timeout: float = 5.0, opener=None,
+                 control_url: str = "") -> None:
         self._base = str(base_url or "").rstrip("/")
+        #: Optional control-plane base URL, used for exactly one read-only
+        #: lookup: the recorded root cause for an experiment job. Empty when the
+        #: assistant is deployed without control-plane access, in which case
+        #: root cause is simply not recorded and the assistant says so.
+        self._control = str(control_url or "").rstrip("/")
         self._timeout = timeout
         self._opener = opener or _urllib_get_json
         self.available = bool(self._base)
@@ -247,6 +291,51 @@ class HttpContextSource(ContextSource):
     def drift(self, assessment_id: str) -> Optional[Dict[str, Any]]:
         return self._get(f"/api/v1/assessments/{_seg(assessment_id)}/drift")
 
+    def mission_context(
+        self, assessment_id: str, finding_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        if not finding_id:
+            return None
+        return _mission_context_from_custody(self.custody(assessment_id, finding_id))
+
+    def root_cause(self, experiment_id: str) -> Optional[Dict[str, Any]]:
+        """Read the control plane's verdict for one job, using only ``GET``.
+
+        ``/experiments/{job_id}`` returns the job as the controller recorded it,
+        including ``root_cause``, ``confidence``, ``reason`` and ``evidence``
+        once a stage has completed. Those values are copied through untouched:
+        the assistant explains the recorded cause and never re-derives one. A
+        job that is unknown, still running or was never given a verdict yields
+        ``None``, which the prompt renders as not recorded.
+        """
+        if not self._control or not experiment_id:
+            return None
+        payload = self._opener(
+            f"{self._control}/experiments/{_seg(experiment_id)}", self._timeout
+        )
+        if not isinstance(payload, dict):
+            return None
+        root_cause = payload.get("root_cause")
+        if not isinstance(root_cause, str) or not root_cause.strip():
+            return None
+        return {
+            "root_cause": root_cause,
+            "confidence": payload.get("confidence"),
+            "reason": payload.get("reason"),
+            "evidence": payload.get("evidence"),
+            "job_status": payload.get("status"),
+        }
+
+
+def _mission_context_from_custody(
+    chain: Optional[Dict[str, Any]]
+) -> Optional[Dict[str, Any]]:
+    """Pull the declared asset context off a chain-of-custody payload."""
+    if not isinstance(chain, dict):
+        return None
+    recorded = chain.get("mission_context")
+    return recorded if isinstance(recorded, dict) and recorded else None
+
 
 def _seg(value: str) -> str:
     from urllib.parse import quote
@@ -279,6 +368,7 @@ def build_grounding_context(
     *,
     assessment_id: Optional[str] = None,
     finding_id: Optional[str] = None,
+    experiment_id: Optional[str] = None,
 ) -> GroundingContext:
     """Assemble the authoritative slice one question may be answered from.
 
@@ -353,8 +443,11 @@ def build_grounding_context(
             if isinstance(row, dict) and row.get("variable")
         ),
         ml=_project_ml(bundle.get("ml")),
+        drift=_drift(source, assessment_id),
         evidence_count=_evidence_count(bundle.get("evidence")),
         evidence_sources=_evidence_sources(bundle.get("evidence")),
+        asset=_asset(source, assessment_id),
+        root_cause=_root_cause(source, experiment_id),
     )
 
     if selected is not None:
@@ -446,8 +539,64 @@ def _with_finding(
         custody=chain,
         drift=_drift(source, assessment_id),
         ml=context.ml,
-        asset=None,
+        asset=_asset(source, assessment_id, finding.finding_id),
+        root_cause=context.root_cause,
     )
+
+
+def _root_cause(source: ContextSource, experiment_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    """The controller's recorded verdict for ``experiment_id``, if there is one.
+
+    Never derived from the finding. When the analyst asks "why did this fail?"
+    and the controller recorded no cause, the honest answer is that the backend
+    did not record one -- inferring a cause from a failing rule is precisely the
+    detection logic this layer must not perform.
+    """
+    if not experiment_id:
+        return None
+    try:
+        recorded = source.root_cause(experiment_id)
+    except Exception:
+        return None
+    if not isinstance(recorded, dict) or not recorded.get("root_cause"):
+        return None
+    return recorded
+
+
+#: The mission-context fields the assistant is allowed to see. Asset criticality
+#: is a declared, deterministic product of the mission profile book; the
+#: assistant restates it and never re-derives it. Provenance hashes are dropped
+#: because they are file digests an analyst never asks about and they would pad
+#: the prompt with values that look like evidence identifiers.
+_ASSET_FIELDS = ("status", "configured", "asset_id", "profile", "risk", "reason",
+                 "context_source", "model_version")
+
+
+def _asset(
+    source: ContextSource, assessment_id: str, finding_id: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """Declared asset criticality for this assessment, as the store recorded it.
+
+    Read-only: this reuses the ``mission_context`` the analytics plane already
+    computed, so the assistant and the ``AssetPriorityPanel`` can never disagree
+    about how critical an asset is. It is carried on the chain-of-custody
+    payload, which is why a finding id may be required to address it.
+
+    There is deliberately no fallback and no default criticality. A store built
+    without ``--asset-id`` reports ``not_configured`` with no asset id, and that
+    yields ``None`` here -- which the prompt and the guard both treat as "not
+    recorded", never as "not critical".
+    """
+    try:
+        recorded = source.mission_context(assessment_id, finding_id)
+    except Exception:
+        return None
+    if not isinstance(recorded, dict) or not recorded:
+        return None
+    asset = {key: recorded[key] for key in _ASSET_FIELDS if key in recorded}
+    if not asset or not asset.get("asset_id"):
+        return None
+    return asset
 
 
 def _project_expected(expected: Dict[str, Any]) -> Dict[str, Any]:

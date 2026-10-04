@@ -33,6 +33,7 @@ recorded values.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from . import glossary
@@ -103,6 +104,7 @@ class AiExplanationEngine:
         *,
         assessment_id: Optional[str] = None,
         finding_id: Optional[str] = None,
+        experiment_id: Optional[str] = None,
         history: Sequence[Dict[str, str]] = (),
     ) -> AiAnswer:
         """Answer one question about one selected context."""
@@ -112,6 +114,7 @@ class AiExplanationEngine:
             self._source,
             assessment_id=assessment_id,
             finding_id=finding_id,
+            experiment_id=experiment_id,
         )
         scope = classify(
             raw,
@@ -154,11 +157,15 @@ class AiExplanationEngine:
         explanation they asked for because a network call did not return.
         """
         try:
-            generated = self._provider.complete(build_messages(question, context, scope, history=history))
-        except ProviderError:
-            return grounded
+            generated = self._provider.complete(
+                self._provider.build_messages(question, context, scope, history=history)
+            )
+        except ProviderError as exc:
+            return self._degraded(grounded, exc.reason)
         if not isinstance(generated, str) or not generated.strip():
-            return grounded
+            return self._degraded(
+                grounded, "the model returned an empty answer"
+            )
 
         text, report = enforce(
             generated.strip(),
@@ -180,6 +187,21 @@ class AiExplanationEngine:
             citations=grounded.citations,
             authoritative=grounded.authoritative,
             ml=grounded.ml,
+            provider=self._provider.info.provider or None,
+        )
+
+    def _degraded(self, grounded: AiAnswer, reason: str) -> AiAnswer:
+        """The grounded answer, labelled with why the model did not answer.
+
+        The assessment, its findings and its evidence are untouched: only the
+        generated sentence is missing, and it is replaced by the deterministic
+        rendering of the same recorded values. Recording the reason is what
+        stops that substitution from looking like a model answered.
+        """
+        return replace(
+            grounded,
+            provider_unavailable_reason=reason,
+            provider="none",
         )
 
     # -- the grounded path -------------------------------------------------

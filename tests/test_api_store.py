@@ -31,9 +31,10 @@ class _StoreTestCase(unittest.TestCase):
 
 
 class StoreBuildTest(_StoreTestCase):
-    def test_12_assessments(self):
-        self.assertEqual(self.store.overview["total_assessments"], 12)
-        self.assertEqual(len(self.store.headers), 12)
+    def test_13_assessments(self):
+        # One per scenario slot, including the transport-v6 recorded case.
+        self.assertEqual(self.store.overview["total_assessments"], 13)
+        self.assertEqual(len(self.store.headers), 13)
 
     def test_every_scenario_slot_is_present(self):
         from correlation.api.store import SCENARIO_SLOTS

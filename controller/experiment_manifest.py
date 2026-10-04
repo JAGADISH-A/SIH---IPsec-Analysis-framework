@@ -297,12 +297,18 @@ def _sha256(path: Path):
     return digest.hexdigest()
 
 
-def write_start(job_id, config, started_at_ns, observation_start_bytes=0):
+def write_start(job_id, config, started_at_ns, observation_start_bytes=0, result=None):
     """Persist the interim start manifest atomically (no ended marker).
 
     Written the moment the live observation goes live, so the feed can gate
     LIVE rows to this experiment only. The final ``write_current`` reuses the
     same ``observation_start_bytes`` and adds ``ended_at_ns``.
+
+    ``result`` carries the already-observed facts that exist at boundary time
+    (notably the real ``swanctl --list-sas`` verification).  Recording them here
+    is what makes the manifest's ``observed.ipsec.mode`` the *authoritative*
+    deployed encapsulation mode, so the analytics layer can compare mode
+    without ever inferring it from the wire.
     """
     path = Path(manifest_path())
     try:
@@ -310,7 +316,7 @@ def write_start(job_id, config, started_at_ns, observation_start_bytes=0):
     except OSError:
         return False
     manifest = build_manifest(
-        job_id, config, None, started_at_ns,
+        job_id, config, result, started_at_ns,
         observation_start_bytes=observation_start_bytes,
     )
     manifest["manifest_sha256"] = _sha256(path)
@@ -408,6 +414,7 @@ def begin_run_session(dataset_run_id):
         "config": None,
         "started_at_ns": None,
         "anchor": None,
+        "result": None,
     }
     return True
 
@@ -417,7 +424,7 @@ def session_active():
     return _ACTIVE_SESSION is not None
 
 
-def publish_session_boundary(config, observation=None, log=None):
+def publish_session_boundary(config, observation=None, log=None, result=None):
     """Open (or re-anchor) the continuous run's live boundary.
 
     Writes once at the first live observation, and again whenever the sensor's
@@ -426,6 +433,12 @@ def publish_session_boundary(config, observation=None, log=None):
     size.  On clean reuse (``action == "reuse"``) an already-open boundary is
     left untouched so the whole run remains one LIVE window.  Returns True when
     a boundary write happened.
+
+    ``result`` is the run's already-observed facts (the real ``swanctl
+    --list-sas`` verification and the live observation record).  Recording the
+    observed SA mode at every anchor keeps ``observed.ipsec.mode``
+    authoritative for the whole session, including after a mode switch, where
+    the previous sample's mode must not leak into the new one.
     """
     session = _ACTIVE_SESSION
     if session is None:
@@ -447,9 +460,11 @@ def publish_session_boundary(config, observation=None, log=None):
     if write_start(
         session["dataset_run_id"], config, started_at_ns,
         observation_start_bytes=start_bytes,
+        result=result,
     ):
         session["config"] = config
         session["anchor"] = start_bytes
+        session["result"] = result
         log(
             f"published continuous live boundary @ byte {start_bytes} "
             f"for dataset run {session['dataset_run_id']}"
@@ -476,7 +491,8 @@ def close_run_session(result=None, log=None):
     log = log or (lambda msg: None)
     try:
         written = write_current(
-            session["dataset_run_id"], config, result,
+            session["dataset_run_id"], config,
+            result if result is not None else session.get("result"),
             session.get("started_at_ns") or time.time_ns(),
             observation_start_bytes=session.get("anchor") or 0,
             ended_at_ns=time.time_ns(),

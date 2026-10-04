@@ -39,10 +39,13 @@ const TABS: { id: Tab; label: string }[] = [
  */
 function AiBoundary({
   assessmentId,
+  experimentId,
   severity,
   hasEvidence,
 }: {
   assessmentId: string
+  /** From the fetched bundle; absent rather than guessed when not known. */
+  experimentId: string | null
   severity: string | null
   hasEvidence: boolean
 }) {
@@ -62,6 +65,7 @@ function AiBoundary({
     <div className="space-y-3">
       <AiExplainer
         assessmentId={assessmentId}
+        experimentId={experimentId}
         severity={severity}
         hasEvidence={hasEvidence}
         compact
@@ -254,6 +258,7 @@ export function EntityDetailDrawer({ row, frozen, held = false, onClose }: Props
           {showAi && assessmentId ? (
             <AiBoundary
               assessmentId={assessmentId}
+              experimentId={bundle.data?.identity.experiment_id ?? null}
               severity={
                 bundle.data?.risk.severity ?? row?.assessment?.severity ?? null
               }

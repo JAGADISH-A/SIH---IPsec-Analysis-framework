@@ -7,7 +7,15 @@
 #define COUNTER_ESP        3
 #define COUNTER_AH         4
 #define COUNTER_OTHER      5
-#define COUNTER_MAX        6
+/*
+ * NAT-T / RFC 3948 ESP-in-UDP: a UDP/4500 datagram whose payload starts with
+ * the 4-byte non-ESP marker (0x00000000), immediately followed by a real ESP
+ * header.  Distinct from COUNTER_IKE_NATT, which is a UDP/4500 datagram whose
+ * payload is IKE (any non-zero first word), so a NAT-T *data* packet is never
+ * mistaken for a NAT-T *negotiation* packet or vice versa.
+ */
+#define COUNTER_ESP_NATT   6
+#define COUNTER_MAX        7
 
 /*
  * Lightweight per-packet observation event emitted by XDP into a BPF ring
@@ -17,6 +25,9 @@
  * All multi-byte fields except `timestamp` are stored in network byte order
  * (as read from the wire); userspace converts with ntohs/ntohl as needed.
  * `sport`/`dport` are zero for ESP/AH; `spi`/`seq` are zero otherwise.
+ * For COUNTER_ESP_NATT both are populated (RFC 3948 puts a 4-byte non-ESP
+ * marker in front of the ESP header) and `sport`/`dport` carry the UDP/4500
+ * ports.
  *
  * Family/address handling: the outer header is classified for both IPv4
  * (``family == 4``, ``src``/``dst`` hold the 32-bit addresses) and IPv6

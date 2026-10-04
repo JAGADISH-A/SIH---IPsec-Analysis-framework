@@ -954,13 +954,34 @@ class TestTopologyLifecycle(unittest.TestCase):
             self.assertEqual(mock_destroy.call_count, 1)
 
     def test_reset_and_deploy_clears_both_topologies(self):
-        with patch("controller.executor.destroy") as mock_destroy:
-            with patch("controller.executor.deploy") as mock_deploy:
-                reset_and_deploy("tunnel")
-                self.assertEqual(mock_destroy.call_count, 2)
-                self.assertIn("tunnel", mock_destroy.call_args_list[0].args)
-                self.assertIn("transport", mock_destroy.call_args_list[1].args)
-                self.assertEqual(mock_deploy.call_args.args[0], "tunnel")
+        # ``wait_for_ipsec_ready`` polls REAL containers, so mocking only
+        # destroy/deploy made this test's result depend on whether the tunnel
+        # lab happened to be running on the host. Stubbing it keeps the test
+        # hermetic while still asserting the readiness gate was awaited.
+        with patch("controller.executor.destroy") as mock_destroy, \
+                patch("controller.executor.deploy") as mock_deploy, \
+                patch(
+                    "controller.executor.wait_for_ipsec_ready",
+                    return_value=True,
+                ) as mock_ready:
+            reset_and_deploy("tunnel")
+            # Every lab is torn down before the new one is deployed: the two
+            # non-NAT topologies, plus the NAT deployment, which is a
+            # separate lab whose nodes would otherwise keep answering ARP
+            # for the addresses the new deployment is about to claim.
+            self.assertEqual(mock_destroy.call_count, 3)
+            self.assertEqual(
+                [c.args for c in mock_destroy.call_args_list],
+                [("tunnel",), ("transport",), ("transport",)],
+            )
+            self.assertIn("tunnel", mock_destroy.call_args_list[0].args)
+            self.assertIn("transport", mock_destroy.call_args_list[1].args)
+            self.assertIn("transport", mock_destroy.call_args_list[2].args)
+            # The NAT lab teardown must remain explicitly NAT-scoped.
+            self.assertTrue(mock_destroy.call_args_list[2].kwargs["nat"])
+            self.assertFalse(mock_destroy.call_args_list[0].kwargs.get("nat", False))
+            self.assertEqual(mock_deploy.call_args.args[0], "tunnel")
+            mock_ready.assert_called_once_with("tunnel", nat=False)
 
 
 class TestTrafficCaptureParameterization(unittest.TestCase):

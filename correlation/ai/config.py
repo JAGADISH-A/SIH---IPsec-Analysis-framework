@@ -119,6 +119,11 @@ class AiServerConfig:
     max_question_chars: int = DEFAULT_MAX_QUESTION_CHARS
     plan_path: Optional[str] = None
     analytics_url: Optional[str] = None
+    #: Optional control-plane base URL. Only ever used for one read-only GET of
+    #: an experiment job's recorded verdict, so that "why did this fail?" can be
+    #: answered from what the controller decided. Unset means root cause is not
+    #: available to the assistant and it must say so.
+    control_url: Optional[str] = None
 
     @classmethod
     def resolve(
@@ -128,6 +133,7 @@ class AiServerConfig:
         allowed_origins: Optional[str] = None,
         plan_path: Optional[str] = None,
         analytics_url: Optional[str] = None,
+        control_url: Optional[str] = None,
         environ: Optional[dict] = None,
     ) -> "AiServerConfig":
         env = os.environ if environ is None else environ
@@ -168,6 +174,7 @@ class AiServerConfig:
             max_question_chars=limit,
             plan_path=plan_path or env.get("ANALYTICS_API_PLAN"),
             analytics_url=analytics_url or env.get("ANALYTICS_API_URL"),
+            control_url=control_url or env.get("CONTROL_API_URL"),
         )
 
 

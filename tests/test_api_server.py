@@ -38,12 +38,13 @@ class HttpContractTest(_ServerTestCase):
         status, payload = self.get("/api/health")
         self.assertEqual(status, 200)
         self.assertEqual(payload["status"], "ok")
-        self.assertEqual(payload["total_assessments"], 12)
+        # 13 = one assessment per scenario slot, including transport-v6.
+        self.assertEqual(payload["total_assessments"], 13)
 
     def test_assessments_list(self):
         status, payload = self.get("/api/assessments")
         self.assertEqual(status, 200)
-        self.assertEqual(len(payload["headers"]), 12)
+        self.assertEqual(len(payload["headers"]), 13)
         self.assertEqual(payload["overview"]["highest_risk"],
                          max(h["risk_score"] for h in payload["headers"]))
 

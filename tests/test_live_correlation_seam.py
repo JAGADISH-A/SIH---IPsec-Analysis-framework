@@ -150,39 +150,80 @@ class TestObservedStateIsReal(unittest.TestCase):
         """A passive observer cannot evidence cipher/integrity/DH/PFS."""
         values = seam.observed_values_from_state(_observed())
 
-        self.assertEqual({"mode"}, set(values))
-        self.assertEqual("tunnel", values["mode"])
+        self.assertEqual(set(), set(values))
         for forbidden in (
             "ike.version", "ike.encryption", "ike.integrity", "ike.dh_group",
             "esp.encryption", "esp.integrity", "esp.dh_group", "esp.pfs",
         ):
             self.assertNotIn(forbidden, values)
 
-    def test_transport_mode_is_derived_from_observation(self):
-        """Cleartext-only traffic must report transport, not tunnel.
+    def test_mode_is_never_inferred_from_esp_presence(self):
+        """ESP on the wire proves NEITHER mode, in either direction.
 
-        ``IPsecStateBuilder`` sets ``tunnel_seen`` for *any* observed traffic,
-        so the seam must key ``mode`` off the encapsulating protocols instead.
+        Tunnel and transport mode put byte-identical protocol-50 ESP on the
+        wire, so deriving ``mode`` from ``esp_seen``/``ah_seen`` reports
+        ``"tunnel"`` for every genuine transport sample -- a false
+        ``RISK-MODE-MISMATCH`` at HIGH.  Both of these wire observations are
+        therefore identical, and neither may yield a mode.
         """
         from ebpf.ipsec_state_builder import IPsecStateBuilder
 
         builder = IPsecStateBuilder(endpoints={"a": "10.0.0.1", "b": "10.0.0.2"})
         builder.consume_event_dict(
-            {"ts": 1_000, "type": "OTHER", "src": "10.0.0.1",
-             "dst": "10.0.0.2", "len": 100}
+            {"ts": 1_000, "type": "ESP", "src": "10.0.0.1",
+             "dst": "10.0.0.2", "spi": 1, "len": 134}
         )
-        observed = ObservedState.from_dict(
+        esp_observed = ObservedState.from_dict(
             seam.state_snapshot_to_dict(builder.snapshot())
         )
 
-        self.assertTrue(observed.tunnel_seen)
-        self.assertFalse(observed.esp_seen)
-        self.assertFalse(observed.ah_seen)
-        self.assertEqual("transport", seam.observed_values_from_state(observed)["mode"])
+        cleartext = IPsecStateBuilder(endpoints={"a": "10.0.0.1", "b": "10.0.0.2"})
+        cleartext.consume_event_dict(
+            {"ts": 1_000, "type": "OTHER", "src": "10.0.0.1",
+             "dst": "10.0.0.2", "len": 100}
+        )
+        cleartext_observed = ObservedState.from_dict(
+            seam.state_snapshot_to_dict(cleartext.snapshot())
+        )
 
-    def test_tunnel_mode_requires_an_encapsulating_protocol(self):
-        self.assertTrue(_observed().esp_seen)
-        self.assertEqual("tunnel", seam.observed_values_from_state(_observed())["mode"])
+        self.assertTrue(esp_observed.esp_seen)
+        self.assertTrue(esp_observed.tunnel_seen)
+        self.assertEqual({}, seam.observed_values_from_state(esp_observed))
+
+        self.assertTrue(cleartext_observed.tunnel_seen)
+        self.assertFalse(cleartext_observed.esp_seen)
+        self.assertEqual({}, seam.observed_values_from_state(cleartext_observed))
+
+    def test_mode_comes_from_the_authoritative_deployed_sa(self):
+        """Only a real SA report may supply ``mode``, and either value is fine."""
+        transport = ObservedState(
+            timestamp_ns=_observed().timestamp_ns,
+            esp_seen=True,
+            tunnel_seen=True,
+            mode=seam.normalize_authoritative_mode("TRANSPORT"),
+        )
+        tunnel = ObservedState(
+            timestamp_ns=_observed().timestamp_ns,
+            esp_seen=True,
+            tunnel_seen=True,
+            mode=seam.normalize_authoritative_mode("TUNNEL"),
+        )
+
+        self.assertEqual(
+            {"mode": "transport"}, seam.observed_values_from_state(transport)
+        )
+        self.assertEqual(
+            {"mode": "tunnel"}, seam.observed_values_from_state(tunnel)
+        )
+
+    def test_authoritative_mode_normalization_rejects_anything_unproven(self):
+        for value in (None, "", "ESP", "encrypted", 5, True, [], "tunnel-mode-x"):
+            self.assertIsNone(
+                seam.normalize_authoritative_mode(value),
+                f"{value!r} must not be accepted as an observed mode",
+            )
+        self.assertEqual("transport", seam.normalize_authoritative_mode("  TRANSPORT "))
+        self.assertEqual("tunnel", seam.normalize_authoritative_mode("TUNNEL-MODE"))
 
 
 class TestRealRandomForestIsExercised(unittest.TestCase):

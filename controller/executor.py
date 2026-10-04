@@ -6,9 +6,15 @@ import time
 from pathlib import Path
 
 from .config import CONFIG
-from .topology import TOPOLOGIES
+from .topology import (
+    TOPOLOGIES,
+    container_name,
+    deployment_key,
+    resolve_topology,
+)
 from .validate import validate_config
 from .generator import write_connection
+from . import diagnose
 from . import traffic as traffic_mod
 from . import experiment_manifest as manifest_mod
 from . import xdp_observation
@@ -62,20 +68,8 @@ class FatalTopologyError(RuntimeError):
     """
 
 
-def get_topology(mode, address_family):
-    if mode not in TOPOLOGIES:
-        raise ValueError(
-            f"Unsupported mode: {mode}"
-        )
-
-    topology = TOPOLOGIES[mode]
-
-    if address_family not in topology:
-        raise ValueError(
-            f"Unsupported address family '{address_family}' for {mode}"
-        )
-
-    return topology[address_family]
+def get_topology(mode, address_family, nat=False):
+    return resolve_topology(mode, address_family, nat=nat)
 
 
 def _privileged(*argv):
@@ -165,11 +159,19 @@ def run(command, timeout=DEFAULT_COMMAND_TIMEOUT, cwd=None):
     return stdout
 
 
-def topology_file(mode):
+def topology_file(mode, nat=False):
+    """Topology path for a sample.
+
+    ``mode`` may already be a full deployment key (``transport-nat``); a bare
+    mode is resolved through :func:`deployment_key` so ``nat=True`` selects the
+    NAT deployment without changing the IPsec encapsulation mode.
+    """
+    key = mode if "-nat" in mode else deployment_key(mode, nat=nat)
+
     path = (
         PROJECT_ROOT
         / "topology"
-        / mode
+        / key
         / "ipsec.clab.yml"
     )
 
@@ -180,8 +182,8 @@ def topology_file(mode):
 
     return path
 
-def destroy(mode):
-    topo = topology_file(mode)
+def destroy(mode, nat=False):
+    topo = topology_file(mode, nat=nat)
 
     if mode == "tunnel":
         # Authoritative lifecycle wrapper: containerlab destroy --cleanup
@@ -195,11 +197,11 @@ def destroy(mode):
         timeout=DESTROY_TIMEOUT)
 
 
-def deploy(mode):
-    topo = topology_file(mode)
+def deploy(mode, nat=False):
+    topo = topology_file(mode, nat=nat)
 
     try:
-        if mode == "tunnel":
+        if mode == "tunnel" and not nat:
             # Authoritative lifecycle wrapper: ensure br-wan (deterministic,
             # idempotent), then containerlab deploy --reconfigure, then the
             # GW-A observation health-check.  ``br-wan`` is externally managed
@@ -214,26 +216,98 @@ def deploy(mode):
         raise FatalTopologyError(str(exc)) from exc
 
 
-def reset_and_deploy(mode):
+#: Marker the endpoint entrypoint prints once charon is up AND
+#: ``swanctl --load-all`` has finished, i.e. when the pre-shared key and the
+#: baked-in connection are installed and an SA can actually be negotiated.
+#: Must stay in sync with scripts/gw-entrypoint.sh and
+#: scripts/transport-entrypoint.sh.
+IPSEC_READY_MARKER = "StrongSwan ready"
+
+#: Generous bound for the container boot sequence. charon start plus config
+#: load is normally a second or two; the cap only exists so a genuinely broken
+#: container fails the run instead of hanging it forever.
+IPSEC_READY_TIMEOUT = 120.0
+
+
+def wait_for_ipsec_ready(mode, nat=False, timeout=IPSEC_READY_TIMEOUT):
+    """Block until every IPsec endpoint has finished loading its config.
+
+    Both endpoints must be ready, not just the initiator: the responder parses
+    the IKE_SA_INIT and needs its PSK already loaded to answer.  Readiness is
+    read from the container's own startup log rather than a fixed sleep, so a
+    slow-but-correct boot is not failed and a fast one is not delayed.
+    """
+    topology = get_topology(mode, "ipv4", nat=nat)
+    key = deployment_key(mode, nat=nat)
+    containers = [
+        container_name(key, topology[side]["node"])
+        for side in ("local", "remote")
+    ]
+
+    deadline = time.monotonic() + timeout
+    pending = set(containers)
+    while pending and time.monotonic() < deadline:
+        for container in sorted(pending):
+            proc = subprocess.run(
+                _privileged("docker", "logs", container),
+                capture_output=True,
+                text=True,
+                timeout=DOCKER_COMMAND_TIMEOUT,
+            )
+            output = f"{proc.stdout}\n{proc.stderr}"
+            if IPSEC_READY_MARKER in output:
+                print(f"{container}: {IPSEC_READY_MARKER}")
+                pending.discard(container)
+        if pending:
+            time.sleep(1.0)
+
+    if pending:
+        raise RuntimeError(
+            "IPsec endpoints did not finish loading strongSwan configuration "
+            f"within {timeout:g}s: {', '.join(sorted(pending))}"
+        )
+    return True
+
+
+def reset_and_deploy(mode, nat=False):
     print(f"\n=== Starting {mode} experiment ===\n")
 
     # Destroy EVERY containerlab topology before deploying.  The run may have
     # kept a different-mode topology alive for reuse, or resumed over one.
+    # The NAT deployment is a separate lab and must be torn down too, or its
+    # nodes would keep answering ARP for the addresses the direct deployment
+    # is about to claim.
     for m in ("tunnel", "transport"):
         try:
             destroy(m)
         except RuntimeError:
             pass
+    try:
+        destroy("transport", nat=True)
+    except RuntimeError:
+        pass
 
-    deploy(mode)
+    deploy(mode, nat=nat)
+
+    # `containerlab deploy` returns as soon as the containers *start*, but each
+    # endpoint entrypoint still has to bring up charon and run
+    # `swanctl --load-all`, which is what installs the pre-shared key.  Loading
+    # the generated connection and initiating immediately raced that boot: the
+    # responder had no PSK yet and answered IKE_SA_INIT with
+    # "no shared key found ... - ...".  Wait for the entrypoint's own readiness
+    # marker so the SA configuration is always loaded against a ready daemon.
+    wait_for_ipsec_ready(mode, nat=nat)
 
     print(f"\n=== {mode} topology deployed ===\n")
+
 
 def generate_configs(config):
     validate_config(config)
 
     mode = config["mode"]
-    topology = get_topology(mode, config["address_family"])
+    nat = bool(config.get("nat", False))
+    topology = get_topology(mode, config["address_family"], nat=nat)
+    key = deployment_key(mode, nat=nat)
 
     local = topology["local"]
     remote = topology["remote"]
@@ -242,7 +316,7 @@ def generate_configs(config):
         PROJECT_ROOT
         / "controller"
         / "generated"
-        / mode
+        / key
     )
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -257,10 +331,30 @@ def generate_configs(config):
         local_file,
     )
 
+    # The remote host's config must point back at the *local* host, since
+    # ``write_connection`` treats its first peer argument as "this host" and
+    # the second as "the far end".  Passing ``remote`` here made every
+    # non-NAT peer address itself (gw-b-to-gw-b with remote_addrs equal to its
+    # own address), so the responder had no IKE config for the initiator's
+    # address and answered IKE_SA_INIT with NO_PROPOSAL_CHOSEN.
+    #
+    # On a NAT path the far end additionally never sees the local host's real
+    # address: the translator rewrites it to the MASQUERADE address.  Generating
+    # the remote host's config with the untranslated peer address would
+    # negotiate to an address that does not exist behind the NAT, so the
+    # override is applied here rather than in the topology table (the LAN side
+    # legitimately still uses the real address).
+    remote_peer = local
+    if nat:
+        masquerade = topology["nat"]["masquerade"]
+        remote_peer = dict(local)
+        remote_peer["ip"] = masquerade
+        remote_peer["ts"] = f"{masquerade}/32"
+
     write_connection(
         config,
         remote,
-        local,
+        remote_peer,
         remote_file,
     )
 
@@ -271,25 +365,18 @@ def generate_configs(config):
 
 def load_generated_configs(config):
     mode = config["mode"]
+    nat = bool(config.get("nat", False))
+    key = deployment_key(mode, nat=nat)
 
-    topology = get_topology(mode, config["address_family"])
+    topology = get_topology(mode, config["address_family"], nat=nat)
 
     local = topology["local"]
     remote = topology["remote"]
 
     local_file, remote_file = generate_configs(config)
 
-    local_container = (
-        f"clab-ipsec-transport-{local['node']}"
-        if mode == "transport"
-        else f"clab-ipsec-{local['node']}"
-    )
-
-    remote_container = (
-        f"clab-ipsec-transport-{remote['node']}"
-        if mode == "transport"
-        else f"clab-ipsec-{remote['node']}"
-    )
+    local_container = container_name(key, local["node"])
+    remote_container = container_name(key, remote["node"])
 
     local_tmp = f"/tmp/{local['id']}.conf"
     remote_tmp = f"/tmp/{remote['id']}.conf"
@@ -318,16 +405,11 @@ def load_generated_configs(config):
 
     print("\n=== Generated configurations loaded ===\n")
 
-def initiate_ipsec(mode, address_family):
-    topology = get_topology(mode, address_family)
+def initiate_ipsec(mode, address_family, nat=False):
+    topology = get_topology(mode, address_family, nat=nat)
     local = topology["local"]
 
-    if mode == "tunnel":
-        container = f"clab-ipsec-{local['node']}"
-    elif mode == "transport":
-        container = f"clab-ipsec-transport-{local['node']}"
-    else:
-        raise ValueError(f"Unsupported mode: {mode}")
+    container = container_name(deployment_key(mode, nat=nat), local["node"])
 
     connection_name = f"{local['id']}-to-{topology['remote']['id']}"
 
@@ -339,7 +421,7 @@ def initiate_ipsec(mode, address_family):
     )
 
 
-def terminate_sas(mode, address_family):
+def terminate_sas(mode, address_family, nat=False):
     """Terminate the current IKE/CHILD SAs on both gateway containers.
 
     Used by the Module-10 reuse path BEFORE reloading a new StrongSwan
@@ -356,21 +438,13 @@ def terminate_sas(mode, address_family):
     unsupported ``swanctl --terminate --all`` form is deliberately never
     invoked.
     """
-    topology = get_topology(mode, address_family)
+    key = deployment_key(mode, nat=nat)
+    topology = get_topology(mode, address_family, nat=nat)
     local = topology["local"]
     remote = topology["remote"]
 
-    local_container = (
-        f"clab-ipsec-transport-{local['node']}"
-        if mode == "transport"
-        else f"clab-ipsec-{local['node']}"
-    )
-
-    remote_container = (
-        f"clab-ipsec-transport-{remote['node']}"
-        if mode == "transport"
-        else f"clab-ipsec-{remote['node']}"
-    )
+    local_container = container_name(key, local["node"])
+    remote_container = container_name(key, remote["node"])
 
     connection_name = f"{local['id']}-to-{topology['remote']['id']}"
 
@@ -394,8 +468,8 @@ def terminate_sas(mode, address_family):
     print("\n=== Existing IPsec SAs terminated ===\n")
 
 
-def test_connectivity(mode, address_family):
-    if mode == "tunnel":
+def test_connectivity(mode, address_family, nat=False):
+    if mode == "tunnel" and not nat:
         source = "clab-ipsec-host-a"
 
         if address_family == "ipv4":
@@ -428,46 +502,42 @@ def test_connectivity(mode, address_family):
                 f"Unsupported address family: {address_family}"
             )
     elif mode == "transport":
-        source = "clab-ipsec-transport-host-c"
+        # The destination is taken from the SAME endpoint table the swanctl
+        # config was generated from, so the connectivity probe can never drift
+        # away from the address actually negotiated (notably the NAT deployment,
+        # where the peer's reachable address is on the far side of the
+        # translator).
+        topology = get_topology(mode, address_family, nat=nat)
+        source = container_name(deployment_key(mode, nat=nat), topology["local"]["node"])
+        destination = topology["remote"]["ip"]
 
-        if address_family == "ipv4":
-            destination = "10.20.1.20"
-            ping_command = [
-                "ping",
-                "-c",
-                "3",
-                "-i",
-                "0.2",
-                "-W",
-                "1",
-                destination,
-            ]
-        elif address_family == "ipv6":
-            destination = "2001:db8:20::20"
-            ping_command = [
-                "ping",
-                "-6",
-                "-c",
-                "3",
-                "-i",
-                "0.2",
-                "-W",
-                "1",
-                destination,
-            ]
-        else:
+        ping_command = ["ping"]
+        if address_family == "ipv6":
+            ping_command.append("-6")
+        elif address_family != "ipv4":
             raise ValueError(
                 f"Unsupported address family: {address_family}"
             )
+        ping_command += ["-c", "3", "-i", "0.2", "-W", "1", destination]
     else:
         raise ValueError(f"Unsupported mode: {mode}")
 
     print("\n=== Testing connectivity ===\n")
 
-    output = run(
-        _privileged("docker", "exec", source, *ping_command),
-        timeout=DOCKER_COMMAND_TIMEOUT,
-    )
+    try:
+        output = run(
+            _privileged("docker", "exec", source, *ping_command),
+            timeout=DOCKER_COMMAND_TIMEOUT,
+        )
+    except RuntimeError as exc:
+        # The probe target belongs to this experiment, so re-raise through the
+        # root-cause classifier with the SAME message text the pipeline has
+        # always reported. A ping that never completes is a data-plane failure
+        # with the SAs already verified, so classification happens against the
+        # installed CHILD_SA selectors rather than SA state.
+        raise _connectivity_failure(
+            mode, address_family, nat, str(exc), probe_target=destination
+        ) from exc
 
     packet_loss = None
 
@@ -477,22 +547,151 @@ def test_connectivity(mode, address_family):
             break
 
     if packet_loss is None:
-        raise RuntimeError("Could not determine packet loss")
+        raise _connectivity_failure(
+            mode, address_family, nat, "Could not determine packet loss",
+            probe_target=destination,
+        )
 
-    return {
+    connectivity = {
         "packet_loss": packet_loss,
         "status": "PASS" if packet_loss == 0 else "FAIL",
     }
-def verify_ipsec(mode, address_family):
-    topology = get_topology(mode, address_family)
+
+    if connectivity["status"] == "FAIL":
+        connectivity["classification"] = _classify_connectivity(
+            mode, address_family, nat, connectivity, probe_target=destination
+        )
+
+    return connectivity
+def _classify_connectivity(
+    mode, address_family, nat, connectivity, probe_target=None
+):
+    """Classify a data-plane failure against the INSTALLED CHILD_SA selectors.
+
+    At this point ``verify_ipsec`` has already passed, so the IKE_SA is
+    established and the CHILD_SA is installed by definition. That is passed
+    explicitly rather than re-read from the daemon so the classifier cannot
+    silently claim a state it did not observe.
+    """
+    topology = get_topology(mode, address_family, nat=nat)
+    peers = [
+        container_name(deployment_key(mode, nat=nat), topology[side]["node"])
+        for side in ("local", "remote")
+    ]
+    sas = ""
+    try:
+        proc = subprocess.run(
+            _privileged("docker", "exec", peers[0], "swanctl", "--list-sas"),
+            capture_output=True, text=True, timeout=DOCKER_COMMAND_TIMEOUT,
+        )
+        sas = f"{proc.stdout}\n{proc.stderr}"
+    except Exception as exc:
+        print(f"[diagnose] could not read SA state for classification: {exc}")
+
+    ike_evidence = diagnose.parse_ike_evidence(_collect_charon_evidence(peers))
+
+    return diagnose.classify_failure(
+        stage="CONNECTIVITY",
+        sa_state={
+            "ike_state": diagnose.IKE_ESTABLISHED,
+            "child_state": diagnose.CHILD_INSTALLED,
+            "mode": mode.upper(),
+            "nat_t": nat,
+            "encapsulation": "UDP_4500" if nat else "NONE",
+        },
+        ike_evidence=ike_evidence,
+        nat=nat,
+        connectivity=connectivity,
+        probe_target=probe_target,
+    )
+
+
+def _connectivity_failure(
+    mode, address_family, nat, message, probe_target=None
+):
+    """Wrap a connectivity failure, preserving its original message."""
+    classification = _classify_connectivity(
+        mode, address_family, nat,
+        {"status": "FAIL", "packet_loss": None},
+        probe_target=probe_target,
+    )
+    print(f"[diagnose] root_cause={classification['root_cause']} "
+          f"confidence={classification['confidence']}")
+    return ConnectivityVerificationError(message, classification)
+
+
+class IpsecVerificationError(RuntimeError):
+    """A failed IPsec SA check that also carries a specific root cause.
+
+    Subclasses ``RuntimeError`` and keeps the original generic message, so every
+    existing caller/assertion that matches ``RuntimeError`` or the message text
+    keeps working unchanged. The structured classification is additive, exposed
+    through ``.classification`` (see ``controller.diagnose``).
+    """
+
+    def __init__(self, message, classification=None):
+        super().__init__(message)
+        self.classification = classification or {
+            "stage": "IPSEC",
+            "root_cause": diagnose.UNKNOWN_IPSEC_FAILURE,
+            "confidence": diagnose.INSUFFICIENT_EVIDENCE,
+            "reason": (
+                f"{message}: Sentinel captured no strongSwan notification that "
+                "identifies a specific root cause."
+            ),
+            "evidence": {},
+        }
+
+
+class ConnectivityVerificationError(RuntimeError):
+    """A failed data-plane check that also carries a specific root cause.
+
+    Same additive contract as :class:`IpsecVerificationError`: still a
+    ``RuntimeError`` with the original message, plus ``.classification``.
+    """
+
+    def __init__(self, message, classification=None):
+        super().__init__(message)
+        self.classification = classification or {
+            "stage": "CONNECTIVITY",
+            "root_cause": diagnose.UNKNOWN_IPSEC_FAILURE,
+            "confidence": diagnose.INSUFFICIENT_EVIDENCE,
+            "reason": (
+                f"{message}: Sentinel captured no evidence that identifies a "
+                "specific root cause."
+            ),
+            "evidence": {},
+        }
+
+
+def _collect_charon_evidence(containers):
+    """Best-effort charon log capture for root-cause classification.
+
+    Never raises: an evidence-collection problem must not mask the underlying
+    SA failure that is already being reported.
+    """
+    text = ""
+    for container in containers:
+        try:
+            proc = subprocess.run(
+                _privileged("docker", "logs", "--tail", "400", container),
+                capture_output=True,
+                text=True,
+                timeout=DOCKER_COMMAND_TIMEOUT,
+            )
+            text += f"{proc.stdout}\n{proc.stderr}\n"
+        except Exception as exc:  # evidence is best-effort, never fatal
+            print(f"[diagnose] could not collect charon log from "
+                  f"{container}: {exc}")
+    return text
+
+
+def verify_ipsec(mode, address_family, nat=False):
+    topology = get_topology(mode, address_family, nat=nat)
 
     local = topology["local"]
 
-    source = (
-        f"clab-ipsec-transport-{local['node']}"
-        if mode == "transport"
-        else f"clab-ipsec-{local['node']}"
-    )
+    source = container_name(deployment_key(mode, nat=nat), local["node"])
 
     print("\n=== Verifying IPsec SA ===\n")
 
@@ -501,18 +700,40 @@ def verify_ipsec(mode, address_family):
         timeout=DOCKER_COMMAND_TIMEOUT,
     )
 
+    sa_state = diagnose.parse_sa_state(output)
+
+    def _fail(message):
+        # Classify from the SAME evidence the verdict came from: the live
+        # ``swanctl --list-sas`` state plus both peers' charon logs.
+        peers = [
+            container_name(
+                deployment_key(mode, nat=nat), topology[side]["node"]
+            )
+            for side in ("local", "remote")
+        ]
+        ike_evidence = diagnose.parse_ike_evidence(
+            _collect_charon_evidence(peers)
+        )
+        classification = diagnose.classify_failure(
+            stage="IPSEC",
+            sa_state=sa_state,
+            ike_evidence=ike_evidence,
+            nat=nat,
+        )
+        print(f"[diagnose] root_cause={classification['root_cause']} "
+              f"confidence={classification['confidence']}")
+        raise IpsecVerificationError(message, classification)
+
     if "ESTABLISHED" not in output:
-        raise RuntimeError("IKE SA is not established")
+        _fail("IKE SA is not established")
 
     if "INSTALLED" not in output:
-        raise RuntimeError("CHILD SA is not installed")
+        _fail("CHILD SA is not installed")
 
     expected_mode = mode.upper()
 
     if expected_mode not in output:
-        raise RuntimeError(
-            f"Expected {expected_mode} IPsec SA not found"
-        )
+        _fail(f"Expected {expected_mode} IPsec SA not found")
 
     print("IPsec SA verification: PASS")
 
@@ -522,7 +743,7 @@ def verify_ipsec(mode, address_family):
       "mode": expected_mode,
 }
 
-def ensure_live_observation(mode, address_family="ipv4", log=None):
+def ensure_live_observation(mode, address_family="ipv4", log=None, nat=False):
     """Make the live XDP observation path ready for a deployed testbed.
 
     Every mode declares a passive sensor that feeds the SAME shared live
@@ -533,7 +754,7 @@ def ensure_live_observation(mode, address_family="ipv4", log=None):
     ``xdp_observation.ensure_for_mode``; readiness failures raise
     ``ObservationReadinessError`` instead of degrading to "no observation".
     """
-    return xdp_observation.ensure_for_mode(mode, log=log)
+    return xdp_observation.ensure_for_mode(mode, log=log, nat=nat)
 
 
 def validate_traffic(traffic):
@@ -560,9 +781,16 @@ def validate_traffic(traffic):
 def run_traffic(config):
     mode = config["mode"]
     address_family = config["address_family"]
+    nat = bool(config.get("nat", False))
     profile, duration = validate_traffic(config["traffic"])
 
-    runtime_ctx = traffic_mod.runtime(mode, address_family)
+    # The NAT axis has to be resolved here as well. ``traffic.runtime`` keys
+    # its endpoint table on ``mode``/``address_family``/``nat``, and a NAT
+    # deployment is a different lab with different container names
+    # (``clab-ipsec-transport-nat-*``). Omitting ``nat`` made every NAT sample
+    # resolve the NON-NAT endpoints, so the traffic payload was copied into
+    # containers that do not exist in the NAT lab.
+    runtime_ctx = traffic_mod.runtime(mode, address_family, nat=nat)
 
     print(f"\n=== Running traffic profile: {profile} ({duration}s) ===\n")
 
@@ -645,13 +873,14 @@ def run_experiment(config, on_stage=None, job_id=None):
     # A new deploy can only belong to this run: clear the previous experiment's
     # manifest so a stale identity can never be attached to the new journal.
     manifest_mod.clear()
-    reset_and_deploy(mode)
+    nat = bool(config.get("nat", False))
+    reset_and_deploy(mode, nat=nat)
     stage("IPSEC")
     load_generated_configs(config)
-    initiate_ipsec(mode, address_family)
-    ipsec = verify_ipsec(mode, address_family)
+    initiate_ipsec(mode, address_family, nat=nat)
+    ipsec = verify_ipsec(mode, address_family, nat=nat)
     stage("OBSERVATION")
-    observation = ensure_live_observation(mode, address_family)
+    observation = ensure_live_observation(mode, address_family, nat=nat)
     if observation.get("status") != "live":
         raise xdp_observation.ObservationReadinessError(
             f"live XDP observation not ready: {observation}"
@@ -667,7 +896,19 @@ def run_experiment(config, on_stage=None, job_id=None):
             "for this experiment"
         )
     stage("CONNECTIVITY")
-    connectivity = test_connectivity(mode, address_family)
+    connectivity = test_connectivity(mode, address_family, nat=nat)
+
+    # Root-cause classification for a data-plane failure that did NOT raise
+    # (ping completed but reported loss). ``verify_ipsec`` already passed, so
+    # ``ipsec`` carries the observed SA state the classifier needs.
+    if connectivity.get("status") == "FAIL" and "classification" not in connectivity:
+        connectivity["classification"] = diagnose.classify_failure(
+            stage="CONNECTIVITY",
+            sa_state=diagnose.parse_sa_state("ESTABLISHED INSTALLED"),
+            ike_evidence={},
+            nat=nat,
+            connectivity=connectivity,
+        )
 
     result = {
         "status": (

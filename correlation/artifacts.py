@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .models.features import LiveFeatureWindow
-from .models.observed import ObservedState
+from .models.observed import OBSERVED_MODES, ObservedState
 
 #: The repository root as seen from this package (``correlation/artifacts.py``).
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -444,14 +444,24 @@ def observed_evidence_values(observed: ObservedState) -> Dict[str, Any]:
     Inferring ``mode`` from ``tunnel_seen`` would be exactly the false inference
     the state builder's ``_FORBIDDEN_INFERENCE_KEYS`` exists to prevent, and
     deriving ``esp.encryption`` from an expected value would make every
-    comparison agree by construction.
+    comparison agree by construction.  Deriving ``mode`` from ``esp_seen`` is
+    the same class of error for the opposite reason: tunnel and transport mode
+    put byte-identical protocol-50 ESP on the wire, so ESP presence proves
+    *neither* mode and would report ``"tunnel"`` for every transport sample.
 
-    So nothing is returned. The comparison layer then reports the crypto and mode
-    variables as UNKNOWN with its documented reasons, and the only authoritative
-    statements about the tunnel come from the signals the snapshot really has:
-    ESP/IKE presence, SPI observations, and window coverage.
+    ``mode`` is therefore returned only when it is genuinely authoritative --
+    ``ObservedState.mode``, populated from the real deployed SA report
+    (``swanctl --list-sas`` -> ``TUNNEL`` / ``TRANSPORT``).  With no
+    authoritative source it stays absent and the comparison layer reports the
+    variable as UNKNOWN, never as a match and never as a mismatch.
+
+    Crypto parameters stay absent unconditionally: the state engine refuses to
+    infer them. The authoritative statements about the SA remain the signals the
+    snapshot really has: ESP/IKE presence, SPI observations, and window
+    coverage.
     """
-    return {}
+    mode = getattr(observed, "mode", None)
+    return {"mode": mode} if mode in OBSERVED_MODES else {}
 
 
 def evidence_ref_for(relative_path: str, *, run_id: str, sequence: int) -> Any:

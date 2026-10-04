@@ -108,3 +108,81 @@ class TestFeatureSchemaParity(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+class TestNatTFramingOnUdp4500(unittest.TestCase):
+    """UDP/4500 carries BOTH IKE and ESP; the reader must not conflate them.
+
+    RFC 3948 shares one port between the two and separates them with a
+    four-byte non-ESP marker of 00 00 00 00, which occupies exactly the
+    position where an ESP SPI would sit.  These tests pin the rule that
+    "leading word == 0" means IKE, matching classify_nat_t_udp() in
+    ebpf/xdp_monitor.bpf.c, so the PCAP reader and the live XDP classifier
+    can never disagree about the same bytes.
+    """
+
+    LINKTYPE = 1  # Ethernet
+
+    def _udp4500(self, payload):
+        import struct
+
+        udp_len = 8 + len(payload)
+        udp = struct.pack(">HHHH", 4500, 4500, udp_len, 0) + payload
+        ihl = 20
+        total = ihl + len(udp)
+        ip = struct.pack(
+            ">BBHHHBBH4s4s", 0x45, 0, total, 1, 0, 64, 17, 0,
+            bytes([10, 20, 1, 10]), bytes([10, 30, 1, 20]),
+        )
+        eth = b"\x02" * 6 + b"\x02" * 6 + b"\x08\x00"
+        return eth + ip + udp
+
+    def test_ike_marker_frame_is_not_counted_as_esp(self):
+        import struct
+
+        # RFC 3948 non-ESP marker followed by an ISAKMP header.
+        ike = struct.pack(">I", 0) + bytes(range(1, 33))
+        self.assertIsNone(feats._natt_esp_length(self._udp4500(ike), 14 + 20))
+
+    def test_esp_frame_on_4500_is_recognized_with_its_payload_length(self):
+        import struct
+
+        esp = struct.pack(">II", 0xCE575EC4, 7) + bytes(100)
+        self.assertEqual(
+            feats._natt_esp_length(self._udp4500(esp), 14 + 20), len(esp),
+        )
+
+    def test_ike_marker_never_yields_a_spi(self):
+        """An IKE header must not be reported as an ESP SPI.
+
+        Stepping over the marker and reading four bytes of the IKE header
+        would produce a real-looking number that resolves against no SA.
+        """
+        import struct
+
+        ike = struct.pack(">I", 0) + struct.pack(">I", 0x9FFB7F8E) + bytes(16)
+        self.assertIsNone(feats._natt_esp_start(self._udp4500(ike), 14 + 20))
+
+    def test_esp_on_4500_yields_its_real_spi(self):
+        import struct
+
+        spi = 0xCE575EC4
+        esp = struct.pack(">II", spi, 1) + bytes(16)
+        frame = self._udp4500(esp)
+        # ip_total is the OUTER IP length here (this reader reports frame
+        # identity, not ESP payload size, which read_pcap handles separately).
+        self.assertEqual(feats._esp_ipv4(frame, 14), (
+            20 + 8 + len(esp),
+            bytes([10, 20, 1, 10]),
+            bytes([10, 30, 1, 20]),
+            spi,
+        ))
+
+    def test_non_4500_udp_is_never_esp(self):
+        import struct
+
+        # Ordinary UDP/500 negotiation must not be folded into ESP statistics.
+        payload = struct.pack(">II", 0x9FFB7F8E, 0) + bytes(32)
+        frame = bytearray(self._udp4500(payload))
+        struct.pack_into(">H", frame, 14 + 20, 500)  # sport
+        struct.pack_into(">H", frame, 14 + 22, 500)  # dport
+        self.assertIsNone(feats._natt_esp_length(bytes(frame), 14 + 20))

@@ -925,6 +925,7 @@ function AiSection({
     <AiExplainer
       assessmentId={assessmentId}
       findingId={primary?.finding_id ?? null}
+      experimentId={bundle.identity.experiment_id}
       severity={primary?.severity ?? bundle.risk.severity ?? null}
       hasEvidence={
         primary

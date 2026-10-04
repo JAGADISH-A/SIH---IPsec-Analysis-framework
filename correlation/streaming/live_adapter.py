@@ -44,6 +44,10 @@ CLASS_IKE_NAT_T = "IKE-NAT-T"
 CLASS_ESP = "ESP"
 CLASS_AH = "AH"
 CLASS_OTHER = "OTHER"
+# ESP carried inside UDP/4500 (RFC 3948 NAT-T data plane).  The sensor emits
+# this only when the UDP payload really is an ESP header, so it carries a real
+# SPI/sequence; IKE over NAT-T is reported separately as CLASS_IKE_NAT_T.
+CLASS_ESP_NAT_T = "ESP-NAT-T"
 
 CLASSIFICATION_IKE = IKE = "IKE"
 CLASSIFICATION_ESP_IN_UDP = ESP_IN_UDP = "ESP_IN_UDP"
@@ -70,6 +74,7 @@ NAT_T_PORT = 4500
 _RAW_TYPE_TO_CLASS = {
     CLASS_IKE: CLASSIFICATION_IKE,
     CLASS_IKE_NAT_T: CLASSIFICATION_IKE,
+    CLASS_ESP_NAT_T: CLASSIFICATION_ESP_IN_UDP,
     CLASS_ESP: CLASSIFICATION_ESP,
     CLASS_AH: CLASSIFICATION_AH,
     CLASS_OTHER: CLASSIFICATION_OTHER,
@@ -122,6 +127,15 @@ def classify_udp_4500(sensor_type: Optional[str], sport: int, dport: int) -> Nat
             nat_t=False,
         )
     sensor = (sensor_type or "").strip().upper()
+    if sensor == CLASS_ESP_NAT_T:
+        # The sensor only emits this label when the UDP payload really is an
+        # ESP header, so the SPI/sequence in the event are genuine.
+        return NatTClassification(
+            CLASSIFICATION_ESP_IN_UDP,
+            reason="sensor parsed a real ESP header inside UDP/4500 "
+            "(RFC 3948 NAT-T data plane)",
+            nat_t=True,
+        )
     if sensor == CLASS_IKE_NAT_T or sensor == CLASS_IKE:
         return NatTClassification(
             CLASSIFICATION_IKE,

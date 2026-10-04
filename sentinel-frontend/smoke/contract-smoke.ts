@@ -13,6 +13,8 @@ import {
   getAssessmentFindings,
   getAssessments,
   getAssessmentsV1,
+  getAssetContext,
+  getAssets,
   getAuditEvent,
   getAuditEvents,
   getAuditRuns,
@@ -456,6 +458,106 @@ const bundle = await getAssessment(first.assessment_id)
       }
     } else {
       console.log('note evidence ref carries no evidence_id; integrity endpoint not addressable')
+    }
+  }
+
+  // ------------------------------------------------------ mission (assets)
+  const assets = await getAssets()
+  check('asset list is read-only', assets.read_only === true)
+  check('asset list reports configured state', typeof assets.configured === 'boolean')
+  check('asset list carries an assets array', Array.isArray(assets.assets))
+  check('asset count agrees with the list', assets.count === assets.assets.length)
+  if (assets.configured === false) {
+    // A store started without --mission-profiles declares nothing. That must be
+    // stated, not rendered as a network with no assets, and the panel shows it
+    // as an empty state.
+    check(
+      'unconfigured asset inventory explains itself',
+      typeof assets.reason === 'string' && assets.reason.length > 0,
+    )
+    console.log('note no mission profile file is attached; asset context needs --asset-id --mission-profiles')
+  } else {
+    check(
+      'asset inventory carries its provenance',
+      typeof assets.source === 'string' && typeof assets.source_sha256 === 'string',
+      JSON.stringify(Object.keys(assets)).slice(0, 160),
+    )
+    const declared = assets.assets[0]
+    const context = await getAssetContext(declared)
+    check('asset context is read-only', context.read_only === true)
+    check('asset context echoes the requested asset', context.asset_id === declared)
+    check(
+      'asset context states how the technical risk was chosen',
+      ['assessment_header', 'store_highest_risk'].includes(context.technical_risk_source),
+      context.technical_risk_source,
+    )
+    check(
+      'asset context fields read by the panel',
+      missing(context, [
+        'asset_id',
+        'assessment_id',
+        'technical_risk_source',
+        'technical_risk',
+        'technical_severity',
+        'mission_context',
+      ]).length === 0,
+      JSON.stringify(Object.keys(context)),
+    )
+    check(
+      'mission context reports status and configured together',
+      typeof context.mission_context.status === 'string' &&
+        context.mission_context.configured === (context.mission_context.status === 'configured'),
+      context.mission_context.status,
+    )
+    if (context.mission_context.configured) {
+      check(
+        'configured mission context publishes a profile and a risk',
+        missing(context.mission_context, ['profile', 'risk', 'context_source']).length === 0 &&
+          context.mission_context.profile !== null &&
+          context.mission_context.risk !== null,
+      )
+      check(
+        'the profile fields the panel renders',
+        missing(context.mission_context.profile as object, [
+          'asset_id',
+          'role',
+          'criticality',
+          'mission_impact',
+        ]).length === 0,
+        JSON.stringify(Object.keys(context.mission_context.profile ?? {})),
+      )
+      check(
+        'the risk fields the panel renders',
+        missing(context.mission_context.risk as object, [
+          'technical_risk',
+          'technical_severity',
+          'contextualized_risk',
+          'contextualized_severity',
+          'context_index',
+          'multiplier_bp',
+          'criticality_weight',
+          'mission_impact_weight',
+          'score_cap',
+          'inferred_from_traffic',
+          'model_version',
+        ]).length === 0,
+        JSON.stringify(Object.keys(context.mission_context.risk ?? {})),
+      )
+      check(
+        'context is never inferred from traffic',
+        context.mission_context.risk?.inferred_from_traffic === false &&
+          context.mission_context.derived_from_observation === false,
+      )
+    } else {
+      // Absent context must carry no profile and no risk, so the panel cannot
+      // mistake "nothing declared" for "nothing wrong".
+      check(
+        'unconfigured context publishes no profile and no risk',
+        context.mission_context.profile === null &&
+          context.mission_context.risk === null &&
+          typeof context.mission_context.reason === 'string',
+        JSON.stringify(context.mission_context).slice(0, 160),
+      )
     }
   }
 

@@ -15,16 +15,51 @@ function readBaseUrl(raw: string | undefined, fallback: string): string {
   return value === '' ? fallback : value
 }
 
+/**
+ * The host this page was actually opened from.
+ *
+ * The frontend is served on the testbed VM and opened either as
+ * `http://localhost:5173` on that VM or as `http://<lan-ip>:5173` from another
+ * machine. `127.0.0.1` only ever means "this machine", so it is correct for the
+ * first browser and wrong for the second -- a browser on another host would
+ * send the request to *itself* and get ERR_CONNECTION_REFUSED.
+ *
+ * Deriving the API host from the page's own hostname keeps both workflows
+ * working with one configuration: the browser calls the same host it already
+ * reached successfully. It is not hard-coded anywhere in the bundle, so a
+ * moved or re-addressed VM needs no rebuild.
+ *
+ * Falls back to `127.0.0.1` where there is no page context (SSR / smoke builds
+ * running in Node, where `window` is undefined).
+ */
+function pageHostname(): string {
+  if (typeof window !== 'undefined' && window.location?.hostname) {
+    return window.location.hostname
+  }
+  return '127.0.0.1'
+}
+
+/** Absolute base URL for a backend plane, using the page's own host. */
+function apiUrl(port: number): string {
+  return `http://${pageHostname()}:${port}`
+}
+
+/**
+ * Every plane can still be pinned explicitly with the matching `VITE_*_API_URL`
+ * variable (see `.env.example`); an explicit value always wins over the
+ * hostname-derived default below.
+ */
+
 /** Server A — read-only analytics plane. */
 export const ANALYTICS_API_URL = readBaseUrl(
   import.meta.env.VITE_ANALYTICS_API_URL,
-  'http://127.0.0.1:8081',
+  apiUrl(8081),
 )
 
 /** Server B — mutating control plane. */
 export const CONTROL_API_URL = readBaseUrl(
   import.meta.env.VITE_CONTROL_API_URL,
-  'http://127.0.0.1:8000',
+  apiUrl(8000),
 )
 
 /**
@@ -36,7 +71,7 @@ export const CONTROL_API_URL = readBaseUrl(
  * decides nothing and writes nothing; the only verb that does anything is the
  * POST that carries a question.
  */
-export const AI_API_URL = readBaseUrl(import.meta.env.VITE_AI_API_URL, 'http://127.0.0.1:8082')
+export const AI_API_URL = readBaseUrl(import.meta.env.VITE_AI_API_URL, apiUrl(8082))
 
 /** Per-request timeout for a single backend call. */
 export const API_TIMEOUT_MS = readNumber(import.meta.env.VITE_API_TIMEOUT_MS, 30_000)

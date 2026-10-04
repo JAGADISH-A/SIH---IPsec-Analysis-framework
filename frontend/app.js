@@ -79,6 +79,11 @@
     pfs: true,
     running: false,
     lastPayload: null,
+    // The controller's own identifier for the most recent experiment. Retained
+    // after completion because it is what the completed run is known by
+    // elsewhere; never reconstructed here, because only the controller issues
+    // it.
+    lastJob: null,
     configurations: null,
     duration: { min: 10, max: 120, default: 30 },
     espHmacs: ["sha256", "sha384", "sha512"],
@@ -479,6 +484,29 @@
     show($("#progressWrap"));
   }
 
+  function renderCompletedRun(jobId) {
+    const job = $("#passFullJobId");
+    if (job && jobId) {
+      job.textContent = jobId;
+      show($("#passHandoff"));
+    }
+    const handoff = $("#passHandoffNote");
+    if (handoff) {
+      handoff.textContent =
+        "To compare a run against a baseline, record the baseline first (Transport + IPv4), " +
+        "then run the configuration to compare against it (Transport + IPv6). Every completed " +
+        "experiment is listed in Sentinel under the assessment id the backend assigns it \u2014 " +
+        "open that assessment there to read its drift comparison.";
+    }
+    const note = $("#passCompletedNote");
+    if (note) {
+      note.textContent =
+        "Completed " + new Date().toLocaleTimeString() + " \u2014 this experiment is now " +
+        "recorded by the analytics backend.";
+      show(note);;
+    }
+  }
+
   function renderPass(result, jobId) {
     hide($("#progressWrap"));
 
@@ -487,6 +515,8 @@
     const tra = result.traffic || {};
 
     $("#passJobId").textContent = jobId ? "Experiment " + jobId.slice(0, 8) : "\u2014";
+    state.lastJob = jobId ? { jobId: jobId, status: "COMPLETED" } : null;
+    renderCompletedRun(jobId);
     $("#mIke").textContent = ip.ike_sa || "\u2014";
     $("#mChild").textContent = ip.child_sa || "\u2014";
     $("#mMode").textContent = ip.mode || "\u2014";
@@ -683,6 +713,7 @@
         return;
       }
 
+      state.lastJob = { jobId: jobId, status: "RUNNING" };
       $("#jobIdText").textContent = jobId.slice(0, 8);
 
       while (true) {
@@ -708,6 +739,9 @@
 
         paintProgress(job.status, job.stage);
         setJobState(job.status);
+        if (state.lastJob && job.status !== "COMPLETED") {
+          state.lastJob = { jobId: state.lastJob.jobId, status: job.status };
+        }
 
         if (job.status === "COMPLETED") {
           const result = job.result;

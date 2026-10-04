@@ -45,6 +45,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import parse_qs, unquote
 
+from ..drift import BaselineRegistry
 from .config import (
     DEFAULT_HOST,
     DEFAULT_PORT,
@@ -543,6 +544,55 @@ class DashboardServer(ThreadingHTTPServer):
         super().__init__(addr, DashboardHandler, **kwargs)
 
 
+def _load_drift_baseline(
+    args: Any,
+) -> Tuple[Optional[BaselineRegistry], Optional[str]]:
+    """Attach the validated baselines named on the command line, if any.
+
+    Startup-only and read-only: the registry is loaded from a file the server
+    never writes, and every record it yields has already been integrity-checked
+    by :meth:`ValidatedBaseline.from_dict`. Nothing here creates, amends or
+    derives a baseline -- establishing one stays the explicit, attributable act
+    the drift layer defines -- so with no ``--drift-baseline`` this returns
+    ``(None, None)`` and the store performs no drift comparison at all.
+
+    A ``--baseline-id`` that names nothing in the registry is refused at
+    startup rather than left to surface later as ``not_configured``: the store
+    resolves the baseline with ``BaselineRegistry.get``, which returns ``None``
+    for an unknown id without distinguishing "not named" from "named wrongly",
+    and a typo would otherwise degrade every drift surface silently.
+    """
+    if args.baseline_id is not None and args.drift_baseline is None:
+        raise SystemExit(
+            "[analytics-api] --baseline-id requires --drift-baseline; a "
+            "baseline id cannot select a baseline from no registry"
+        )
+    if args.drift_baseline is None:
+        return None, None
+    try:
+        registry = BaselineRegistry(args.drift_baseline)
+    except (OSError, ValueError) as error:
+        raise SystemExit(f"[analytics-api] {error}") from None
+    if not len(registry):
+        raise SystemExit(
+            f"[analytics-api] no validated baseline could be loaded from "
+            f"{args.drift_baseline}; the file holds no integrity-checked record"
+        )
+    if args.baseline_id is None:
+        raise SystemExit(
+            f"[analytics-api] --drift-baseline {args.drift_baseline} loaded "
+            f"{len(registry)} baseline(s) {list(registry.ids())}, but "
+            "--baseline-id did not say which one to compare against; there is "
+            "no fallback to the only or the latest baseline"
+        )
+    if registry.get(args.baseline_id) is None:
+        raise SystemExit(
+            f"[analytics-api] no baseline {args.baseline_id!r} is registered "
+            f"in {args.drift_baseline}; it holds {list(registry.ids())}"
+        )
+    return registry, args.baseline_id
+
+
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description="Analytics API (Server A)")
     parser.add_argument(
@@ -560,6 +610,19 @@ def main(argv=None) -> None:
              f"development default. Use '*' only for a trusted same-site deploy.",
     )
     parser.add_argument("--plan", default=None, help="override the Phase-3 plan.json")
+    parser.add_argument(
+        "--asset-id", default=None,
+        help="declare which asset this dataset run describes, so the store can "
+             "resolve its operator-supplied mission profile. Unset means no "
+             "asset is declared and every mission context is reported "
+             "'not_configured'; criticality is never inferred from evidence.",
+    )
+    parser.add_argument(
+        "--mission-profiles", default=None,
+        help="path to the operator-supplied asset mission profile file. "
+             "Defaults to the shipped configs/mission/asset_mission_profiles.json "
+             "when --asset-id is given.",
+    )
     parser.add_argument("--no-static", action="store_true",
                         help="serve API only (no dashboard/build)")
     parser.add_argument("--snapshot", default=None,
@@ -587,9 +650,26 @@ def main(argv=None) -> None:
                              "approval events; an existing chain is verified and "
                              "continued, never rewritten")
     parser.add_argument("--observation-journal", default=None,
-                        help="the observation journal the governance ledger's "
-                             "audit_tap evidence references point into "
-                             "(default: results/audit/events.jsonl)")
+help="the observation journal the governance ledger's "
+                              "audit_tap evidence references point into "
+                              "(default: results/audit/events.jsonl)")
+    parser.add_argument(
+        "--drift-baseline",
+        default=None,
+        help="path to a JSONL file of validated IPsec security-state baselines "
+             "in correlation.drift.BaselineRegistry format. Read read-only at "
+             "startup, and every record is integrity-checked as it is loaded. "
+             "Unset means NO baseline is configured and every drift comparison "
+             "reports not_configured; a baseline is never inferred from the "
+             "most recent observation.",
+    )
+    parser.add_argument(
+        "--baseline-id",
+        default=None,
+        help="which registered baseline the longitudinal comparison uses, named "
+             "explicitly. There is no fallback to the only or the latest "
+             "baseline. Requires --drift-baseline.",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -599,9 +679,49 @@ def main(argv=None) -> None:
     except ValueError as error:
         raise SystemExit(f"[analytics-api] {error}") from None
 
-    store = build_store(args.plan) if args.plan else build_store()
+    mission_profiles = None
+    if args.asset_id:
+        from ..mission import load_mission_profiles
+
+        try:
+            mission_profiles = load_mission_profiles(args.mission_profiles)
+        except (OSError, ValueError) as error:
+            raise SystemExit(f"[analytics-api] {error}") from None
+        if mission_profiles.get(args.asset_id) is None:
+            raise SystemExit(
+                f"[analytics-api] no mission profile is declared for asset "
+                f"{args.asset_id!r} in {mission_profiles.source}"
+            )
+
+    baselines, baseline_id = _load_drift_baseline(args)
+
+    if args.plan:
+        store = build_store(
+            args.plan, asset_id=args.asset_id, mission_profiles=mission_profiles,
+            baselines=baselines, baseline_id=baseline_id,
+        )
+    elif args.asset_id:
+        store = build_store(
+            asset_id=args.asset_id, mission_profiles=mission_profiles,
+            baselines=baselines, baseline_id=baseline_id,
+        )
+    else:
+        store = build_store(baselines=baselines, baseline_id=baseline_id)
     print(f"[analytics-api] store built: {store.overview['total_assessments']} "
           f"assessments (deterministic, score/severity from Phase-6 RiskAssessment)")
+    if baselines is None:
+        print("[analytics-api] drift: no --drift-baseline supplied, so no "
+              "longitudinal comparison is configured and every drift surface "
+              "reports not_configured")
+    else:
+        print(f"[analytics-api] drift: {len(baselines)} validated baseline(s) "
+              f"from {args.drift_baseline}, comparing against "
+              f"{baseline_id!r}")
+    if args.asset_id:
+        profile = mission_profiles.get(args.asset_id)
+        print(f"[analytics-api] mission context: asset {args.asset_id!r} "
+              f"criticality={profile.criticality!r} mission_impact={profile.mission_impact!r} "
+              f"(declared operator input from {mission_profiles.source}, not inferred)")
 
     phase10 = None
     if args.phase10 or args.audit_journal or args.governance_journal:

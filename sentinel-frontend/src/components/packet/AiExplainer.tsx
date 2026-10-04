@@ -119,6 +119,20 @@ function StatusPill({ status, connected }: { status: CapabilityStatus; connected
 
 function AuthoritativeStrip({ analysis }: { analysis: AiExplainResponse }) {
   const auth = analysis.authoritative
+  /*
+   * The assessment's severity and the selected finding's severity are
+   * different numbers and are routinely different values: an assessment can be
+   * HIGH because of one finding while the analyst is looking at a MEDIUM one.
+   * Showing only the assessment severity would quietly answer a question about
+   * the finding with the assessment's number, so both are rendered and the
+   * disagreement is made visible rather than resolved for the reader.
+   */
+  const finding = (auth.finding ?? null) as
+    | { severity?: string | null; score_contribution?: number | null }
+    | null
+  const findingSeverity = finding?.severity ?? null
+  const differs = findingSeverity !== null && findingSeverity !== auth.severity
+
   return (
     <div className="pw-ai-block">
       <div className="pw-ai-block-head">
@@ -126,12 +140,22 @@ function AuthoritativeStrip({ analysis }: { analysis: AiExplainResponse }) {
         <span className="pw-quiet">as recorded by the risk engine</span>
       </div>
       <div className="pw-ai-facts">
+        {differs ? (
+          <div>
+            <span className="pw-ai-fact-key">this finding</span>
+            <span className="pw-ai-fact-val">{findingSeverity}</span>
+          </div>
+        ) : null}
         <div>
-          <span className="pw-ai-fact-key">severity</span>
+          <span className="pw-ai-fact-key">
+            {differs ? 'whole assessment' : 'severity'}
+          </span>
           <span className="pw-ai-fact-val">{auth.severity ?? 'not recorded'}</span>
         </div>
         <div>
-          <span className="pw-ai-fact-key">risk score</span>
+          <span className="pw-ai-fact-key">
+            {differs ? 'assessment score' : 'risk score'}
+          </span>
           <span className="pw-ai-fact-val">{auth.risk_score ?? 'not recorded'}</span>
         </div>
         <div>
@@ -139,6 +163,12 @@ function AuthoritativeStrip({ analysis }: { analysis: AiExplainResponse }) {
           <span className="pw-ai-fact-val">{auth.risk_policy_version ?? 'not recorded'}</span>
         </div>
       </div>
+      {differs ? (
+        <p className="pw-ai-none">
+          The finding you are looking at is {findingSeverity}; the assessment as a whole is{' '}
+          {auth.severity}. Those are separate verdicts and this panel does not reconcile them.
+        </p>
+      ) : null}
     </div>
   )
 }
@@ -268,6 +298,7 @@ function Thread({
 export function AiExplainer({
   assessmentId,
   findingId,
+  experimentId,
   severity,
   hasEvidence,
   context,
@@ -276,6 +307,17 @@ export function AiExplainer({
   assessmentId: string | null
   /** Narrows the explanation to the finding the analyst selected. */
   findingId?: string | null
+  /**
+   * The job this assessment came from, taken from the bundle the surface is
+   * already rendering. The service needs it to resolve the recorded root
+   * cause, which is keyed by experiment; without it the assistant has to say
+   * "no root cause was recorded" even when one was.
+   *
+   * It is the existing identifier, not a new one, and it is never invented:
+   * a surface that does not know it sends nothing and the service answers
+   * honestly instead.
+   */
+  experimentId?: string | null
   severity: string | null
   hasEvidence: boolean
   /** The investigation summary, shown on request as the exact context used. */
@@ -304,6 +346,7 @@ export function AiExplainer({
           entityKind: hasFinding ? 'finding' : 'assessment',
           question,
           findingId: findingId ?? null,
+          experimentId: experimentId ?? null,
           context,
           history,
         })
@@ -315,7 +358,7 @@ export function AiExplainer({
         setBusy(false)
       }
     },
-    [assessmentId, context, findingId, hasFinding, turns],
+    [assessmentId, context, experimentId, findingId, hasFinding, turns],
   )
 
   const explain = useCallback(() => {
@@ -387,15 +430,23 @@ export function AiExplainer({
           <AnswerBlock analysis={analysis} />
           <AuthoritativeStrip analysis={analysis} />
           <MlStrip analysis={analysis} />
-          {!compact ? (
-            <Thread
-              turns={turns.slice(0, -1)}
-              onAsk={(question) => void ask(question)}
-              busy={busy}
-              disabled={false}
-            />
-          ) : null}
         </>
+      ) : null}
+
+      {/*
+        The thread is available before the first answer as well as after it.
+        Forcing an analyst to click "Explain with AI" before being allowed to
+        ask their own question would make the follow-up a continuation-only
+        feature, when the more common case is a specific question about a
+        specific finding.
+      */}
+      {!compact ? (
+        <Thread
+          turns={turns.slice(0, -1)}
+          onAsk={(question) => void ask(question)}
+          busy={busy}
+          disabled={false}
+        />
       ) : null}
     </div>
   )

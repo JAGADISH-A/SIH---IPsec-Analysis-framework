@@ -47,7 +47,18 @@ static const char *const counter_labels[COUNTER_MAX] = {
     [COUNTER_ESP]      = "ESP",
     [COUNTER_AH]       = "AH",
     [COUNTER_OTHER]    = "OTHER",
+    [COUNTER_ESP_NATT] = "ESP-NAT-T",
 };
+
+/*
+ * Events that carry a real ESP/AH header: native protocol 50/51 and RFC 3948
+ * ESP-in-UDP.  Only these may report spi/seq, and none of them report ports
+ * (a native ESP frame has no UDP header at all).
+ */
+static inline int has_spi_seq(uint16_t type)
+{
+    return type == COUNTER_ESP || type == COUNTER_AH || type == COUNTER_ESP_NATT;
+}
 
 /* ------------------------------------------------------------------------- */
 /* Ring-buffer event handler: print one concise structured line per packet.  */
@@ -71,7 +82,28 @@ static int handle_event(void *ctx, void *data, size_t size)
     }
 
     if (json_out) {
-        if (e->type == COUNTER_ESP || e->type == COUNTER_AH) {
+        /*
+         * NAT-T (ESP-in-UDP) carries BOTH the RFC 3948 UDP ports and the real
+         * SPI/sequence, because the datagram genuinely has a UDP header AND an
+         * ESP header behind the 4-byte marker.  Native ESP/AH carry spi/seq
+         * only; IKE/NAT-T-IKE/OTHER carry ports only.
+         */
+        if (e->type == COUNTER_ESP_NATT) {
+            printf("{\"ts\":%llu,\"type\":\"%s\",\"src\":\"%s\",\"dst\":\"%s\","
+                   "\"family\":%u,\"proto\":%u,\"len\":%u,\"sport\":%u,\"dport\":%u,"
+                   "\"spi\":%u,\"seq\":%u}\n",
+                   (unsigned long long)e->timestamp,
+                   e->type < COUNTER_MAX ? counter_labels[e->type] : "?",
+                   src,
+                   dst,
+                   e->family,
+                   e->proto,
+                   e->len,
+                   ntohs(e->sport),
+                   ntohs(e->dport),
+                   ntohl(e->spi),
+                   ntohl(e->seq));
+        } else if (has_spi_seq(e->type)) {
             printf("{\"ts\":%llu,\"type\":\"%s\",\"src\":\"%s\",\"dst\":\"%s\","
                    "\"family\":%u,\"proto\":%u,\"len\":%u,\"spi\":%u,\"seq\":%u}\n",
                    (unsigned long long)e->timestamp,
@@ -109,11 +141,16 @@ static int handle_event(void *ctx, void *data, size_t size)
            e->proto,
            e->len);
 
-    if (e->type == COUNTER_ESP || e->type == COUNTER_AH) {
+    if (has_spi_seq(e->type)) {
         printf(" spi=0x%x seq=0x%x",
                ntohl(e->spi),
                ntohl(e->seq));
-    } else {
+    }
+    if (e->type == COUNTER_ESP_NATT) {
+        printf(" sport=%u dport=%u",
+               ntohs(e->sport),
+               ntohs(e->dport));
+    } else if (!has_spi_seq(e->type)) {
         printf(" sport=%u dport=%u",
                ntohs(e->sport),
                ntohs(e->dport));

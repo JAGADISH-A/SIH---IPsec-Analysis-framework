@@ -51,13 +51,20 @@ CAPTURE_TARGETS = {
     ("tunnel", "ipv6"): ("clab-ipsec-gw-a", "192.168.100.1"),
     ("transport", "ipv4"): ("clab-ipsec-transport-host-c", "10.20.1.10"),
     ("transport", "ipv6"): ("clab-ipsec-transport-host-c", "2001:db8:20::10"),
+    # NAT-T deployment.  host-c's LAN-side eth1 is both the IPsec endpoint's
+    # data-plane interface and the capture point: it carries the IKE exchange
+    # and the UDP/4500 ESP-in-UDP, and it is the pre-NAT view, so a capture
+    # here proves strongSwan itself chose the encapsulation (rather than the
+    # translator having rewritten anything).
+    ("transport-nat", "ipv4"): ("clab-ipsec-transport-nat-host-c", "10.20.1.10"),
 }
 
 
-def capture_facing(mode, address_family):
-    if (mode, address_family) not in CAPTURE_TARGETS:
-        raise ValueError(f"No capture mapping for {mode}/{address_family}")
-    return CAPTURE_TARGETS[(mode, address_family)]
+def capture_facing(mode, address_family, nat=False):
+    key = f"{mode}-nat" if nat else mode
+    if (key, address_family) not in CAPTURE_TARGETS:
+        raise ValueError(f"No capture mapping for {key}/{address_family}")
+    return CAPTURE_TARGETS[(key, address_family)]
 
 
 def detect_capture_interface(container, wan_ip):

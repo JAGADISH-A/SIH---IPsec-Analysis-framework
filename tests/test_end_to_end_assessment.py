@@ -172,6 +172,44 @@ def _chain(store, assessment_id=DRIFT_ASSESSMENT, finding_id=ESP_FINDING,
     ).to_dict()
 
 
+def _drift_digests(comparison):
+    """The baseline and current canonical-state digests of one comparison.
+
+    Accepts either the serialised drift context or a ``DriftAssessment``, so a
+    single invariant can be stated once and applied to both surfaces.
+    """
+    if isinstance(comparison, dict):
+        return (comparison["baseline"]["state_digest"],
+                comparison["current"]["state_digest"])
+    return comparison.baseline_state_digest, comparison.current_state_digest
+
+
+def _drift_verdicts_without_a_canonical_difference(comparisons):
+    """Comparisons that report drift while carrying an identical state.
+
+    Wholly data-derived: it walks the comparisons that were actually built and
+    compares the two canonical-state digests each one carries. No assessment id
+    and no expected digest string takes part in the decision, so the guard
+    survives a change of ids and cannot be satisfied by a fixed total.
+
+    ``indeterminate`` is skipped deliberately. An uninformative observation
+    carries a different digest precisely *because* it observed nothing
+    comparable, so a flat "drift iff the digests differ" rule would be wrong
+    here. The rule is one-directional on purpose: drift requires a difference,
+    and an absent difference may never be promoted into drift.
+    """
+    offenders = []
+    for assessment_id, comparison in comparisons.items():
+        status = (comparison["status"] if isinstance(comparison, dict)
+                  else comparison.status)
+        if status != "drift":
+            continue
+        baseline_digest, current_digest = _drift_digests(comparison)
+        if baseline_digest == current_digest:
+            offenders.append(assessment_id)
+    return offenders
+
+
 class TestScenarioIsRealAndDisclosed(unittest.TestCase):
     """2: one deterministic scenario, and every input of it is accounted for."""
 
@@ -275,15 +313,43 @@ class TestScenarioIsRealAndDisclosed(unittest.TestCase):
         self.assertNotIn(DRIFT_ASSESSMENT, control.bundles)
         self.assertEqual(
             len(control.bundles), len(self.store.bundles) - 1)
-        statuses = set()
-        for bundle in control.bundles.values():
-            statuses.add(bundle["drift"]["status"])
-            # no_drift and indeterminate alike carry no finding to register.
-            self.assertIsNone(bundle["drift"]["risk"])
-        # The recorded captures all agree with the baseline; the assessments
-        # with no state observation at all are indeterminate rather than agreed.
-        self.assertEqual(statuses, {"no_drift", "indeterminate"})
-        self.assertNotIn("drift", statuses)
+
+        genuine_drift = set()
+        for assessment_id, bundle in control.bundles.items():
+            drift = bundle["drift"]
+            if drift["status"] != "drift":
+                # Anything that agrees with the baseline -- or that could not be
+                # observed at all -- registers nothing. Nothing is excused from
+                # this by the shape of its id.
+                self.assertIsNone(
+                    drift["risk"],
+                    f"{assessment_id} compares as {drift['status']!r} yet "
+                    f"registered {drift['risk']!r}")
+                continue
+            # A drift verdict is admissible only where the canonical states the
+            # comparison itself carries actually differ. Membership is decided
+            # by the comparison, never by the assessment's name: an assessment
+            # whose id happens to contain 'transport-v6' gets exactly the same
+            # scrutiny as any other, and this stays valid if ids are renumbered.
+            baseline_digest, current_digest = _drift_digests(drift)
+            self.assertNotEqual(
+                baseline_digest, current_digest,
+                f"{assessment_id} reports drift while carrying an identical "
+                f"canonical state ({baseline_digest})")
+            genuine_drift.add(assessment_id)
+
+        # The non-drifting assessments are exactly the agreed and the
+        # unobservable ones; no fourth verdict may appear.
+        self.assertEqual(
+            {bundle["drift"]["status"] for bundle in control.bundles.values()
+             if bundle["drift"]["status"] != "drift"},
+            {"no_drift", "indeterminate"})
+        # And the corpus really does contain a genuine difference, so the
+        # assertions above are exercised rather than vacuously satisfied.
+        self.assertTrue(
+            genuine_drift,
+            "no assessment drifted against the baseline, so this control "
+            "proves nothing")
 
     def test_a_store_without_a_baseline_adds_no_drift_at_all(self):
         control = _store(HIGH_ASSET, with_baseline=False)
@@ -903,12 +969,15 @@ class TestApiEndToEnd(unittest.TestCase):
         # Per-assessment counts: the drifted comparison is reported twice,
         # because it is both the context of the plan-based assessment and an
         # assessment in its own right.
+        # Two drifted comparisons, each reported against two assessments: the
+        # declared ESP/AH fixture, and the genuine transport/IPv6 capture of the
+        # same asset under a different configuration.
         self.assertEqual(summary["status_counts"],
-                         {"drift": 2, "indeterminate": 2, "no_drift": 9})
-        self.assertEqual(summary["assessment_count"], 13)
-        self.assertEqual(summary["drift_origin_count"], 1)
-        # Three distinct comparison results, from thirteen assessments.
-        self.assertEqual(summary["comparison_count"], 3)
+                         {"drift": 4, "indeterminate": 2, "no_drift": 9})
+        self.assertEqual(summary["assessment_count"], 15)
+        self.assertEqual(summary["drift_origin_count"], 2)
+        # Four distinct comparison results, from fifteen assessments.
+        self.assertEqual(summary["comparison_count"], 4)
 
         detail = handle_assessment_drift(self.store, DRIFT_ASSESSMENT)
         self.assertEqual(detail["status"], "drift")
@@ -947,14 +1016,15 @@ class TestApiEndToEnd(unittest.TestCase):
         self.assertIsNone(plan_entry["parent_assessment_id"])
         self.assertEqual(plan_entry["current_source_kind"],
                          DRIFT_SOURCE_KIND_DECLARED)
-        # One comparison, two assessments: both facts published.
-        self.assertEqual(summary["comparison_count"], 3)
-        self.assertEqual(summary["assessment_count"], 13)
-        self.assertEqual(summary["drift_origin_count"], 1)
+        # One comparison, two assessments: both facts published. Two drifted
+        # comparisons in total once transport-v6 is counted.
+        self.assertEqual(summary["comparison_count"], 4)
+        self.assertEqual(summary["assessment_count"], 15)
+        self.assertEqual(summary["drift_origin_count"], 2)
         # Every other assessment used a real recorded capture.
         self.assertEqual(
             summary["current_source_kinds"],
-            {DRIFT_SOURCE_KIND_DECLARED: 2, DRIFT_SOURCE_KIND_RECORDED: 11},
+            {DRIFT_SOURCE_KIND_DECLARED: 2, DRIFT_SOURCE_KIND_RECORDED: 13},
         )
         for assessment_id, other in summary["assessments"].items():
             if assessment_id in (DRIFT_ASSESSMENT, PLAN_ASSESSMENT):
@@ -964,14 +1034,42 @@ class TestApiEndToEnd(unittest.TestCase):
             self.assertTrue(other["current_source_is_capture"])
 
     def test_the_no_drift_control_is_served_as_no_drift(self):
+        """Without the declaration, the declared scenario holds still.
+
+        The store also holds transport-v6, a real capture of the same asset
+        under an IPv6 configuration, which genuinely disagrees with the IPv4
+        baseline. So the control is asserted on the slot under test: the
+        declared scenario reports no_drift, and the only drift left anywhere is
+        the one attributable to that genuine capture.
+        """
         control = _store(HIGH_ASSET, with_declared=False)
         summary = handle_drift(control)
         self.assertEqual(summary["status_counts"],
-                         {"indeterminate": 2, "no_drift": 10})
-        self.assertEqual(summary["assessment_count"], 12)
-        self.assertEqual(summary["drift_origin_count"], 0)
+                         {"indeterminate": 2, "drift": 2, "no_drift": 10})
+        self.assertEqual(summary["assessment_count"], 14)
+        self.assertEqual(summary["drift_origin_count"], 1)
         self.assertEqual(
-            summary["current_source_kinds"], {DRIFT_SOURCE_KIND_RECORDED: 12})
+            summary["current_source_kinds"], {DRIFT_SOURCE_KIND_RECORDED: 14})
+        # The declared scenario, with its declaration removed, is at rest.
+        self.assertEqual(summary["assessments"][PLAN_ASSESSMENT]["status"],
+                         "no_drift")
+        # And every remaining drift is the genuine IPv6 capture, not the fixture.
+        drifted = {aid for aid, entry in summary["assessments"].items()
+                   if entry["status"] == "drift"}
+        self.assertEqual(
+            drifted,
+            {"dataset-20260924-003710:46:transport-v6",
+             "dataset-20260924-003710:46:transport-v6-drift"},
+        )
+        for aid in drifted:
+            entry = summary["assessments"][aid]
+            self.assertEqual(entry["current_source_kind"],
+                             DRIFT_SOURCE_KIND_RECORDED)
+            self.assertTrue(entry["current_source_is_capture"])
+            self.assertEqual(
+                [(c["variable"], c["baseline_value"], c["current_value"])
+                 for c in entry["changed_fields"]],
+                [("address_family", "ipv4", "ipv6")])
 
     def test_the_openapi_document_declares_the_new_fields(self):
         document = openapi_document()
@@ -1034,10 +1132,90 @@ class TestNoDriftControl(unittest.TestCase):
                          ["address_family", "esp.presence", "ah.presence"])
 
     def test_no_drift_creates_no_drift_finding_anywhere(self):
-        for bundle in self.store.bundles.values():
-            for finding in bundle["risk"]["findings"]:
-                self.assertNotIn("DRIFT", finding["finding_id"])
+        """Removing the declaration removes the finding it would have created.
+
+        Store-wide, one recorded case now drifts for real: transport-v6, whose
+        capture was taken under a different configuration than the baseline. The
+        claim under test is narrower and stronger -- no slot reports a drift
+        finding unless a capture or a declaration actually supports one.
+        """
+        drift_origins = {aid for aid, parent in self.store.drift_parent.items()
+                         if parent is not None}
+        for assessment_id, bundle in self.store.bundles.items():
+            drift = bundle["drift"]
+            has_finding = any("DRIFT" in finding["finding_id"]
+                              for finding in bundle["risk"]["findings"])
+            # No drift finding without a drift result: that is the direction
+            # that would be fabricated.
+            if drift["status"] != "drift":
+                self.assertFalse(
+                    has_finding,
+                    f"{assessment_id} carries a drift finding while comparing "
+                    f"as {drift['status']!r}")
+            # And a drifted comparison is registered as an assessment, so the
+            # finding is reachable rather than orphaned in context.
+            if assessment_id in drift_origins:
+                self.assertTrue(
+                    has_finding,
+                    f"{assessment_id} is a drifted assessment with no finding")
+        # Every drift verdict must rest on a canonical-state difference that the
+        # comparison itself carries. Derived from the comparisons that were
+        # built -- no ids and no expected digest strings participate -- so it
+        # survives renumbering and cannot be satisfied by a fixed total.
+        self.assertEqual(
+            _drift_verdicts_without_a_canonical_difference(
+                self.store.drift_inputs),
+            [],
+            "a drift verdict must rest on a real canonical-state difference")
+        # The declared fixture's own assessment and its drift-origin row are
+        # absent without the declaration.
         self.assertNotIn(DRIFT_ASSESSMENT, self.store.bundles)
+
+    def test_a_drift_verdict_without_a_canonical_difference_is_rejected(self):
+        """The digest guard above is load-bearing, and skips indeterminate.
+
+        Two halves, both by mutation rather than by assertion:
+        erasing the canonical difference while leaving ``status="drift"`` must be
+        reported as an offender, and an uninformative observation that carries a
+        different digest must not be -- otherwise the guard would be a flat
+        biconditional and would misread every indeterminate comparison.
+        """
+        real = self.store.drift_inputs
+        self.assertEqual(
+            _drift_verdicts_without_a_canonical_difference(real), [],
+            "the store itself must satisfy the invariant")
+
+        drifted = sorted(aid for aid, c in real.items()
+                         if c.status == "drift")
+        self.assertTrue(drifted, "corpus must contain a genuine drift to forge")
+
+        # Mutation: keep the verdict, remove the difference it claims to rest
+        # on. This is the fabricated drift the invariant exists to reject.
+        forged_id = drifted[0]
+        forged = dict(real)
+        forged[forged_id] = dataclasses.replace(
+            real[forged_id],
+            current_state_digest=real[forged_id].baseline_state_digest)
+        self.assertEqual(
+            _drift_verdicts_without_a_canonical_difference(forged),
+            [forged_id],
+            "a drift verdict over an identical canonical state must be caught")
+
+        # The exemption is earned, not assumed: an indeterminate comparison in
+        # this corpus really does carry a different digest -- it observed
+        # nothing comparable -- and is still correctly not called drift.
+        indistinguishable = sorted(
+            aid for aid, c in real.items()
+            if c.status == "indeterminate"
+            and c.baseline_state_digest != c.current_state_digest)
+        self.assertTrue(
+            indistinguishable,
+            "corpus must exercise the indeterminate exemption to prove it")
+        self.assertEqual(
+            _drift_verdicts_without_a_canonical_difference(
+                {aid: real[aid] for aid in indistinguishable}),
+            [],
+            "an indeterminate observation with a differing digest is not drift")
 
     def test_no_drift_is_still_reported_rather_than_omitted(self):
         """The absence of a finding is not the presence of a comparison."""

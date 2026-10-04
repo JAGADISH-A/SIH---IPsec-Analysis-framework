@@ -53,6 +53,32 @@ def generate_swanctl_config(config, local, remote):
     }}
 """
 
+    # On a NAT path strongSwan moves IKE from UDP/500 onto UDP/4500 as soon as
+    # it detects the address translation.  The transport child's traffic
+    # selector covers this host's own IKE traffic, so that retransmitted
+    # negotiation would re-enter the child trap and deadlock on exactly the
+    # CHILD SA that has to carry it.  The 4500 pass trap is therefore required
+    # whenever a NAT is in the path; it is emitted only in that case so an
+    # existing direct transport deployment keeps byte-identical output.
+    nat_bypass = ""
+    if transport and config.get("nat"):
+        nat_bypass = f"""
+    {connection_name}-ike-bypass-4500 {{
+        version = {ike['version']}
+        local_addrs = {local['ip']}
+        remote_addrs = {remote['ip']}
+
+        children {{
+            {connection_name}-ike-bypass-4500 {{
+                mode = pass
+                local_ts = dynamic[udp/4500]
+                remote_ts = dynamic[udp/4500]
+                start_action = trap
+            }}
+        }}
+    }}
+"""
+
     return f"""secrets {{
     ike-psk {{
         id-1 = {local['id']}
@@ -89,7 +115,7 @@ connections {{
 
         proposals = {ike_proposal}
     }}
-    {bypass}
+    {bypass}{nat_bypass}
 }}
 """
 

@@ -21,6 +21,8 @@ Complements the Phase-8 contract WITHOUT touching it:
     GET /api/v1/findings/{finding_id}/explanation -> the same, disambiguated by
                                               ?assessment_id= (409 when the
                                               finding id is not unique)
+    GET /api/v1/assets                     -> declared asset ids
+    GET /api/v1/assets/{asset_id}/context  -> one asset's mission context
 
 The audit surface is a QUERY layer over the existing
 ``correlation.audit.AuditJournal``: it reads persisted records and returns them
@@ -74,6 +76,12 @@ from .evidence_routes import (
     handle_run_evidence,
 )
 from .pcap import PcapService
+from .asset_routes import (
+    ASSET_CONTEXT_SUFFIX,
+    ASSETS_PATH,
+    handle_asset_context,
+    handle_assets,
+)
 from .routes import ApiError
 
 CONTENT_TYPE_JSON = "application/json"
@@ -93,6 +101,10 @@ ASSESSMENTS_PATH = "/api/v1/assessments"
 ASSESSMENTS_PREFIX = "/api/v1/assessments/"
 FINDINGS_PATH = "/api/v1/findings"
 FINDINGS_PREFIX = "/api/v1/findings/"
+#: Declared assets and one asset's mission context. The asset id is chosen per
+#: request here, which the custody route cannot do: it can only report the asset
+#: the store was started with. See ``asset_routes``.
+ASSETS_PREFIX = "/api/v1/assets/"
 #: Longitudinal drift surface: what the run was compared against, the validated
 #: baselines themselves, and one assessment's comparison. Read-only.
 DRIFT_ASSESSMENT_SUFFIX = ASSESSMENT_DRIFT_SUFFIX
@@ -324,6 +336,24 @@ def handle_v1_get(
                 CONTENT_TYPE_JSON,
             )
         raise ApiError(404, "unknown_route", f"unknown route {path!r}")
+    if path == ASSETS_PATH:
+        return handle_assets(_store_or_503(store)), CONTENT_TYPE_JSON
+    if path.startswith(ASSETS_PREFIX):
+        remainder = path[len(ASSETS_PREFIX):]
+        if not remainder:
+            raise ApiError(404, "invalid_route", f"unknown route {path!r}")
+        if remainder.endswith(ASSET_CONTEXT_SUFFIX):
+            # /api/v1/assets/{asset_id}/context
+            asset_id = remainder[: -len(ASSET_CONTEXT_SUFFIX)]
+            if asset_id and "/" not in asset_id:
+                return (
+                    handle_asset_context(_store_or_503(store), asset_id, params),
+                    CONTENT_TYPE_JSON,
+                )
+        # A bare /api/v1/assets/{id} is not a route: the asset list is the only
+        # asset route, and a single asset's context is its sub-resource. Fall
+        # through to the trailing unknown_route rather than answering a
+        # half-understood path.
     if path == ASSESSMENTS_PATH:
         return handle_assessments_v1(_store_or_503(store), params), CONTENT_TYPE_JSON
     if path == DRIFT_PATH:

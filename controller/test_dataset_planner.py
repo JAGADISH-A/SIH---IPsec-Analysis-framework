@@ -54,17 +54,41 @@ def plan_configs(plan):
 
 
 class TestCatalogue(unittest.TestCase):
+    # 192 direct configurations (tunnel/transport x ipv4/ipv6 x crypto) plus
+    # the 48 transport/ipv4 NAT-T cells.  NAT is a separate axis, not a new
+    # mode, so the direct 192 are unchanged.
+    DIRECT_ACCEPTED = 192
+    NAT_ACCEPTED = 48
+
     def test_catalogue_counts(self):
         catalogue = build_catalogue()
-        self.assertEqual(len(catalogue["accepted"]), 192)
-        self.assertEqual(len(catalogue["rejected"]), 192)
+        self.assertEqual(len(catalogue["accepted"]), self.DIRECT_ACCEPTED + self.NAT_ACCEPTED)
+        self.assertEqual(len(catalogue["rejected"]), self.DIRECT_ACCEPTED + self.NAT_ACCEPTED)
+
+    def test_nat_axis_is_transport_ipv4_only(self):
+        """NAT may only be enumerated where a translator is provisioned."""
+        catalogue = build_catalogue()
+        nat_entries = [e for e in catalogue["accepted"] if e["config"].get("nat")]
+        self.assertEqual(len(nat_entries), self.NAT_ACCEPTED)
+        for entry in nat_entries:
+            with self.subTest(configuration_id=entry["configuration_id"]):
+                self.assertEqual(entry["config"]["mode"], "transport")
+                self.assertEqual(entry["config"]["address_family"], "ipv4")
+
+    def test_nat_configuration_ids_are_distinct(self):
+        """A NAT-T cell must never collide with its direct counterpart."""
+        catalogue = build_catalogue()
+        ids = [e["configuration_id"] for e in catalogue["accepted"]]
+        self.assertEqual(len(ids), len(set(ids)))
 
     def test_catalogue_per_posture_counts(self):
         catalogue = build_catalogue()
         counts = Counter(e["security_posture"] for e in catalogue["accepted"])
+        # 240 accepted = the original 192 direct cells plus the 48 NAT-T cells.
+        self.assertEqual(sum(counts.values()), self.DIRECT_ACCEPTED + self.NAT_ACCEPTED)
         self.assertEqual(
             dict(counts),
-            {"STRONG": 12, "GOOD": 44, "MEDIUM": 52, "WEAK": 48, "WORST": 36},
+            {"STRONG": 15, "GOOD": 55, "MEDIUM": 65, "WEAK": 60, "WORST": 45},
         )
 
     def test_accepted_configurations_all_valid(self):
@@ -341,8 +365,8 @@ class TestSamplePlan(unittest.TestCase):
         self.assertIn("planner_version", plan)
         self.assertIn("dataset_schema_version", plan)
         self.assertIn("catalogue", plan)
-        self.assertEqual(plan["catalogue"]["accepted"], 192)
-        self.assertEqual(plan["catalogue"]["rejected"], 192)
+        self.assertEqual(plan["catalogue"]["accepted"], 240)
+        self.assertEqual(plan["catalogue"]["rejected"], 240)
 
 
 class TestPlanPersistence(unittest.TestCase):

@@ -372,7 +372,48 @@ class TestCase1ExpectedIpsecButNoObservedEvidence(unittest.TestCase):
             "expected ESP must never be recorded as an observed match",
         )
 
-        # mode: expected tunnel, observed transport -> a genuine discrepancy.
+        # mode: expected tunnel.  No ESP/AH was observed, so there is no
+        # authoritative source for the encapsulation mode at all.  A passive
+        # observer cannot distinguish tunnel from transport on the wire, so the
+        # variable must be UNKNOWN -- reporting "transport" here (or "tunnel")
+        # would be an invented observation, exactly like claiming the protocol
+        # was seen.
+        mode = by_variable["mode"]
+        self.assertEqual("UNKNOWN", mode["status"])
+        self.assertEqual("tunnel", mode["expected_value"])
+        self.assertIn(
+            mode["observed_value"], (None, ""),
+            "no authoritative SA report exists, so no observed mode may be "
+            "reported",
+        )
+
+    def test_mode_mismatch_only_from_authoritative_observed_mode(self):
+        """A genuine mode discrepancy requires an authoritative observed mode."""
+        from correlation.models import ObservedState
+
+        from correlation.ml.live_correlation import correlate_live_window
+
+        observed_with_sa = ObservedState(
+            timestamp_ns=self.observed.timestamp_ns,
+            esp_seen=False,
+            ah_seen=False,
+            ike_seen=False,
+            mode="transport",
+        )
+        result = correlate_live_window(
+            expected=_materialized(),
+            observed=observed_with_sa,
+            window=self.window,
+            observed_identity=self.window_identity,
+        )
+        events = audit_correlation_result(
+            result, expected=self.expected_state, identity=self.run_identity
+        )
+        by_variable = {
+            v["variable"]: v
+            for v in _event(events, EVENT_COMPARISON).comparison["variables"]
+        }
+
         mode = by_variable["mode"]
         self.assertEqual("MISMATCH", mode["status"])
         self.assertEqual("tunnel", mode["expected_value"])

@@ -41,7 +41,7 @@ from typing import Any, Dict, Optional
 from .. import artifacts
 from ..adapters import ExpectedStateAdapter
 from ..comparison import ComparisonEngine, ComparisonEngineOptions
-from ..models import ObservedState, SpiObservation
+from ..models import ObservedState, SpiObservation, normalize_authoritative_mode
 from ..risk import RiskEngine, RiskPolicy
 from ..xai import ExplainabilityEngine
 from .adapters import header_view
@@ -84,6 +84,9 @@ class CurrentRunAnnex:
         self._manifest_mtime = 0
         self._spi_stamp: Optional[tuple] = None
         self._spi_cache: set = set()
+        self._endpoint_stamp: Optional[tuple] = None
+        self._endpoint_cache: Dict[str, str] = {}
+        self._finalized_id: Optional[str] = None
         self._manifest: Optional[Dict[str, Any]] = None
         self._saved_risk: Dict[int, Any] = {}
         self.last_status: Dict[str, Any] = {"active": False, "reason": "not started"}
@@ -124,7 +127,7 @@ class CurrentRunAnnex:
             gate == GATE_ACTIVE or (gate == GATE_LEGACY and feed_current)
         )
         if not active:
-            changed = self.unregister()
+            settled = self._settle(mtime)
             self.last_status = {
                 "active": False,
                 "reason": "no current live journal with a controller manifest",
@@ -134,6 +137,8 @@ class CurrentRunAnnex:
             }
             if mtime is not None and mtime != self._manifest_mtime:
                 self.last_status["new_manifest"] = True
+            if settled:
+                self.last_status["finalized_assessment_id"] = settled
             return self.last_status
         if self._registered and self._manifest_mtime == mtime:
             # The run is still going and its manifest has not changed, but the
@@ -148,8 +153,9 @@ class CurrentRunAnnex:
                 "projected_spis": len(projected),
             }
             return self.last_status
-        if self._registered:
+        if self._registered and self._finalized_id is None:
             self.unregister()
+        self._finalized_id = None
         try:
             self.register(mtime)
             self.last_status = {
@@ -247,11 +253,21 @@ class CurrentRunAnnex:
                     sequence_delta=int(seqs) if seqs is not None else None,
                 )
             )
+        ipsec = observed.get("ipsec") or {}
+        authoritative_mode = normalize_authoritative_mode(
+            (ipsec.get("mode") if isinstance(ipsec, dict) else None)
+        )
         return ObservedState(
             timestamp_ns=int(timestamp_ns),
-            endpoints={},
+            endpoints=self._observed_endpoints(),
             tunnel_seen=bool(summary.get("tunnel_seen", False)),
             active=bool(summary.get("tunnel_seen", False)),
+            # Authoritative encapsulation mode of the REAL deployed SA, taken
+            # from the manifest's observed `swanctl --list-sas` verification.
+            # `None` when no SA verification was recorded, which makes the
+            # comparison report mode as UNKNOWN instead of inferring it from
+            # the presence of ESP (identical on the wire in both modes).
+            mode=authoritative_mode,
             packets_seen=int(summary.get("packets") or 0),
             bytes_seen=int(summary.get("bytes") or 0),
             packets_a_to_b=0,
@@ -321,6 +337,63 @@ class CurrentRunAnnex:
         self._spi_cache = spis
         return spis
 
+    def _observed_endpoints(self) -> Dict[str, str]:
+        """The real outer addresses of the IPsec packets this run observed.
+
+        ``ObservedState.endpoints`` is what the address-family canonical
+        variable observes, so it has to come from real packets rather than from
+        the requested configuration. Only ESP/AH packets are read: those carry
+        the outer-header addresses of the SA actually in force, which is the
+        pair the recorded parser puts in ``endpoints`` too. Reading starts at the
+        experiment's own ``observation_start_bytes`` so no earlier run's traffic
+        can contribute, and an endpoint is never taken from the configured
+        mode or address-family label. Returns ``{}`` when no IPsec packet was
+        observed, which leaves address family honestly unestablished.
+        """
+        journal = getattr(self.feed, "path", None)
+        if not journal:
+            return {}
+        try:
+            stat = os.stat(journal)
+        except OSError:
+            return {}
+        start = 0
+        try:
+            manifest = self._load_manifest() or {}
+            start = int((manifest.get("run") or {}).get("observation_start_bytes") or 0)
+        except Exception:  # noqa: BLE001 - best effort observation only
+            start = 0
+        stamp = (stat.st_size, stat.st_mtime_ns, start)
+        if self._endpoint_stamp == stamp:
+            return dict(self._endpoint_cache)
+        pairs: Dict[tuple, int] = {}
+        try:
+            with open(journal, "rb") as handle:
+                handle.seek(max(0, start))
+                for line in handle:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except ValueError:
+                        continue
+                    if record.get("proto") not in (50, 51):
+                        continue
+                    src, dst = record.get("src"), record.get("dst")
+                    if not src or not dst:
+                        continue
+                    pairs[(str(src), str(dst))] = pairs.get((str(src), str(dst)), 0) + 1
+        except OSError:
+            return dict(self._endpoint_cache)
+        endpoints: Dict[str, str] = {}
+        if pairs:
+            (a, b), _count = max(pairs.items(), key=lambda item: (item[1], item[0]))
+            endpoints = {"a": a, "b": b}
+        self._endpoint_stamp = stamp
+        self._endpoint_cache = endpoints
+        return dict(endpoints)
+
     def register(self, mtime: int) -> None:
         manifest = self._load_manifest()
         run = manifest["run"]
@@ -389,18 +462,120 @@ class CurrentRunAnnex:
                 observed_present=True,
             )
         except Exception:
-            self.store.bundles.pop(assessment_id, None)
-            self.store.headers = [
-                h for h in self.store.headers if h.get("assessment_id") != assessment_id
-            ]
-            self.store.custody_inputs.pop(assessment_id, None)
+            self._drop_registered(assessment_id)
             raise
+
+        # The completed run is compared against the configured validated
+        # baseline by the SAME drift attachment the recorded cases use. There is
+        # no second comparison, no separate detector and no new surface here:
+        # the ObservedState is already the store's ``observed`` for this
+        # assessment, so the existing _attach_drift is handed that same object
+        # and decides the verdict with the existing rules. With no baseline
+        # configured nothing is attached, and every assessment keeps reporting
+        # ``not_configured`` exactly as before.
+        #
+        # Only a finished experiment is compared. While a run is in flight the
+        # manifest is a partial snapshot taken before the SA carries traffic, so
+        # comparing it would report the protection in force as absent; the
+        # comparison is made once, against the completed observation.
+        if self.store.baselines is not None and _run_is_finished(run):
+            try:
+                self.store._attach_drift(
+                    assessment_id,
+                    int(run["sequence"]),
+                    SLOT,
+                    expected=materialized.expected,
+                    observed=observed,
+                    correlation=correlation,
+                    ml_result=None,
+                    observation=None,
+                    evidence_refs=(),
+                    sources=sources,
+                    custody_sources=[],
+                    run_id=str(run["dataset_run_id"]),
+                )
+            except Exception:
+                self._drop_registered(assessment_id)
+                raise
 
         self._assessment_id = assessment_id
         self._project_risk(manifest)
         self._manifest_mtime = mtime
         self._registered = True
         self.store._build_overview()
+
+    def _settle(self, mtime: Optional[int]) -> Optional[str]:
+        """Turn a closed boundary gate into a final, persisted assessment.
+
+        The gate closing is not the same as the run disappearing. A finished
+        experiment still has its completed manifest on disk, and that completed
+        observation is the only one worth comparing against the baseline: while
+        the run was in flight the manifest was a partial snapshot whose security
+        state had not been observed yet. So when the gate closes on a finished
+        run the annex re-registers against the final manifest -- replacing the
+        transient registration, so the assessment is never duplicated -- and
+        keeps it, which is what lets the completed comparison stay reachable
+        through the read-only GET APIs after the experiment has exited.
+
+        Returns the finalized assessment id, or ``None`` when there was nothing
+        to finalize and any live registration was simply dropped.
+        """
+        if mtime is None:
+            self._forget()
+            return None
+        try:
+            manifest = self._load_manifest() or {}
+        except Exception:  # noqa: BLE001 - never break the read path
+            self._forget()
+            return None
+        run = manifest.get("run") or {}
+        assessment_id = run.get("assessment_id")
+        if not assessment_id or not _run_is_finished(run):
+            self._forget()
+            return None
+        if assessment_id == self._finalized_id:
+            return assessment_id
+        # Replace whatever was registered for this run rather than adding to it.
+        self._drop_registered(assessment_id)
+        if self._assessment_id and self._assessment_id != assessment_id:
+            self._forget()
+        try:
+            self.register(mtime)
+        except Exception:  # noqa: BLE001 - never break the read path
+            self._forget()
+            return None
+        self._finalized_id = assessment_id
+        return assessment_id
+
+    def _forget(self) -> None:
+        """Drop the live registration without touching a persisted one."""
+        if self._registered:
+            self.unregister()
+        self._finalized_id = None
+
+    def _drop_registered(self, assessment_id: str) -> None:
+        """Remove a live registration, including any drift it produced.
+
+        ``_attach_drift`` may have added a drift-origin assessment alongside
+        the live one, so the rollback has to clear both or a failed run would
+        leave a drift finding registered that no experiment owns. Only the ids
+        this run created are touched: every recorded assessment, including the
+        recorded drift-origin ones, is left exactly as it was.
+        """
+        owned = [assessment_id]
+        owned.extend(
+            aid for aid, parent in self.store.drift_parent.items()
+            if parent == assessment_id
+        )
+        for target in owned:
+            self.store.drift_inputs.pop(target, None)
+            self.store.drift_parent.pop(target, None)
+            self.store.bundles.pop(target, None)
+            self.store.custody_inputs.pop(target, None)
+            self.store.headers = [
+                h for h in self.store.headers
+                if h.get("assessment_id") != target
+            ]
 
     def _project_risk(self, manifest=None) -> set:
         """Project this run's assessment onto the SPIs observed so far.
@@ -535,11 +710,9 @@ class CurrentRunAnnex:
         if not self._registered:
             return False
         assessment_id = self._assessment_id
-        self.store.bundles.pop(assessment_id, None)
-        self.store.headers = [
-            h for h in self.store.headers if h.get("assessment_id") != assessment_id
-        ]
-        self.store.custody_inputs.pop(assessment_id, None)
+        # Clears the live assessment and, when a baseline was configured, the
+        # drift comparison and drift-origin assessment this run produced.
+        self._drop_registered(assessment_id)
         for spi, previous in list(self._saved_risk.items()):
             if previous is None:
                 self.feed.risk_index.pop(spi, None)
@@ -550,6 +723,16 @@ class CurrentRunAnnex:
         self._registered = False
         self.store._build_overview()
         return True
+
+
+def _run_is_finished(run: Dict[str, Any]) -> bool:
+    """True once the controller has closed this run's boundary gate.
+
+    ``ended_at_ns`` is the field the capture feed's boundary gate reads, so its
+    presence is exactly the condition under which the annex stops treating the
+    manifest as an in-flight snapshot.
+    """
+    return (run or {}).get("ended_at_ns") is not None
 
 
 def list_maybe_snapshot(spi, risk_index):

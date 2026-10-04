@@ -7,6 +7,8 @@ import type {
   AssessmentDriftResponse,
   AssessmentsResponse,
   AssessmentsV1Response,
+  AssetContextResponse,
+  AssetListResponse,
   AuditEventDetail,
   AuditEventsResponse,
   AuditRunsResponse,
@@ -311,6 +313,56 @@ export function getAssessmentDrift(
       signal,
       title: 'Unable to load drift for this assessment',
       fallback: 'The analytics service did not return a drift comparison.',
+    },
+  )
+}
+
+/* ---------------------------------------------------------- mission (assets) */
+
+/**
+ * The asset ids an operator declared a mission profile for.
+ *
+ * This is the only legitimate source for an asset selector. Hardcoding asset ids
+ * in the browser would offer assets this deployment never declared and hide the
+ * ones it did, which is the same class of error as inventing a criticality.
+ *
+ * `configured: false` with an empty list means no profile file reached this
+ * store — not that the network has no assets. Assets are declared explicitly and
+ * are never inferred from traffic, addresses or ML output.
+ */
+export function getAssets(signal?: AbortSignal): Promise<AssetListResponse> {
+  return request<AssetListResponse>('analytics', BASE, '/api/v1/assets', {
+    signal,
+    title: 'Unable to load declared assets',
+    fallback:
+      'The analytics service did not return a declared asset inventory.',
+  })
+}
+
+/**
+ * One selected asset's mission context, at a stated technical risk.
+ *
+ * The asset id goes in the path, so the backend is the authority on what that
+ * asset's criticality is: the browser cannot pair an asset with a criticality of
+ * its own. Pass `assessmentId` to choose which assessment's risk is placed in
+ * the declared context; omit it and the backend uses its highest-risk assessment
+ * and reports that it did.
+ */
+export function getAssetContext(
+  assetId: string,
+  params: { assessment_id?: string } = {},
+  signal?: AbortSignal,
+): Promise<AssetContextResponse> {
+  return request<AssetContextResponse>(
+    'analytics',
+    BASE,
+    `/api/v1/assets/${encodeURIComponent(assetId)}/context`,
+    {
+      signal,
+      query: { assessment_id: params.assessment_id },
+      title: 'Unable to load asset mission context',
+      fallback:
+        'The analytics service did not return mission context for this asset.',
     },
   )
 }

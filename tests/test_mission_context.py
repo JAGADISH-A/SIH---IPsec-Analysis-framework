@@ -783,15 +783,34 @@ class TestApiAndOpenApi(unittest.TestCase):
         self.assertIn("CONFIGURED", schema["properties"]["facts"]["description"])
         json.dumps(openapi_document())
 
+    @staticmethod
+    def _mission_context_schema(document=None):
+        """The mission-context schema, resolved through whatever it is reached by.
+
+        It was declared inline on ``ChainOfCustody`` until the asset selector
+        needed the same document at ``/api/v1/assets/{asset_id}/context``. It is now
+        a named component referenced from both, so resolving the reference here
+        keeps these assertions about the shape rather than about where the shape
+        happens to be spelled out.
+        """
+        document = document or openapi_document()
+        schemas = document["components"]["schemas"]
+        property_schema = schemas["ChainOfCustody"]["properties"]["mission_context"]
+        if "properties" in property_schema:
+            return property_schema
+        (reference,) = property_schema["allOf"]
+        self_ref = reference["$ref"].rsplit("/", 1)[-1]
+        return schemas[self_ref]
+
     def test_the_contextualized_severity_is_declared_beside_the_technical_one(self):
-        schema = openapi_document()["components"]["schemas"]["ChainOfCustody"]
-        risk = schema["properties"]["mission_context"]["properties"]["risk"]
+        mission_context = self._mission_context_schema()
+        risk = mission_context["properties"]["risk"]
         self.assertIn("technical_risk", risk["required"])
         self.assertIn("technical_severity", risk["required"])
         self.assertIn("contextualized_risk", risk["required"])
         self.assertIn("contextualized_severity", risk["required"])
         self.assertIn("model_version", risk["required"])
-        status = schema["properties"]["mission_context"]["properties"]["status"]
+        status = mission_context["properties"]["status"]
         self.assertEqual(status["enum"], ["configured", "not_configured"])
 
     def test_no_new_route_was_introduced(self):
@@ -799,8 +818,14 @@ class TestApiAndOpenApi(unittest.TestCase):
 
         The route count is pinned so a new surface cannot appear unnoticed, so
         the later drift milestone's three read-only routes are named here
-        explicitly. What this test really protects is the *shape* of the API:
-        still no asset-management surface, and every route still a GET.
+        explicitly, as is the XDP capture feed. What this test really protects
+        is the *shape* of the API: still no asset-management surface, and every
+        route still a GET.
+
+        The two asset routes were added later, and deliberately: they are the
+        query side of this same model, not a management surface. They are named
+        here for the same reason the others are -- an unnamed route must not be
+        able to appear -- and they are additionally pinned to being reads below.
         """
         document = openapi_document()
         drift_routes = {
@@ -808,10 +833,30 @@ class TestApiAndOpenApi(unittest.TestCase):
             "/api/v1/drift/baselines",
             "/api/v1/assessments/{id}/drift",
         }
-        self.assertLessEqual(drift_routes, set(document["paths"]))
-        self.assertEqual(len(set(document["paths"]) - drift_routes), 33)
-        self.assertEqual(len(document["paths"]), 33 + len(drift_routes))
-        self.assertFalse([path for path in document["paths"] if "asset" in path.lower()])
+        # The live XDP capture feed: the read-only tail of the shared live
+        # journal that carries real observed packets into the API. It is part of
+        # the observation path, not a new management surface, so it is named
+        # here rather than allowed to push the pinned base count.
+        capture_routes = {"/api/v1/capture/events"}
+        # Read-only asset queries. `GET /api/v1/assets` is what a client reads to
+        # learn which assets an operator declared, and `.../{asset_id}/context`
+        # is this same model addressed by a chosen asset instead of the one the
+        # store was started with. Neither creates, configures or removes an
+        # asset, which is what the "no asset-management API" boundary means.
+        asset_routes = {
+            "/api/v1/assets",
+            "/api/v1/assets/{asset_id}/context",
+        }
+        named = drift_routes | capture_routes | asset_routes
+        self.assertLessEqual(named, set(document["paths"]))
+        self.assertEqual(len(set(document["paths"]) - named), 33)
+        self.assertEqual(len(document["paths"]), 33 + len(named))
+        # The asset surface is exactly the two sanctioned reads: an asset path
+        # that is not one of these is a new surface, not a query.
+        self.assertEqual(
+            {path for path in document["paths"] if "asset" in path.lower()},
+            asset_routes,
+        )
         for path, operations in document["paths"].items():
             self.assertEqual(
                 sorted(operations), ["get"], f"{path} must stay read-only"
@@ -821,12 +866,42 @@ class TestApiAndOpenApi(unittest.TestCase):
         payload = handle_assessment_finding_explanation(
             self.store, DEMO_ASSESSMENT, DEMO_FINDING
         )
-        schema = openapi_document()["components"]["schemas"]["ChainOfCustody"]
-        declared = set(schema["properties"]["mission_context"]["properties"])
+        mission_context = self._mission_context_schema()
+        declared = set(mission_context["properties"])
         self.assertEqual(declared, set(payload["mission_context"]))
-        risk = schema["properties"]["mission_context"]["properties"]["risk"]
+        risk = mission_context["properties"]["risk"]
         self.assertEqual(set(risk["properties"]), set(payload["mission_context"]["risk"]))
         self.assertLessEqual(set(risk["required"]), set(risk["properties"]))
+
+    def test_the_asset_selector_route_documents_the_same_document(self):
+        """One schema, referenced from both places it is served.
+
+        The custody chain and the per-selected-asset route publish the identical
+        document. It was inline on ``ChainOfCustody`` until the second consumer
+        existed; leaving two copies would let them drift, which is the failure
+        mode this test existed to catch for the original inline copy.
+        """
+        document = openapi_document()
+        schemas = document["components"]["schemas"]
+
+        def target(schema):
+            """The named schema a property or response schema resolves to."""
+            reference = schema.get("$ref")
+            if reference is None:
+                return None
+            return schemas[reference.rsplit("/", 1)[-1]]
+
+        from_custody = self._mission_context_schema(document)
+        response = document["paths"]["/api/v1/assets/{asset_id}/context"]["get"][
+            "responses"
+        ]["200"]["content"]["application/json"]["schema"]
+        asset_context = target(response)
+        self.assertIsNotNone(asset_context)
+        self.assertIn("mission_context", asset_context["properties"])
+        from_assets = target(asset_context["properties"]["mission_context"])
+        self.assertIs(from_assets, from_custody)
+        self.assertIn("status", from_assets["properties"])
+        self.assertIn("risk", from_assets["properties"])
 
 
 class TestBoundaryIsEnforcedNotJustIntended(unittest.TestCase):

@@ -81,6 +81,13 @@ SENSOR_IFACE = "eth1"
 SENSOR_TARGETS = {
     "tunnel": (SENSOR_CONTAINER, SENSOR_IFACE),
     "transport": ("clab-ipsec-transport-sensor", SENSOR_IFACE),
+    # NAT-T deployment of the transport topology.  host-c is still the
+    # authoritative observation point (its eth1 is an IPsec endpoint's
+    # data-plane interface and therefore carries the IKE exchange and the
+    # UDP/4500 ESP-in-UDP); the NAT node is infrastructure and is deliberately
+    # NOT observed, so what the sensor sees is the pre-NAT wire as the sending
+    # endpoint emitted it.
+    "transport-nat": ("clab-ipsec-transport-nat-sensor", SENSOR_IFACE),
 }
 
 XDP_BINARY_HOST = PROJECT_ROOT / "ebpf" / "xdp_monitor"
@@ -472,7 +479,8 @@ def ensure_xdp_monitor(container=SENSOR_CONTAINER, iface=SENSOR_IFACE,
     )
 
 
-def ensure_for_mode(mode, log=None, ready_timeout=OBSERVATION_READY_TIMEOUT):
+def ensure_for_mode(mode, log=None, ready_timeout=OBSERVATION_READY_TIMEOUT,
+                    nat=False):
     """Make the live XDP observation path ready for a deployed ``mode``.
 
     Resolves the mode's passive sensor from :data:`SENSOR_TARGETS` and reuses
@@ -481,13 +489,14 @@ def ensure_for_mode(mode, log=None, ready_timeout=OBSERVATION_READY_TIMEOUT):
     ``ObservationReadinessError`` for an unknown mode so a topology can never
     run without declaring its observation point.
     """
-    if mode not in SENSOR_TARGETS:
+    key = f"{mode}-nat" if nat else mode
+    if key not in SENSOR_TARGETS:
         raise ObservationReadinessError(
             "IPsec testbed is running, but live XDP observation is "
             f"unavailable: no XDP observation sensor is declared for "
             f"mode {mode!r} (known: {', '.join(sorted(SENSOR_TARGETS))})"
         )
-    container, iface = SENSOR_TARGETS[mode]
+    container, iface = SENSOR_TARGETS[key]
     return ensure_xdp_monitor(
         container=container, iface=iface, log=log, ready_timeout=ready_timeout,
     )

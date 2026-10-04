@@ -12,3 +12,8 @@ scikit-learn==1.9.1
 joblib==1.6.0
 shap==0.52.0
 matplotlib==3.11.2
+# AI explanation service: natural-language reasoning over recorded assessments.
+# The provider is the only outbound network dependency and is imported lazily,
+# so the rest of the testbed runs without it. Without GEMINI_API_KEY the
+# assistant answers from recorded values via the deterministic template.
+google-genai==2.25.0

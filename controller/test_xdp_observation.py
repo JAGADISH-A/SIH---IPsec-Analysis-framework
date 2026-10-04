@@ -387,14 +387,21 @@ class EnsureXdpMonitorTestCase(unittest.TestCase):
         self.assertEqual(out["container"], "clab-ipsec-transport-sensor")
         self.assertEqual(self.lab.started, [])
 
-    def test_both_modes_declare_a_distinct_sensor_on_the_same_interface(self):
-        self.assertEqual(set(xdp_obs.SENSOR_TARGETS), {"tunnel", "transport"})
+    def test_each_deployment_declares_a_distinct_sensor_on_the_same_interface(self):
+        # One sensor per deployment (tunnel, transport, transport-nat).  Each is
+        # a separate lab with its own container, so the sensor names must all
+        # differ even though they all observe on the same interface.
+        self.assertEqual(
+            set(xdp_obs.SENSOR_TARGETS), {"tunnel", "transport", "transport-nat"},
+        )
         self.assertEqual(
             {iface for _, iface in xdp_obs.SENSOR_TARGETS.values()}, {"eth1"},
         )
-        self.assertNotEqual(
-            xdp_obs.SENSOR_TARGETS["tunnel"][0],
-            xdp_obs.SENSOR_TARGETS["transport"][0],
+        containers = [c for c, _ in xdp_obs.SENSOR_TARGETS.values()]
+        self.assertEqual(len(containers), len(set(containers)))
+        self.assertEqual(
+            xdp_obs.SENSOR_TARGETS["transport-nat"][0],
+            "clab-ipsec-transport-nat-sensor",
         )
 
     def test_unknown_mode_raises_instead_of_running_unobserved(self):

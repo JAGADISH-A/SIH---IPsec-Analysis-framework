@@ -76,6 +76,12 @@ def build_metadata(experiment_id, config, traffic, runtime_ctx, run_id=None,
         "status": status,
         "mode": config["mode"],
         "address_family": config["address_family"],
+        # NAT-T is a property of the PATH, not of the IPsec mode, so it is
+        # recorded as its own axis.  Without it a NAT-T sample is
+        # indistinguishable from the direct transport sample in the dataset,
+        # and its ESP length distribution would be silently attributed to the
+        # direct deployment.
+        "nat": bool(config.get("nat", False)),
         "ike_version": config["ike"]["version"],
         "ike_encryption": config["ike"]["encryption"],
         "ike_integrity": config["ike"]["integrity"],

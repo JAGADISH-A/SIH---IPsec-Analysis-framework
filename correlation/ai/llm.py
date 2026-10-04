@@ -76,6 +76,26 @@ class LlmProvider:
     def info(self) -> ProviderInfo:
         raise NotImplementedError
 
+    def build_messages(
+        self,
+        question: str,
+        context: Any,
+        scope: Any,
+        *,
+        history: Sequence[Dict[str, str]] = (),
+    ) -> List[Dict[str, str]]:
+        """The message list this provider wants to send.
+
+        The default is the full grounding context, which is what the
+        deterministic template and the OpenAI-compatible path both expect. A
+        provider that must not see the whole context -- Gemini -- overrides this,
+        so the boundary is enforced by the provider that owns it rather than by
+        the caller remembering to check.
+        """
+        from .prompt import build_messages
+
+        return build_messages(question, context, scope, history=history)
+
     def complete(self, messages: Sequence[Dict[str, str]]) -> str:
         raise NotImplementedError
 
@@ -242,12 +262,36 @@ def _redact_userinfo(base_url: str) -> str:
 
 
 def provider_from_env(environ: Optional[dict] = None) -> LlmProvider:
-    """Resolve a provider from the environment. Precedence: env, then default.
+    """Resolve a provider from the environment, inside the quota.
+
+    Gemini is checked first: ``GEMINI_API_KEY`` is the dedicated backend
+    configuration for the natural-language reasoning layer, so it wins over the
+    generic OpenAI-compatible settings when both are present.
 
     No configuration means :class:`NullProvider`, which is a working
     configuration: the assistant explains from recorded values without a model.
+
+    A configured provider is wrapped in :class:`~correlation.ai.quota.BudgetedProvider`
+    so the credential's request ceiling is respected here, at the only place a
+    model call can originate. :class:`NullProvider` is left alone: it never
+    calls a model, so pacing it would only add a way for the deterministic
+    fallback to fail.
     """
+    from .quota import budgeted_provider_from_env
+
+    return budgeted_provider_from_env(environ)
+
+
+def _provider_from_env_uncapped(environ: Optional[dict] = None) -> LlmProvider:
+    """The provider the environment names, with no quota around it."""
     env = os.environ if environ is None else environ
+
+    from .gemini import gemini_provider_from_env
+
+    gemini = gemini_provider_from_env(env)
+    if gemini is not None and gemini.info.configured:
+        return gemini
+
     base_url = (env.get(ENV_BASE_URL) or "").strip()
     model = (env.get(ENV_MODEL) or "").strip()
     if not base_url or not model:

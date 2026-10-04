@@ -44,6 +44,24 @@ def validate_config(config):
             f"Unsupported address family: {config['address_family']}"
         )
 
+    # NAT defaults to off so every pre-existing config keeps working unchanged.
+    # A request for a NAT deployment is only valid where one is actually
+    # defined: silently downgrading to a direct path would run an experiment
+    # labelled NAT-T that never crossed a translator.
+    nat = config.get("nat", False)
+    if not isinstance(nat, bool):
+        raise ValueError(f"nat must be a bool, got {nat!r}")
+    if nat:
+        from .topology import NAT_TOPOLOGIES
+
+        if (config["mode"], config["address_family"]) not in NAT_TOPOLOGIES:
+            raise ValueError(
+                f"No NAT deployment is defined for mode "
+                f"{config['mode']!r} / address family "
+                f"{config['address_family']!r}; a NAT-T sample cannot be run "
+                f"on a path with no real translator."
+            )
+
     ike = config["ike"]
     esp = config["esp"]
 

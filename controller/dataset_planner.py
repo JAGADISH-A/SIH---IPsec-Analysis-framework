@@ -110,31 +110,48 @@ def configuration_id(config):
     esp = config["esp"]
     esp_integrity = esp["integrity"] if esp["integrity"] is not None else "none"
     pfs = "true" if esp["pfs"] else "false"
+    # NAT is part of the configuration's identity: a NAT-T sample is a
+    # different path to the wire (and a different encapsulation decision) than
+    # the direct deployment with otherwise identical crypto.
+    nat = "-nat" if config.get("nat") else ""
     return (
-        f"{config['mode']}-{config['address_family']}-"
+        f"{config['mode']}-{config['address_family']}{nat}-"
         f"{esp['encryption']}-{esp_integrity}-{esp['dh_group']}-{pfs}"
     )
 
 
 def enumerate_candidates():
-    """Yield every shape-compatible candidate configuration in fixed order."""
+    """Yield every shape-compatible candidate configuration in fixed order.
+
+    The NAT axis is only enumerated where a real translator is actually
+    provisioned (transport/IPv4 today).  Yielding NAT cells for paths that
+    cannot host a NAT would inflate the catalogue with configurations the
+    validator can only reject, which is exactly the kind of phantom capability
+    this enumeration is meant to avoid.
+    """
+    from .topology import NAT_TOPOLOGIES
+
     for mode in MODES:
         for address_family in ADDRESS_FAMILIES:
-            for encryption in ESP_CIPHERS:
-                for integrity in ESP_INTEGRITY_CANDIDATES:
-                    for dh_group in DH_GROUPS:
-                        for pfs in (True, False):
-                            yield {
-                                "mode": mode,
-                                "address_family": address_family,
-                                "ike": dict(IKE_BASELINE),
-                                "esp": {
-                                    "encryption": encryption,
-                                    "integrity": integrity,
-                                    "dh_group": dh_group,
-                                    "pfs": pfs,
-                                },
-                            }
+            for nat in (False, True):
+                if nat and (mode, address_family) not in NAT_TOPOLOGIES:
+                    continue
+                for encryption in ESP_CIPHERS:
+                    for integrity in ESP_INTEGRITY_CANDIDATES:
+                        for dh_group in DH_GROUPS:
+                            for pfs in (True, False):
+                                yield {
+                                    "mode": mode,
+                                    "address_family": address_family,
+                                    "nat": nat,
+                                    "ike": dict(IKE_BASELINE),
+                                    "esp": {
+                                        "encryption": encryption,
+                                        "integrity": integrity,
+                                        "dh_group": dh_group,
+                                        "pfs": pfs,
+                                    },
+                                }
 
 
 def build_catalogue():

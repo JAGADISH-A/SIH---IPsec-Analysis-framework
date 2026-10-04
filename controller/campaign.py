@@ -151,13 +151,16 @@ def execute_trial_pipeline(experiment_id, config, traffic_cfg, tmp_dir,
     capture_filter = traffic_cfg.get("capture_filter", DEFAULT_CAPTURE_FILTER)
     mode = config["mode"]
     address_family = config["address_family"]
+    nat = bool(config.get("nat", False))
 
     tmp_dir = Path(tmp_dir)
     tmp_dir.mkdir(parents=True, exist_ok=True)
     remote_pcap = f"/tmp/{experiment_id}.pcap"
 
-    runtime_ctx = traffic_mod.runtime(mode, address_family)
-    cap_container, cap_wan_ip = capture_mod.capture_facing(mode, address_family)
+    runtime_ctx = traffic_mod.runtime(mode, address_family, nat=nat)
+    cap_container, cap_wan_ip = capture_mod.capture_facing(
+        mode, address_family, nat=nat
+    )
     runtime_ctx["capture_container"] = cap_container
     runtime_ctx["capture_interface"] = None
 
@@ -183,11 +186,12 @@ def execute_trial_pipeline(experiment_id, config, traffic_cfg, tmp_dir,
         mode,
         address_family,
         reuse_manager=reuse,
-        fresh_fn=reset_and_deploy,
-        terminate_fn=lambda: terminate_sas(mode, address_family),
+        # reset_and_deploy_or_reuse invokes fresh_fn(mode); capture the NAT axis.
+        fresh_fn=lambda m=None: reset_and_deploy(m or mode, nat=nat),
+        terminate_fn=lambda: terminate_sas(mode, address_family, nat=nat),
         load_fn=lambda: load_generated_configs(config),
-        initiate_fn=lambda: initiate_ipsec(mode, address_family),
-        verify_fn=lambda: verify_ipsec(mode, address_family),
+        initiate_fn=lambda: initiate_ipsec(mode, address_family, nat=nat),
+        verify_fn=lambda: verify_ipsec(mode, address_family, nat=nat),
         before_initiate_fn=start_ipsec_capture,
         recorder=recorder,
         log=log,
@@ -197,8 +201,8 @@ def execute_trial_pipeline(experiment_id, config, traffic_cfg, tmp_dir,
     else:
         start_ipsec_capture()
         load_generated_configs(config)
-        initiate_ipsec(mode, address_family)
-        ipsec = verify_ipsec(mode, address_family)
+        initiate_ipsec(mode, address_family, nat=nat)
+        ipsec = verify_ipsec(mode, address_family, nat=nat)
     log("IPsec status IKE=ESTABLISHED CHILD=INSTALLED")
 
     # Observation readiness gate (tunnel sensor): after the deploy-or-reuse
@@ -208,16 +212,21 @@ def execute_trial_pipeline(experiment_id, config, traffic_cfg, tmp_dir,
     # observation.  For a reused topology the running monitor is verified and
     # reused; only if it died is it restarted.
     with timing_mod.stage(recorder, "observation"):
-        observation = ensure_live_observation(mode, address_family, log=log)
+        observation = ensure_live_observation(
+            mode, address_family, log=log, nat=nat
+        )
     if observation.get("status") == "live":
         log(
             f"live XDP observation ready on "
             f"{observation.get('container')}:{observation.get('interface')} "
             f"(action={observation.get('action')})"
         )
-    manifest_mod.publish_session_boundary(config, observation, log=log)
+    manifest_mod.publish_session_boundary(
+        config, observation, log=log,
+        result={"ipsec": ipsec, "observation": observation},
+    )
 
-    connectivity = test_connectivity(mode, address_family)
+    connectivity = test_connectivity(mode, address_family, nat=nat)
     if connectivity["status"] != "PASS":
         raise RuntimeError(f"connectivity verification failed: {connectivity}")
     log("connectivity verified PASS")

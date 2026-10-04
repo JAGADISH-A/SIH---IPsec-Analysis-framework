@@ -10,10 +10,15 @@ Every test here runs on recorded artifacts. None uses a mock, a fixture, or a
 controlled input, because the whole point is to establish what the real data
 does and does not contain.
 
-    TestTheWholeRealCorpusIsOneSecurityState
-        Every usable recorded state artifact canonicalises to the SAME security
-        state, so no real pair can produce protection drift. This is the
-        anti-fabrication test: it is what licenses the controlled fixture.
+    TestTheRealCorpusAgreesOnProtectionPresence
+        Every usable recorded state artifact agrees on PROTECTION state (ESP
+        in force, AH absent), so no real pair can produce protection drift.
+        This is the anti-fabrication test: it is what licenses the controlled
+        fixture. The address family is deliberately not pinned -- two real
+        captures of one asset under different configurations legitimately
+        disagree there, and that is genuine configuration drift. Drift is
+        additionally pinned to the canonical states themselves, so a result can
+        be neither fabricated nor missed.
 
     TestTheRealCorpusContainsNoProtectionChange
         The only artifact anywhere in the repository that reports ESP absent is
@@ -99,40 +104,45 @@ def observations_in(path):
             return
 
 
-class TestTheWholeRealCorpusIsOneSecurityState(unittest.TestCase):
-    """The anti-fabrication test: real data cannot show protection drift."""
+class TestTheRealCorpusAgreesOnProtectionPresence(unittest.TestCase):
+    """The anti-fabrication test, scoped to what it can actually prove.
+
+    Every usable recorded capture reports the same PROTECTION state: ESP in
+    force, AH absent. That is what licenses the controlled ESP/AH fixture --
+    no real capture can show a protection change, so a protection-drift demo
+    must come from a declared fixture rather than from recorded data.
+
+    The address family is deliberately NOT pinned. Two real captures of the
+    same asset under different configurations (transport/IPv4 and
+    transport/IPv6) legitimately disagree on it, and that disagreement is
+    genuine configuration drift, not fabrication. The invariant is therefore
+    stated on the protection axis, which is where fabrication would live.
+    """
 
     def test_the_corpus_is_not_empty(self):
         # Guards every other assertion here: a corpus that silently vanished
         # would make them vacuously true.
         self.assertGreaterEqual(len(usable_real_artifacts()), 8)
 
-    def test_every_usable_capture_canonicalises_identically(self):
-        digests = {}
+    def test_every_usable_capture_agrees_on_protection_presence(self):
+        presence = set()
         for path in usable_real_artifacts():
             state, _ = load_observed_state(path)
-            state_digest = hashlib.sha256(
-                json.dumps(
-                    canonical_security_state(state),
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ).encode()
-            ).hexdigest()
-            digests.setdefault(state_digest, []).append(path)
+            canonical = canonical_security_state(state)
+            presence.add((canonical["esp.presence"], canonical["ah.presence"]))
         self.assertEqual(
-            len(digests),
-            1,
-            "the real corpus was expected to be one security state; found "
-            f"{len(digests)}: "
-            + "; ".join(
-                f"{digest[:12]} -> {paths}" for digest, paths in digests.items()
-            ),
+            presence,
+            {(True, False)},
+            "the real corpus was expected to agree that ESP is in force and AH "
+            f"is absent; found {sorted(presence)}",
         )
 
-    def test_no_pair_of_real_captures_produces_drift(self):
-        target, _ = load_observed_state(usable_real_artifacts()[0])
-        for path in usable_real_artifacts():
-            baseline_observation, _ = load_observed_state(path)
+    def test_no_pair_of_real_captures_reports_protection_drift(self):
+        # Protection drift cannot come from the real corpus. An address-family
+        # difference is allowed and expected; an ESP/AH presence difference is
+        # not, because no recorded capture supports one.
+        for baseline_path in usable_real_artifacts():
+            baseline_observation, _ = load_observed_state(baseline_path)
             registry = BaselineRegistry()
             registry.register(
                 validate_baseline(
@@ -142,16 +152,59 @@ class TestTheWholeRealCorpusIsOneSecurityState(unittest.TestCase):
                     validated_at="2026-01-01T00:00:00Z",
                 )
             )
-            result = assess_drift(
-                registry.get("acceptance-baseline"),
-                target,
-                current_source_ref=path,
+            for current_path in usable_real_artifacts():
+                current_observation, _ = load_observed_state(current_path)
+                result = assess_drift(
+                    registry.get("acceptance-baseline"),
+                    current_observation,
+                    current_source_ref=current_path,
+                )
+                presence_fields = {
+                    "esp.presence", "ah.presence",
+                } & {change.variable for change in result.changed_fields}
+                self.assertEqual(
+                    presence_fields,
+                    set(),
+                    f"{current_path} reported protection drift against "
+                    f"{baseline_path}: {sorted(presence_fields)}",
+                )
+
+    def test_drift_is_reported_exactly_where_canonical_states_differ(self):
+        """The positive half: drift is never invented and never missed.
+
+        Whatever the axis, the real detector must agree with the canonical
+        states themselves -- report drift when they differ, no_drift when they
+        match. This is what makes an address-family result trustworthy: the
+        same rule that produces it also has to withhold it.
+        """
+        states = {path: canonical_security_state(load_observed_state(path)[0])
+                  for path in usable_real_artifacts()}
+        for baseline_path, baseline_canonical in states.items():
+            baseline_observation, _ = load_observed_state(baseline_path)
+            registry = BaselineRegistry()
+            registry.register(
+                validate_baseline(
+                    baseline_observation,
+                    baseline_id="acceptance-baseline",
+                    validated_by="acceptance-validation",
+                    validated_at="2026-01-01T00:00:00Z",
+                )
             )
-            self.assertEqual(
-                result.status,
-                "no_drift",
-                f"{path} reported {result.status} against another real capture",
-            )
+            for current_path, current_canonical in states.items():
+                current_observation, _ = load_observed_state(current_path)
+                result = assess_drift(
+                    registry.get("acceptance-baseline"),
+                    current_observation,
+                    current_source_ref=current_path,
+                )
+                differs = baseline_canonical != current_canonical
+                self.assertEqual(
+                    result.status == "drift",
+                    differs,
+                    f"{baseline_path} vs {current_path}: canonical states "
+                    f"{'differ' if differs else 'match'} but the detector "
+                    f"reported {result.status!r}",
+                )
 
     def test_the_canonical_state_is_only_the_three_declared_fields(self):
         state, _ = load_observed_state(usable_real_artifacts()[0])

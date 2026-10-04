@@ -6,6 +6,7 @@ import { ErrorState, LoadingCards, LoadingPanel } from '@/components/states'
 import { LiveTrafficMonitor } from '@/components/traffic/LiveTrafficMonitor'
 import { EntityDetailDrawer } from '@/components/traffic/EntityDetailDrawer'
 import {
+  AssetContextPanel,
   AssetPriorityPanel,
   DriftPanel,
   IntegrityPanel,
@@ -190,6 +191,9 @@ export function Activity() {
         <StatisticsPanel overview={overview} headers={headers} findings={allFindings} />
         <ThreatMatrix headers={headers} />
       </div>
+
+      {/* Selected asset context: the interactive half of asset priority */}
+      <AssetContextPanel />
 
       {/* Priority + reports */}
       <div className="grid gap-4 lg:grid-cols-2">

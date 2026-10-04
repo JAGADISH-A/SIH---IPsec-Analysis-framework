@@ -1,12 +1,16 @@
 import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { Panel, SeverityBadge, StatusPill, Tag, HashChip, Prose, Metric } from '@/components/ui'
+import { Button, Panel, SeverityBadge, StatusPill, Tag, HashChip, Prose, Metric } from '@/components/ui'
 import { ComparisonTable } from './ComparisonTable'
 import { FindingsList } from './FindingsList'
 import { EvidencePanel } from './EvidencePanel'
 import { XaiPanel } from './XaiPanel'
 import { MlPanel } from './MlPanel'
 import { ObservedPanel } from './ObservedPanel'
+import { AssessmentDriftBlock } from '@/components/packet/AssessmentDriftBlock'
+import { getAssessmentDrift } from '@/api/analytics'
+import { useResource } from '@/hooks/useResource'
+import { ErrorState, LoadingPanel } from '@/components/states'
 import {
   formatBytes,
   formatDateTime,
@@ -414,6 +418,46 @@ export function ArtifactSources({ bundle }: { bundle: AssessmentBundle }) {
   )
 }
 
+/**
+ * The assessment's longitudinal comparison against the validated baseline.
+ *
+ * This is a separate read-only request from the bundle because the comparison
+ * is a distinct resource with its own honest states: an assessment can exist
+ * with no comparison at all (`not_configured`), and that is shown rather than
+ * hidden. While an experiment is still running no comparison exists yet, so
+ * this renders the same `not_configured` the API returns — it never shows a
+ * provisional or invented verdict, and Refresh re-reads the comparison once
+ * the run has completed and been persisted.
+ */
+function AssessmentDriftPanel({ assessmentId }: { assessmentId: string }) {
+  const resource = useResource(
+    (signal) => getAssessmentDrift(assessmentId, signal),
+    { enabled: assessmentId !== '', deps: [assessmentId] },
+  )
+
+  return (
+    <Panel
+      title="Configuration drift"
+      subtitle="this assessment against the validated baseline"
+      action={
+        <Button variant="secondary" onClick={resource.reload} disabled={resource.loading}>
+          {resource.refreshing ? 'Refreshing\u2026' : 'Refresh'}
+        </Button>
+      }
+    >
+      {resource.loading ? (
+        <LoadingPanel label="Loading drift comparison" rows={2} />
+      ) : resource.error ? (
+        <ErrorState error={resource.error} onRetry={resource.reload} compact />
+      ) : (
+        <div className="p-3.5">
+          <AssessmentDriftBlock drift={resource.data} />
+        </div>
+      )}
+    </Panel>
+  )
+}
+
 export function AssessmentDetailBody({
   bundle,
   tab,
@@ -430,6 +474,7 @@ export function AssessmentDetailBody({
             <ExpectedStatePanel bundle={bundle} />
             <ObservedPanel bundle={bundle} />
             <ComparisonTable bundle={bundle} />
+            <AssessmentDriftPanel assessmentId={bundle.assessment_id} />
           </div>
           <div className="space-y-4">
             <RiskSummary bundle={bundle} />

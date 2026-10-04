@@ -292,5 +292,364 @@ class TestExperimentLifecycle(unittest.TestCase):
         self.assertEqual(json.loads(r.text), r.json())
 
 
+class TestNatAxisOverHttp(unittest.TestCase):
+    """The ``nat`` axis must survive the API boundary intact.
+
+    Regression cover for the silent-downgrade defect: ``nat`` was missing from
+    ``ExperimentConfig``, and Pydantic drops unknown fields, so ``nat: true``
+    never entered ``model_dump()``. The executor read ``config.get("nat", False)``,
+    always saw ``False``, and deployed the NON-NAT lab while reporting PASS --
+    including for IPv6 NAT-T, which has no NAT deployment at all.
+
+    The executor is patched throughout, so no container is ever created; these
+    tests assert on the request/config/topology decisions only.
+    """
+
+    def setUp(self):
+        self.client = TestClient(app)
+        self._saved_jobs = dict(api_module.jobs)
+        self._saved_active = api_module.active_job_id
+        api_module.jobs.clear()
+        api_module.active_job_id = None
+        self.addCleanup(self._restore)
+
+    def _restore(self):
+        for kind, owner_id in list(api_module.TESTBED_LOCK._owner or ()):  # noqa: SLF001
+            api_module.TESTBED_LOCK.release(kind, owner_id)
+        api_module.jobs.clear()
+        api_module.jobs.update(self._saved_jobs)
+        api_module.active_job_id = self._saved_active
+
+    @staticmethod
+    def _config(**overrides):
+        base = {
+            "mode": "transport",
+            "address_family": "ipv4",
+            "ike": {"version": 2, "encryption": "aes256",
+                    "integrity": "sha256", "dh_group": "modp2048"},
+            "esp": {"encryption": "aes128gcm16", "integrity": None,
+                    "dh_group": "modp4096", "pfs": True},
+            "traffic": {"profile": "voip", "duration": 10},
+        }
+        base.update(overrides)
+        return base
+
+    def _submitted_config(self, payload):
+        """POST and return the exact dict the executor was invoked with."""
+        seen = {}
+
+        def _capture(config, *_args, **_kwargs):
+            seen.update(config)
+            return {"ok": True}
+
+        with mock.patch.object(api_module, "run_experiment", side_effect=_capture):
+            r = self.client.post("/experiments", json=payload)
+            self.assertEqual(r.status_code, 200)
+            job_id = r.json()["job_id"]
+            _wait_for_job(self.client, job_id, {"COMPLETED", "FAILED"})
+        self.assertIn("nat", seen, "executor never received a 'nat' key")
+        return seen
+
+    # (1) nat:true is preserved end to end.
+    def test_nat_true_reaches_the_executor_unchanged(self):
+        seen = self._submitted_config(self._config(nat=True))
+        self.assertIs(seen["nat"], True)
+
+    def test_nat_false_reaches_the_executor_unchanged(self):
+        seen = self._submitted_config(self._config(nat=False))
+        self.assertIs(seen["nat"], False)
+
+    def test_omitted_nat_defaults_to_false(self):
+        payload = self._config()
+        payload.pop("nat", None)
+        seen = self._submitted_config(payload)
+        self.assertIs(seen["nat"], False)
+
+    # (2) A supported NAT-T request selects the NAT deployment, not the plain one.
+    def test_supported_ipv4_nat_t_selects_the_nat_topology(self):
+        from controller.executor import topology_file
+        from controller.topology import container_name, deployment_key, resolve_topology
+
+        seen = self._submitted_config(self._config(nat=True))
+
+        # The value the API forwarded is what the executor's own helpers key on.
+        self.assertEqual(seen["nat"], True)
+        key = deployment_key(seen["mode"], nat=seen["nat"])
+        topology = resolve_topology(seen["mode"], seen["address_family"], nat=seen["nat"])
+
+        self.assertEqual(key, "transport-nat")
+        self.assertEqual(
+            topology_file(seen["mode"], nat=seen["nat"]).name, "ipsec.clab.yml"
+        )
+        self.assertIn("transport-nat", str(topology_file(seen["mode"], nat=seen["nat"])))
+        # Endpoint containers must come from the NAT lab, not the plain one.
+        self.assertEqual(
+            container_name(key, topology["local"]["node"]),
+            "clab-ipsec-transport-nat-host-c",
+        )
+        self.assertEqual(
+            container_name(key, topology["remote"]["node"]),
+            "clab-ipsec-transport-nat-host-d",
+        )
+
+    def test_nat_false_still_selects_the_plain_topology(self):
+        from controller.executor import topology_file
+        from controller.topology import deployment_key
+
+        seen = self._submitted_config(self._config(nat=False))
+        self.assertEqual(deployment_key(seen["mode"], nat=seen["nat"]), "transport")
+        self.assertNotIn("transport-nat", str(topology_file(seen["mode"], nat=seen["nat"])))
+
+    # (3) Unsupported NAT-T is refused with 422 and starts NOTHING.
+    def test_unsupported_ipv6_nat_t_is_rejected_with_422(self):
+        r = self.client.post("/experiments", json=self._config(nat=True, address_family="ipv6"))
+        self.assertEqual(r.status_code, 422)
+        # No job may be created: nothing may be deployed for a bad combination.
+        self.assertEqual(api_module.jobs, {})
+        self.assertIsNone(api_module.TESTBED_LOCK.owner())
+
+    def test_unsupported_nat_t_422_explains_the_real_cause(self):
+        r = self.client.post("/experiments", json=self._config(nat=True, address_family="ipv6"))
+        messages = " ".join(str(e.get("msg", "")) for e in r.json()["detail"])
+        self.assertIn("No NAT deployment is defined", messages)
+        self.assertIn("ipv6", messages)
+
+    def test_tunnel_nat_t_is_rejected_with_422(self):
+        # NAT-T is only implemented where a real translator can be provisioned.
+        for family in ("ipv4", "ipv6"):
+            with self.subTest(family=family):
+                r = self.client.post(
+                    "/experiments",
+                    json=self._config(mode="tunnel", address_family=family, nat=True),
+                )
+                self.assertEqual(r.status_code, 422)
+        self.assertEqual(api_module.jobs, {})
+
+    def test_unsupported_nat_never_reaches_the_executor(self):
+        with mock.patch.object(api_module, "run_experiment") as run:
+            r = self.client.post("/experiments", json=self._config(nat=True, address_family="ipv6"))
+        self.assertEqual(r.status_code, 422)
+        run.assert_not_called()
+
+    # (4) Existing non-NAT behaviour is untouched.
+    def test_existing_ipv4_and_ipv6_requests_are_unaffected(self):
+        from controller.topology import resolve_topology
+
+        for mode in ("tunnel", "transport"):
+            for family in ("ipv4", "ipv6"):
+                with self.subTest(mode=mode, family=family):
+                    payload = self._config(mode=mode, address_family=family)
+                    seen = self._submitted_config(payload)
+                    self.assertIs(seen["nat"], False)
+                    # Still resolvable as a non-NAT sample.
+                    self.assertIn("local", resolve_topology(mode, family))
+
+    def test_validation_error_from_the_executor_is_unchanged(self):
+        # A non-NAT config error must still surface as a FAILED job, not a 422:
+        # the new guard only covers the NAT axis.
+        with mock.patch.object(
+            api_module, "run_experiment", side_effect=ValueError("bad cipher")
+        ):
+            job_id = self.client.post("/experiments", json=VALID_CONFIG).json()["job_id"]
+            final = _wait_for_job(self.client, job_id, {"COMPLETED", "FAILED"})
+        self.assertEqual(final["status"], "FAILED")
+        self.assertEqual(final["error"], "bad cipher")
+
+    def test_executor_nat_rejection_is_still_the_executors_own(self):
+        # The API guard reuses resolve_topology rather than restating the rule;
+        # the executor keeps rejecting unsupported NAT on its own as well.
+        from controller.executor import generate_configs
+        from controller.validate import validate_config
+
+        unsupported = self._config(nat=True, address_family="ipv6")
+        unsupported.pop("traffic")
+        with self.assertRaises(ValueError) as ctx:
+            validate_config(unsupported)
+        self.assertIn("No NAT deployment is defined", str(ctx.exception))
+
+        with self.assertRaises(ValueError) as ctx:
+            generate_configs(dict(unsupported, traffic={"profile": "voip", "duration": 10}))
+        self.assertIn("No NAT deployment is defined", str(ctx.exception))
+
+
+class TestRootCauseOverHttp(unittest.TestCase):
+    """A failed job must expose a deterministic root cause, not just a stage.
+
+    The executor is patched to raise the same exceptions it raises for real, so
+    these tests exercise the API's propagation of ``.classification`` without
+    needing the lab.
+    """
+
+    def setUp(self):
+        self.client = TestClient(app)
+        self._saved_jobs = dict(api_module.jobs)
+        self._saved_active = api_module.active_job_id
+        api_module.jobs.clear()
+        api_module.active_job_id = None
+        self.addCleanup(self._restore)
+
+    def _restore(self):
+        for kind, owner_id in list(api_module.TESTBED_LOCK._owner or ()):  # noqa: SLF001
+            api_module.TESTBED_LOCK.release(kind, owner_id)
+        api_module.jobs.clear()
+        api_module.jobs.update(self._saved_jobs)
+        api_module.active_job_id = self._saved_active
+
+    @staticmethod
+    def _payload(**overrides):
+        base = {
+            "mode": "tunnel",
+            "address_family": "ipv6",
+            "ike": {"version": 2, "encryption": "aes256",
+                    "integrity": "sha256", "dh_group": "modp2048"},
+            "esp": {"encryption": "aes128gcm16", "integrity": None,
+                    "dh_group": "modp4096", "pfs": True},
+            "traffic": {"profile": "voip", "duration": 10},
+        }
+        base.update(overrides)
+        return base
+
+    def _fail_with(self, exc, stage="IPSEC"):
+        """POST, force the executor to raise ``exc`` at ``stage``, return job.
+
+        The stage is reported through the same ``on_stage`` callback the real
+        executor uses, so the API derives the failed stage exactly as it does in
+        production.
+        """
+        def _run(config, on_stage=None, job_id=None):
+            if on_stage:
+                on_stage(stage)
+            raise exc
+
+        with mock.patch.object(api_module, "run_experiment", side_effect=_run):
+            r = self.client.post("/experiments", json=self._payload())
+            self.assertEqual(r.status_code, 200)
+            return _wait_for_job(
+                self.client, r.json()["job_id"], {"COMPLETED", "FAILED"}
+            )
+
+    def test_ipsec_authentication_failure_is_reported(self):
+        from controller import diagnose
+        from controller.executor import IpsecVerificationError
+
+        classification = diagnose.classify_failure(
+            stage="IPSEC",
+            sa_state=diagnose.parse_sa_state(""),
+            ike_evidence=diagnose.parse_ike_evidence(
+                "14[ENC] generating IKE_AUTH request 1 [ IDi IDr AUTH SA ]\n"
+                "13[ENC] parsed IKE_AUTH response 1 [ N(AUTH_FAILED) ]\n"
+                "13[IKE] received AUTHENTICATION_FAILED notify error\n"
+            ),
+        )
+        self.assertEqual(
+            classification["root_cause"], diagnose.AUTHENTICATION_FAILURE
+        )
+        job = self._fail_with(
+            IpsecVerificationError("IKE SA is not established", classification)
+        )
+        self.assertEqual(job["status"], "FAILED")
+        self.assertEqual(job["stage"], "IPSEC")
+        self.assertEqual(job["root_cause"], diagnose.AUTHENTICATION_FAILURE)
+        self.assertEqual(job["confidence"], diagnose.DETERMINISTIC)
+        self.assertIn("AUTH_FAILED", job["evidence"]["notifications"])
+        # The pre-existing generic error field is untouched.
+        self.assertEqual(job["error"], "IKE SA is not established")
+
+    def test_ipsec_unknown_failure_reports_insufficient_evidence(self):
+        from controller import diagnose
+        from controller.executor import IpsecVerificationError
+
+        job = self._fail_with(
+            IpsecVerificationError("IKE SA is not established")
+        )
+        self.assertEqual(job["stage"], "IPSEC")
+        self.assertEqual(job["root_cause"], diagnose.UNKNOWN_IPSEC_FAILURE)
+        self.assertEqual(job["confidence"], diagnose.INSUFFICIENT_EVIDENCE)
+
+    def test_connectivity_ts_mismatch_is_reported(self):
+        from controller import diagnose
+        from controller.executor import ConnectivityVerificationError
+
+        classification = diagnose.classify_failure(
+            stage="CONNECTIVITY",
+            sa_state=diagnose.parse_sa_state("ESTABLISHED INSTALLED"),
+            ike_evidence=diagnose.parse_ike_evidence(
+                "12[IKE] CHILD_SA gw-a-to-gw-b{3} established with SPIs a_i b_o "
+                "and TS 2001:db8:99::/64 === 2001:db8:99::/64"
+            ),
+            connectivity={"status": "FAIL", "packet_loss": 100.0},
+            probe_target="2001:db8:2::10",
+        )
+        self.assertEqual(
+            classification["root_cause"], diagnose.TRAFFIC_SELECTOR_MISMATCH
+        )
+        job = self._fail_with(
+            ConnectivityVerificationError("ping failed", classification),
+            stage="CONNECTIVITY",
+        )
+        self.assertEqual(job["stage"], "CONNECTIVITY")
+        self.assertEqual(
+            job["root_cause"], diagnose.TRAFFIC_SELECTOR_MISMATCH
+        )
+
+    def test_ipv6_nat_t_is_422_with_no_job(self):
+        before = len(api_module.jobs)
+        r = self.client.post(
+            "/experiments",
+            json=self._payload(
+                mode="transport", address_family="ipv6", nat=True
+            ),
+        )
+        self.assertEqual(r.status_code, 422)
+        self.assertIn(
+            "No NAT deployment is defined",
+            r.json()["detail"][0]["msg"],
+        )
+        self.assertEqual(len(api_module.jobs), before, "a job was created")
+
+    def test_config_rejection_is_labelled_unsupported_configuration(self):
+        """A configuration rejection must not be recorded as an IPsec fault.
+
+        The 422 gate above short-circuits before a job exists, so this covers the
+        in-worker path: a ``ValueError`` raised during a run is a configuration
+        problem, and is labelled ``UNSUPPORTED_CONFIGURATION``.
+        """
+        from controller import diagnose
+
+        def _run(config, on_stage=None, job_id=None):
+            if on_stage:
+                on_stage("DEPLOY")
+            raise ValueError(
+                "No NAT deployment is defined for mode 'transport' / address "
+                "family 'ipv6'."
+            )
+
+        with mock.patch.object(api_module, "run_experiment", side_effect=_run):
+            r = self.client.post("/experiments", json=self._payload())
+            job = _wait_for_job(
+                self.client, r.json()["job_id"], {"COMPLETED", "FAILED"}
+            )
+        self.assertEqual(job["status"], "FAILED")
+        self.assertEqual(job["stage"], "CONFIGURATION")
+        self.assertEqual(
+            job["root_cause"], diagnose.UNSUPPORTED_CONFIGURATION
+        )
+        self.assertEqual(job["confidence"], diagnose.DETERMINISTIC)
+        self.assertIn("No NAT deployment is defined", job["reason"])
+        self.assertEqual(job["evidence"]["requested_address_family"], "ipv6")
+
+    def test_successful_job_has_no_root_cause(self):
+        with mock.patch.object(
+            api_module, "run_experiment", return_value={"status": "PASS"}
+        ):
+            r = self.client.post("/experiments", json=self._payload())
+            job = _wait_for_job(
+                self.client, r.json()["job_id"], {"COMPLETED", "FAILED"}
+            )
+        self.assertEqual(job["status"], "COMPLETED")
+        self.assertIsNone(job["root_cause"])
+        self.assertIsNone(job["confidence"])
+
+
 if __name__ == "__main__":
     unittest.main()

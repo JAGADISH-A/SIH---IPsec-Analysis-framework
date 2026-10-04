@@ -1,0 +1,72 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Sentinel LAN API acceptance probe</title>
+<style>
+  html,body{margin:0;background:#fff;font-family:monospace}
+  #r{padding:20px 36px;font-size:56px;font-weight:bold}
+  #s{padding:0 36px 36px;font-size:20px;color:#111;white-space:pre-wrap;line-height:1.5}
+  .ok{color:#0a7d00}.bad{color:#c00000}
+</style>
+<div id="r">RUNNING</div><div id="s">importing the app's own config module...</div>
+<script type="module">
+// Import the REAL configuration module the app uses, from the REAL served
+// origin. Nothing here re-implements URL building.
+import { ANALYTICS_API_URL, CONTROL_API_URL, AI_API_URL } from '/src/config.ts'
+
+const out = []
+const errors = []
+window.addEventListener('error', (e) => errors.push('window.error: ' + e.message))
+window.addEventListener('unhandledrejection', (e) =>
+  errors.push('unhandledrejection: ' + (e.reason && e.reason.message ? e.reason.message : String(e.reason))),
+)
+
+function get(name, url, path) {
+  return fetch(url + path, { headers: { Accept: 'application/json' } })
+    .then((r) => {
+      const acao = r.headers.get('access-control-allow-origin')
+      const ok = r.ok
+      out.push(`${ok ? 'PASS' : 'FAIL'} ${name} ${url}${path} -> ${r.status} ACAO=${acao}`)
+      if (!ok) out.push(`     ^ HTTP ${r.status} is not a success`)
+    })
+    .catch((e) => {
+      out.push(`FAIL ${name} ${url}${path} -> ${e.message}`)
+    })
+}
+
+out.push('page origin  : ' + location.origin)
+out.push('Analytics URL: ' + ANALYTICS_API_URL)
+out.push('Control URL  : ' + CONTROL_API_URL)
+out.push('AI URL       : ' + AI_API_URL)
+out.push('')
+
+const badHost = (u) => u.includes('127.0.0.1') || u.includes('localhost')
+if (badHost(ANALYTICS_API_URL) || badHost(CONTROL_API_URL)) {
+  out.push('FAIL LAN deployment must not use loopback API URLs')
+}
+
+await get('analytics', ANALYTICS_API_URL, '/api/health')
+await get('analytics', ANALYTICS_API_URL, '/api/v1/health')
+await get('analytics', ANALYTICS_API_URL, '/api/v1/capture/events?cursor=0&limit=50')
+await get('analytics', ANALYTICS_API_URL, '/api/v1/findings?limit=5')
+await get('analytics', ANALYTICS_API_URL, '/api/assessments?limit=1')
+await get('control  ', CONTROL_API_URL, '/health')
+await get('ai       ', AI_API_URL, '/ai/health')
+
+if (errors.length) {
+  out.push('')
+  errors.forEach((e) => out.push('CONSOLE ERROR: ' + e))
+}
+
+const failed = out.filter((l) => l.startsWith('FAIL') || l.startsWith('CONSOLE ERROR'))
+const cors = failed.some((l) => /cors|blocked|networkerror|failed to fetch/i.test(l))
+const refused = failed.some((l) => /connection refused|err_connection_refused/i.test(l))
+
+const verdict = failed.length === 0
+  ? 'BROWSER PASS'
+  : (refused ? 'CONNECTION REFUSED' : (cors ? 'CORS ERROR' : 'FAILURES'))
+
+const el = document.getElementById('r')
+el.textContent = verdict
+el.className = failed.length === 0 ? 'ok' : 'bad'
+document.getElementById('s').textContent = out.join('\n')
+</script>

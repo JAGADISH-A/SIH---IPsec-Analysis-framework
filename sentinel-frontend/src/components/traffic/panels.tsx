@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Bar,
@@ -9,7 +9,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { getDriftBaselines, getDriftSummary } from '@/api/analytics'
+import { getAssetContext, getAssets, getDriftBaselines, getDriftSummary } from '@/api/analytics'
 import { generateReport } from '@/api/reports'
 import { useResource } from '@/hooks/useResource'
 import { EmptyState, ErrorState, LoadingPanel, Spinner } from '@/components/states'
@@ -253,15 +253,26 @@ export function AssetPriorityPanel({ explanations }: { explanations: CustodyExpl
           const context = explanation.mission_context
           if (!context || typeof context !== 'object') return null
           const record = context as Record<string, unknown>
-          const priority = record.priority ?? record.asset_priority ?? null
-          if (priority === null || priority === undefined) return null
+          // The API nests the operator's declarations under `profile` and the
+          // result they produced under `risk`. Reading them from the top level
+          // yields nothing for every row, which is why this panel used to be
+          // permanently empty even when mission context was configured.
+          const profile = (record.profile ?? null) as Record<string, unknown> | null
+          const risk = (record.risk ?? null) as Record<string, unknown> | null
+          if (!profile || !risk) return null
+          const criticality = profile.criticality ?? null
+          const priority = risk.context_index ?? null
+          if (criticality === null || priority === null) return null
           return {
             key: `${explanation.assessment_id}/${explanation.finding_id}`,
             assessmentId: explanation.assessment_id,
-            asset: (record.asset ?? record.asset_id ?? record.host ?? '—') as string,
+            asset: (record.asset_id ?? profile.asset_id ?? '—') as string,
             priority: String(priority),
-            criticality: (record.criticality ?? null) as string | null,
-            reason: (record.reason ?? record.rationale ?? null) as string | null,
+            criticality: String(criticality),
+            missionImpact: (profile.mission_impact ?? null) as string | null,
+            technicalRisk: (risk.technical_risk ?? null) as number | null,
+            contextualRisk: (risk.contextualized_risk ?? null) as number | null,
+            reason: (record.reason ?? null) as string | null,
           }
         })
         .filter((row): row is NonNullable<typeof row> => row !== null),
@@ -281,7 +292,7 @@ export function AssetPriorityPanel({ explanations }: { explanations: CustodyExpl
           <table className="data-table min-w-[420px]">
             <thead>
               <tr>
-                {['Asset', 'Priority', 'Criticality', 'Reason', 'Assessment'].map((heading) => (
+                {['Asset', 'Priority', 'Criticality', 'Impact', 'Risk', 'Reason', 'Assessment'].map((heading) => (
                   <th key={heading} scope="col">
                     {heading}
                   </th>
@@ -293,7 +304,13 @@ export function AssetPriorityPanel({ explanations }: { explanations: CustodyExpl
                 <tr key={row.key}>
                   <td className="text-sm text-ink">{row.asset}</td>
                   <td className="text-sm font-medium text-ink-dim">{row.priority}</td>
-                  <td className="text-sm text-ink-faint">{row.criticality ?? NOT_OBSERVABLE}</td>
+                  <td className="text-sm text-ink-faint">{row.criticality}</td>
+                  <td className="text-sm text-ink-faint">{row.missionImpact ?? NOT_OBSERVABLE}</td>
+                  <td className="mono tnum text-xs text-ink-faint">
+                    {row.technicalRisk === null
+                      ? NOT_OBSERVABLE
+                      : `${row.technicalRisk} → ${row.contextualRisk}`}
+                  </td>
                   <td className="text-sm text-ink-faint">{row.reason ?? NOT_OBSERVABLE}</td>
                   <td className="px-3 py-2">
                     <Link
@@ -307,6 +324,204 @@ export function AssetPriorityPanel({ explanations }: { explanations: CustodyExpl
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+    </Panel>
+  )
+}
+
+/* --------------------------------------------------- selected asset context */
+
+/**
+ * Mission context for one *selected* asset, asked of the backend.
+ *
+ * `AssetPriorityPanel` above is a projection: it can only show the asset the
+ * store was started with, because that is the only asset the custody
+ * explanation reports. This panel is the other half of the same feature — it
+ * asks the backend about whichever asset is chosen in the selector.
+ *
+ * Two things are deliberately not done here:
+ *
+ * 1. The asset list is never written down in the browser. It comes from
+ *    `GET /api/v1/assets`, which reports the profiles an operator actually
+ *    declared. A hardcoded `gw-a`/`gw-b` list would offer assets this
+ *    deployment never declared and hide the ones it did.
+ * 2. The criticality is never written down either. Selecting an asset sends its
+ *    id and the panel renders what came back, so a change to the profile file
+ *    changes this screen. Pairing an asset with a criticality client-side would
+ *    make the panel look right while disagreeing with the backend, which is the
+ *    one thing this console must never do.
+ *
+ * `status` is the field that matters when reading the result. `not_configured`
+ * means no profile is declared for the selected asset, and in that case there is
+ * no profile, no risk and no criticality to show — the panel says so rather than
+ * rendering a blank that could read as "low".
+ */
+export function AssetContextPanel() {
+  const assets = useResource((signal) => getAssets(signal))
+  const [selected, setSelected] = useState('')
+  const [applied, setApplied] = useState<string | null>(null)
+
+  const declared = assets.data?.assets ?? []
+
+  // Default to the asset this store was bound to, falling back to the first
+  // declared one. Both come from the backend, so the selector can never offer an
+  // asset the deployment does not have.
+  useEffect(() => {
+    if (declared.length === 0 || selected !== '') return
+    const bound = assets.data?.store_asset_id
+    setSelected(
+      bound && declared.includes(bound) ? bound : (declared[0] ?? ''),
+    )
+  }, [declared, selected, assets.data])
+
+  // Explicitly applied rather than fetched on change: the point of the control
+  // is to show a request being made for the chosen asset.
+  const context = useResource(
+    (signal) => getAssetContext(applied as string, {}, signal),
+    { enabled: applied !== null, deps: [applied] },
+  )
+
+  const mission = context.data?.mission_context ?? null
+  const profile = mission?.profile ?? null
+  const risk = mission?.risk ?? null
+  const configured = mission?.status === 'configured' && profile !== null && risk !== null
+
+  return (
+    <Panel
+      title="Asset assessment"
+      subtitle="declared mission context for a selected asset · backend is the authority"
+      action={
+        <StatusPill
+          status={mission?.status ?? 'not_applied'}
+          tone={configured ? 'good' : 'neutral'}
+          label={configured ? 'CONFIGURED' : 'NO CONTEXT'}
+        />
+      }
+    >
+      {assets.loading ? (
+        <LoadingPanel label="Loading declared assets" rows={2} />
+      ) : assets.error ? (
+        <div className="p-3">
+          <ErrorState error={assets.error} onRetry={assets.reload} compact />
+        </div>
+      ) : declared.length === 0 ? (
+        <EmptyState
+          title="No assets declared"
+          icon="filter"
+          description={
+            assets.data?.reason ??
+            'This store was started without a mission profile file, so no asset is declared. Assets are declared explicitly by an operator and are never inferred from traffic.'
+          }
+        />
+      ) : (
+        <div className="space-y-3 p-3.5">
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="flex flex-col gap-1">
+              <span className="label text-ink-faint">Asset</span>
+              <select
+                className="rounded-md border border-edge bg-panel px-2 py-1 text-sm text-ink focus:border-sentinel focus:ring-2 focus:ring-sentinel/15 focus:outline-none"
+                value={selected}
+                onChange={(event) => setSelected(event.target.value)}
+              >
+                {declared.map((assetId) => (
+                  <option key={assetId} value={assetId}>
+                    {assetId}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded border border-sentinel/45 bg-sentinel/10 px-2.5 py-1 text-xs text-sentinel transition-colors hover:bg-sentinel/20 disabled:opacity-50"
+              // Only the absence of a selection disables it. `useResource`
+              // reports `loading: true` while it is disabled, so gating on
+              // `context.loading` here would lock the control permanently.
+              disabled={selected === '' || (applied === selected && context.loading)}
+              onClick={() => setApplied(selected)}
+            >
+              {applied === selected && context.loading && <Spinner />}
+              Assess asset
+            </button>
+          </div>
+
+          {applied === null ? (
+            <p className="text-xs leading-relaxed text-ink-faint">
+              No asset assessed yet. Choosing an asset sends its id to the analytics service and
+              renders the mission context the backend returns; the criticality below is never
+              assumed in the browser.
+            </p>
+          ) : context.loading ? (
+            <LoadingPanel label={`Assessing ${applied}`} rows={2} />
+          ) : context.error ? (
+            <ErrorState error={context.error} onRetry={context.reload} compact />
+          ) : context.data && !configured ? (
+            <div className="rounded border border-medium/30 bg-medium/[0.06] p-3">
+              <p className="text-sm font-medium text-medium">
+                No mission context for {context.data.asset_id}
+              </p>
+              <p className="mt-1 text-sm leading-relaxed text-ink-dim">
+                {mission?.reason ?? 'The backend declared no profile for this asset.'}
+              </p>
+              <p className="mt-1.5 text-xs leading-relaxed text-ink-faint">
+                This is deliberately not shown as a low criticality. An absent declaration and a
+                benign declaration are different facts, and only the second one supports a claim
+                about the asset.
+              </p>
+            </div>
+          ) : context.data && profile && risk ? (
+            <div className="asset-context-result space-y-3">
+              <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <Metric label="Asset" value={profile.asset_id} />
+                <Metric label="Criticality" value={profile.criticality} />
+                <Metric label="Mission impact" value={profile.mission_impact} />
+                <Metric label="Role" value={profile.role} />
+              </dl>
+              <div className="overflow-x-auto">
+                <table className="data-table min-w-[420px]">
+                  <thead>
+                    <tr>
+                      {['Risk', 'Value', 'Context', 'Value'].map((heading, index) => (
+                        <th key={index} scope="col">
+                          {heading}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      ['Score', risk.technical_risk, 'Contextualized', risk.contextualized_risk],
+                      ['Severity', risk.technical_severity, 'Contextualized', risk.contextualized_severity],
+                      ['Index', risk.context_index, 'Multiplier', risk.multiplier_bp],
+                      ['Criticality weight', risk.criticality_weight, 'Impact weight', risk.mission_impact_weight],
+                      ['Score cap', risk.score_cap, 'Inferred', String(risk.inferred_from_traffic)],
+                    ].map((row) => (
+                      <tr key={row[0] as string}>
+                        <th scope="row" className="text-left text-xs font-normal text-ink-faint">
+                          {row[0] as string}
+                        </th>
+                        <td className="mono tnum text-xs text-ink">{row[1] as string}</td>
+                        <th scope="row" className="text-left text-xs font-normal text-ink-faint">
+                          {row[2] as string}
+                        </th>
+                        <td className="mono tnum text-xs text-ink">{row[3] as string}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-xs leading-relaxed text-ink-faint">
+                Contextualized against {context.data.technical_risk_source.replace(/_/g, ' ')}{' '}
+                ({context.data.technical_risk} / {context.data.technical_severity})
+                {context.data.assessment_id ? ` from ${context.data.assessment_id}` : ''}. The
+                declared profile came from {mission?.context_source ?? 'no source'}
+                {mission?.context_source_path ? ` (${mission.context_source_path})` : ''}, model{' '}
+                {mission?.model_version}. Selecting an asset is a read: it does not rebind this
+                store, so the custody chain still reports{' '}
+                {assets.data?.store_asset_id ?? 'no bound asset'}.
+              </p>
+            </div>
+          ) : null}
         </div>
       )}
     </Panel>
