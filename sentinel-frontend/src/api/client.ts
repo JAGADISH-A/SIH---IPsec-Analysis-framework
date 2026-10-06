@@ -144,6 +144,16 @@ export type RequestOptions = {
   body?: unknown
   signal?: AbortSignal
   query?: Record<string, string | number | boolean | undefined | null>
+  /**
+   * Overrides `API_TIMEOUT_MS` for this call only.
+   *
+   * Needed by a plane whose own upstream budget is longer than the shared
+   * default: the explanation service may spend up to its configured model
+   * timeout inside one request, so a client deadline set at exactly the same
+   * value races the server and reports "not connected" for an answer that was
+   * about to arrive. Analytics and control reads are fast and keep the default.
+   */
+  timeoutMs?: number
 }
 
 function buildUrl(base: string, path: string, query?: RequestOptions['query']): string {
@@ -180,9 +190,9 @@ export async function request<T>(
   path: string,
   options: RequestOptions & { title: string; fallback: string },
 ): Promise<T> {
-  const { title, fallback, method = 'GET', body, signal, query } = options
+  const { title, fallback, method = 'GET', body, signal, query, timeoutMs } = options
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), API_TIMEOUT_MS)
+  const timer = setTimeout(() => controller.abort(), timeoutMs ?? API_TIMEOUT_MS)
   const onAbort = () => controller.abort()
   signal?.addEventListener('abort', onAbort)
 

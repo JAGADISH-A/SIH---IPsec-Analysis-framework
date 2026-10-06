@@ -226,6 +226,28 @@ class ObservedState(JsonModel):
     last_ah_timestamp_ns: Optional[int] = None
     spis: List[SpiObservation] = field(default_factory=list)
     transitions: List[TransitionObservation] = field(default_factory=list)
+    # -- observation window and multi-SA views, as the state builder writes
+    #    them. Every one of these is OPTIONAL and defaults to None, which means
+    #    "this snapshot did not record the field" -- never "the value is zero".
+    #    A builder build that predates a key leaves it absent; a build that
+    #    recorded an empty list leaves [], so absent and empty stay
+    #    distinguishable.
+    observation_start_ns: Optional[int] = None
+    last_packet_timestamp_ns: Optional[int] = None
+    active_timeout_ms: Optional[int] = None
+    #: Outer (src, dst) endpoint pairs the sensor actually saw, when the
+    #: builder recorded them. ``None`` = not recorded; ``[]`` = recorded and
+    #: none were seen.
+    outer_endpoint_pairs: Optional[List[List[str]]] = None
+    #: ESP frames that arrived without a SPI (unattributable ESP). ``None``
+    #: means the counter was not part of this build, which is not the same as
+    #: zero frames.
+    spi_less_esp_packets: Optional[int] = None
+    #: Per-SA snapshots and SA groups, populated only once the correlation
+    #: layer assigned SPI identity. ``None`` = not recorded, ``[]`` = recorded
+    #: and no SPI carried an identity at snapshot time.
+    sa_snapshots: Optional[List[Dict[str, Any]]] = None
+    sa_groups: Optional[List[Dict[str, Any]]] = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.timestamp_ns, int) or isinstance(self.timestamp_ns, bool):
@@ -277,6 +299,40 @@ class ObservedState(JsonModel):
             if not isinstance(t, TransitionObservation):
                 raise ValueError("transitions must contain TransitionObservation objects")
 
+        # Observation-window and multi-SA fields: optional, typed, never
+        # defaulted into a value the snapshot did not actually record.
+        for label in ("observation_start_ns", "last_packet_timestamp_ns",
+                      "active_timeout_ms", "spi_less_esp_packets"):
+            value = getattr(self, label)
+            if value is None:
+                continue
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise ValueError(f"{label} must be an integer or None")
+            if value < 0:
+                raise ValueError(f"{label} must be >= 0, got {value}")
+
+        if self.outer_endpoint_pairs is not None:
+            if not isinstance(self.outer_endpoint_pairs, list):
+                raise ValueError("outer_endpoint_pairs must be a list or None")
+            for pair in self.outer_endpoint_pairs:
+                if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+                    raise ValueError(
+                        "outer_endpoint_pairs entries must be [src, dst] pairs"
+                    )
+                if not all(isinstance(item, str) for item in pair):
+                    raise ValueError(
+                        "outer_endpoint_pairs entries must be strings"
+                    )
+
+        for label in ("sa_snapshots", "sa_groups"):
+            value = getattr(self, label)
+            if value is None:
+                continue
+            if not isinstance(value, list):
+                raise ValueError(f"{label} must be a list or None")
+            if not all(isinstance(item, dict) for item in value):
+                raise ValueError(f"{label} must contain dictionaries")
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ObservedState":
         return cls(
@@ -305,4 +361,13 @@ class ObservedState(JsonModel):
                 TransitionObservation.from_dict(t)
                 for t in data.get("transitions") or []
             ],
+            # Absent key -> None ("this build did not record it"); present key
+            # -> its recorded value, including an empty list.
+            observation_start_ns=data.get("observation_start_ns"),
+            last_packet_timestamp_ns=data.get("last_packet_timestamp_ns"),
+            active_timeout_ms=data.get("active_timeout_ms"),
+            outer_endpoint_pairs=data.get("outer_endpoint_pairs"),
+            spi_less_esp_packets=data.get("spi_less_esp_packets"),
+            sa_snapshots=data.get("sa_snapshots"),
+            sa_groups=data.get("sa_groups"),
         )

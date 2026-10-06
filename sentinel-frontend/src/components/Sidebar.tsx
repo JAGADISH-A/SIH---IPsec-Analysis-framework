@@ -3,46 +3,38 @@ import { getAnalyticsHealth } from '@/api/analytics'
 import { getControlHealth } from '@/api/control'
 import { useResource } from '@/hooks/useResource'
 
-type NavItem = { to: string; label: string; end?: boolean; hint?: string }
-type NavGroup = { label: string; items: NavItem[] }
+type NavItem = { to: string; label: string; end?: boolean; hint?: string; unavailable?: boolean }
 
 /**
- * Navigation, grouped by the question an analyst is asking.
+ * Navigation follows the analyst's path through the product rather than the
+ * repository's module layout.
  *
- * Analysis is where work starts: what is on the wire now, what was assessed,
- * and the store-wide summary. Investigation is the cross-cutting evidence
- * surface reached once something needs explaining. System holds the action and
- * the health readout.
- *
- * Finding-level investigation happens *inside* Packet Analysis: the selected
- * packet opens the in-workspace surface, so Findings is not a parallel
- * destination. The finding routes still exist as deep links.
+ * One item is retained but marked unavailable: report documents have no
+ * producer in the analytics plane, and the audit found none. Keeping it
+ * visible with an explicit marker is more honest than deleting the entry,
+ * which would hide the gap, or rendering an empty view, which would imply the
+ * capability exists and is merely empty today. The threat matrix, once in the
+ * same position, now points at a real route: the backend records both of its
+ * axes (severity, planner posture), so the matrix is a cross-tabulation of
+ * existing facts rather than a computed capability.
  */
-const NAV_GROUPS: NavGroup[] = [
+const NAV_ITEMS: NavItem[] = [
+  { to: '/overview', label: 'Overview', hint: 'What the store holds, ordered by time' },
+  { to: '/', label: 'Live Screening', end: true, hint: 'Live packet capture and screening' },
   {
-    label: 'Analysis',
-    items: [
-      { to: '/', label: 'Packet Analysis', end: true, hint: 'Live packet analysis workspace' },
-      { to: '/assessments', label: 'Assessments', hint: 'Every assessment on record' },
-      { to: '/reports', label: 'Reports', hint: 'A read-only summary of the store' },
-    ],
+    to: '/configuration',
+    label: 'IPsec Configuration',
+    hint: 'Configured tunnel parameters per assessment',
   },
+  { to: '/analysis', label: 'Traffic Analysis', hint: 'Traffic classification and model signals' },
+  { to: '/assessments', label: 'Security Assessment', hint: 'Every assessment on record' },
+  { to: '/reports', label: 'Reports', hint: 'Read-only summary of the store', unavailable: true },
   {
-    label: 'Investigation',
-    items: [
-      { to: '/activity', label: 'Live Activity', hint: 'Live monitors and event streams' },
-      { to: '/evidence', label: 'Evidence Library', hint: 'Every recorded evidence reference' },
-      { to: '/explainability', label: 'Explainability', hint: 'AI explanations across the store' },
-      { to: '/analysis', label: 'ML Analysis', hint: 'Model signals and drift' },
-    ],
+    to: '/threat-matrix',
+    label: 'Threat Matrix',
+    hint: 'Assessments by severity and planner posture',
   },
-  {
-    label: 'System',
-    items: [
-      { to: '/run', label: 'Run Assessment', hint: 'Configure and run a new test' },
-      { to: '/system', label: 'System Status', hint: 'Backend planes and connectivity' },
-    ],
-  },
+  { to: '/settings', label: 'Settings', hint: 'Backend planes and connectivity' },
 ]
 
 function Wordmark() {
@@ -127,42 +119,33 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       </div>
 
       <div className="flex-1 overflow-y-auto px-2.5 py-4">
-        {NAV_GROUPS.map((group, groupIndex) => (
-          <div key={group.label} className={groupIndex === 0 ? '' : 'mt-6'}>
-            <p className="label px-2.5 pb-1.5">{group.label}</p>
-            <ul className="space-y-0.5">
-              {group.items.map((item) => (
-                <li key={item.to}>
-                  <NavLink
-                    to={item.to}
-                    end={item.end}
-                    onClick={onNavigate}
-                    title={item.hint}
-                    className={({ isActive }) =>
-                      `flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-sm transition-colors ${
-                        isActive
-                          ? 'bg-sentinel/8 font-medium text-sentinel'
-                          : 'text-ink-dim hover:bg-panel-3 hover:text-ink'
-                      }`
-                    }
-                  >
-                    {({ isActive }) => (
-                      <>
-                        <span
-                          className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                            isActive ? 'bg-sentinel' : 'bg-transparent'
-                          }`}
-                          aria-hidden="true"
-                        />
-                        {item.label}
-                      </>
-                    )}
-                  </NavLink>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
+        <ul className="space-y-0.5">
+          {NAV_ITEMS.map((item) => (
+            <li key={item.to}>
+              <NavLink
+                to={item.to}
+                end={item.end}
+                onClick={onNavigate}
+                title={item.hint}
+                className={({ isActive }) =>
+                  [
+                    'flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition-colors',
+                    isActive
+                      ? 'bg-sentinel/10 font-medium text-ink'
+                      : 'text-ink-dim hover:bg-panel-2 hover:text-ink',
+                  ].join(' ')
+                }
+              >
+                <span className="truncate">{item.label}</span>
+                {item.unavailable ? (
+                  <span className="ml-auto shrink-0 text-2xs uppercase tracking-wide text-ink-faint">
+                    Not available
+                  </span>
+                ) : null}
+              </NavLink>
+            </li>
+          ))}
+        </ul>
       </div>
 
       <div className="border-t border-edge px-4 py-3">

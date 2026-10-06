@@ -187,6 +187,76 @@ export function CollapsibleSection({
   )
 }
 
+/**
+ * The leaf disclosure for identifiers.
+ *
+ * Dataset run ids, assessment ids, evidence ids, artifact paths, digests and
+ * engine module paths are what an analyst needs when they are reconciling this
+ * screen against the store — and almost never before that. This puts them
+ * behind one native disclosure so the decision stays on top.
+ *
+ * It is deliberately a leaf (`<details>`, not `CollapsibleSection`): these sit
+ * *inside* section groups, and nesting one accordion inside another is how
+ * progressive disclosure turns back into overload.
+ */
+export function ProvenanceDetails({
+  title = 'Technical details',
+  description,
+  defaultOpen = false,
+  children,
+  className = '',
+  id,
+}: {
+  title?: ReactNode
+  description?: ReactNode
+  defaultOpen?: boolean
+  children: ReactNode
+  className?: string
+  id?: string
+}) {
+  return (
+    <details
+      id={id}
+      data-provenance="true"
+      open={defaultOpen}
+      className={`group/prov ${className}`}
+    >
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 py-1 text-xs text-ink-faint transition-colors marker:hidden hover:text-ink-dim focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sentinel">
+        <span className="transition-transform group-open/prov:rotate-90">
+          <Chevron open={false} />
+        </span>
+        <span className="font-medium">{title}</span>
+        {description && <span className="truncate text-ink-faint/80">{description}</span>}
+      </summary>
+      <div className="mt-1.5 flex flex-col gap-1 border-l border-edge-soft pl-3">{children}</div>
+    </details>
+  )
+}
+
+/**
+ * One identifier row inside a provenance disclosure: a faint label and a mono
+ * value. Long values (digests, paths) keep the full string in the `title` so a
+ * truncated row is never mistaken for a short one.
+ */
+export function IdRow({
+  label,
+  value,
+  title,
+}: {
+  label: ReactNode
+  value: ReactNode
+  title?: string
+}) {
+  return (
+    <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs">
+      <span className="shrink-0 text-ink-faint">{label}</span>
+      <span className="mono min-w-0 break-all text-ink-dim" title={title}>
+        {value}
+      </span>
+    </div>
+  )
+}
+
 /* --------------------------------------------------------------- findings */
 
 /**
@@ -466,7 +536,7 @@ export function SeverityPieChart({
               <dd className="tnum flex items-center gap-3 text-sm">
                 <span className="font-semibold text-ink">{entry.count}</span>
                 <span className="w-12 text-right text-ink-faint">
-                  {formatPercent((entry.count / total) * 100, 0)}
+                  {formatPercent(entry.count / total, 1)}
                 </span>
               </dd>
             </div>

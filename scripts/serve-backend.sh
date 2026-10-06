@@ -475,6 +475,18 @@ fi
 # ---------------------------------------------------------------------------
 if [ "$START_AI" -eq 1 ]; then
     section "explanation service (read-only, Server C)"
+    # The explanation service keeps its own allow-list (ANALYTICS_AI_ALLOWED_ORIGINS,
+    # falling back to .env when the variable is unset). The FRONTEND_ORIGIN
+    # synthesis above is computed here at launch and would otherwise stop at the
+    # analytics API: a browser served from FRONTEND_ORIGIN could read Analytics
+    # and still be refused by port 8082, which the frontend reports as
+    # "explanation service not connected" rather than as a CORS failure. Forward
+    # the same effective list so both planes answer the same origin. An operator
+    # who exported ANALYTICS_AI_ALLOWED_ORIGINS explicitly keeps that policy --
+    # it is passed through untouched, exactly as ANALYTICS_API_ALLOWED_ORIGINS is.
+    if [ -z "${ANALYTICS_AI_ALLOWED_ORIGINS:-}" ]; then
+        export ANALYTICS_AI_ALLOWED_ORIGINS="$ANALYTICS_API_ALLOWED_ORIGINS"
+    fi
     if [ "$AI_ACTION" = "start" ]; then
         # ANALYTICS_API_URL so the assistant reads live-registered assessments
         # through the read-only v1 surface rather than rebuilding the store.

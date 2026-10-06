@@ -1,4 +1,6 @@
-import { formatNumber, formatValue, humanize, severityHex } from '@/lib/format'
+import { IdRow, ProvenanceDetails } from '@/components/kit'
+import { formatNumber, formatValue, severityHex } from '@/lib/format'
+import { configTermLabel, statusLabel } from '@/lib/labels'
 import type { AssessmentDriftResponse } from '@/types'
 
 /**
@@ -37,37 +39,54 @@ export function AssessmentDriftBlock({ drift }: { drift: AssessmentDriftResponse
                 <span className="pw-dim">
                   {' '}
                   · {formatNumber(drift.changed_fields.length)} changed field
-                  {drift.changed_fields.length === 1 ? '' : 's'} · {drift.status}
-                  {drift.risk?.severity ? ` · ${humanize(String(drift.risk.severity))}` : ''}
+                  {drift.changed_fields.length === 1 ? '' : 's'} · {statusLabel(drift.status)}
+                  {drift.risk?.severity ? ` · ${statusLabel(drift.risk.severity)}` : ''}
                 </span>
               </dd>
             </div>
             {drift.changed_fields.map((field, index) => (
               <dl className="pw-kv" key={`${field.variable ?? index}`}>
-                <dt>{field.label ?? field.variable ?? 'field'}</dt>
-                <dd className="pw-mono">
-                  {formatValue(field.baseline_value)} <span className="pw-dim">→</span> {formatValue(field.current_value)}
-                  {field.severity && <span className="pw-dim"> · {humanize(String(field.severity))}</span>}
-                  {field.finding_id && (
-                    <span className="pw-dim"> · {String(field.finding_id)}</span>
+                <dt>{field.label ?? (field.variable ? configTermLabel(field.variable) : 'field')}</dt>
+                <dd>
+                  <span className="pw-ink">{formatValue(field.current_value)}</span>
+                  <span className="pw-faint-text">
+                    {' '}
+                    (baseline {formatValue(field.baseline_value)})
+                  </span>
+                  {field.severity && <span className="pw-dim"> · {statusLabel(field.severity)}</span>}
+                  {(field.variable || field.comparison_rule || field.drift_category || field.finding_id) && (
+                    <ProvenanceDetails title="Drift record" className="mt-1">
+                      {field.variable && <IdRow label="Variable" value={field.variable} title={field.variable} />}
+                      {field.comparison_rule && (
+                        <IdRow label="Comparison rule" value={field.comparison_rule} title={field.comparison_rule} />
+                      )}
+                      {field.drift_category && (
+                        <IdRow label="Drift category" value={field.drift_category} title={field.drift_category} />
+                      )}
+                      {field.finding_id && (
+                        <IdRow label="Finding id" value={String(field.finding_id)} title={String(field.finding_id)} />
+                      )}
+                    </ProvenanceDetails>
                   )}
                 </dd>
-                {(field.comparison_rule || field.drift_category) && (
-                  <dd className="pw-dim">
-                    {[field.comparison_rule, field.drift_category].filter(Boolean).join(' · ')}
-                  </dd>
-                )}
               </dl>
             ))}
             {drift.risk?.findings && drift.risk.findings.length > 0 && (
               <dl className="pw-kv">
                 <dt>Findings</dt>
-                <dd>
+                <dd className="pw-ink">
                   {drift.risk.findings.map((finding, index) => (
-                    <span key={`${finding.finding_id ?? index}`} className="pw-mono">
+                    <span key={`${finding.finding_id ?? index}`}>
                       {index > 0 && <span className="pw-dim">, </span>}
-                      {finding.finding_id ?? 'finding'}
-                      {finding.severity ? ` (${humanize(String(finding.severity))})` : ''}
+                      {finding.severity ? statusLabel(finding.severity) : 'finding'}
+                      {finding.severity ? ' · ' : ''}
+                      <ProvenanceDetails title="Finding record">
+                        <IdRow
+                          label="Finding id"
+                          value={finding.finding_id ?? '—'}
+                          title={finding.finding_id ?? undefined}
+                        />
+                      </ProvenanceDetails>
                     </span>
                   ))}
                 </dd>
@@ -111,24 +130,15 @@ function DriftProvenance({ drift }: { drift: AssessmentDriftResponse }) {
   const current = drift.current
   if (!baseline && !current) return null
   return (
-    <dl className="pw-kv">
-      <dt>Provenance</dt>
-      <dd className="pw-mono pw-dim">
-        {[
-          baseline?.baseline_id ? `baseline ${baseline.baseline_id}` : null,
-          baseline?.validated_by ? `validated by ${baseline.validated_by}` : null,
-          baseline?.validated_at ? `at ${baseline.validated_at}` : null,
-          current?.run_id ? `run ${current.run_id}` : null,
-          current?.sequence != null ? `sequence ${current.sequence}` : null,
-        ]
-          .filter(Boolean)
-          .join(' · ')}
-      </dd>
+    <ProvenanceDetails title="Comparison record" className="mt-2">
+      {baseline?.baseline_id && <IdRow label="Baseline id" value={baseline.baseline_id} title={baseline.baseline_id} />}
+      {baseline?.validated_by && <IdRow label="Validated by" value={baseline.validated_by} />}
+      {baseline?.validated_at && <IdRow label="Validated at" value={baseline.validated_at} />}
+      {current?.run_id && <IdRow label="Run id" value={current.run_id} title={current.run_id} />}
+      {current?.sequence != null && <IdRow label="Sequence" value={String(current.sequence)} />}
       {(drift.unknown_variables?.length ?? 0) > 0 && (
-        <dd className="pw-dim">
-          not established: {drift.unknown_variables?.join(', ')}
-        </dd>
+        <IdRow label="Not established" value={drift.unknown_variables?.join(', ')} />
       )}
-    </dl>
+    </ProvenanceDetails>
   )
 }

@@ -6,7 +6,9 @@ Implements the Phase-8 REST contract:
     GET /api/assessments
     GET /api/assessments/{id}
     GET /api/assessments/{id}/{expected|observed|correlation|risk|xai|ml|
-                            evidence|ipsec-state}
+                            evidence|ipsec-state|sa|crypto-evidence|replay|
+                            metadata-exposure|threat-matrix|report|
+                            executive-report}
 
 Unknown assessment ids and unknown sub-resources yield a structured 404.
 Method handling is left to the HTTP layer (405). Everything is JSON: the
@@ -23,6 +25,13 @@ from typing import Any, Dict, List, Optional
 
 from .adapters import parse_assessment_id
 
+#: The sub-resources of ``/api/assessments/{id}``, in contract order.
+#:
+#: The names are what a client puts in the URL; ``SUB_RESOURCE_KEYS`` maps
+#: them onto the key the bundle stores the product under, so a URL vocabulary
+#: that reads well (``crypto-evidence``) and a payload vocabulary that reads
+#: well as an object key (``crypto_evidence``) never have to be the same
+#: string. Anything not in the mapping is its own key.
 SUB_RESOURCES = (
     "expected",
     "observed",
@@ -32,7 +41,23 @@ SUB_RESOURCES = (
     "ml",
     "evidence",
     "ipsec-state",
+    "sa",
+    "crypto-evidence",
+    "replay",
+    "metadata-exposure",
+    "threat-matrix",
+    "report",
+    "executive-report",
 )
+
+SUB_RESOURCE_KEYS = {
+    "ipsec-state": "ipsec_state",
+    "crypto-evidence": "crypto_evidence",
+    "replay": "replay_assessment",
+    "metadata-exposure": "metadata_exposure",
+    "threat-matrix": "threat_matrix",
+    "executive-report": "executive_report",
+}
 
 
 class ApiError(Exception):
@@ -249,7 +274,7 @@ def handle_sub_resource(store, assessment_id, resource) -> Dict[str, Any]:
             f"unknown sub-resource {resource!r}; expected one of {SUB_RESOURCES}",
         )
     bundle = _bundle_or_404(store, assessment_id)
-    key = "ipsec_state" if resource == "ipsec-state" else resource
+    key = SUB_RESOURCE_KEYS.get(resource, resource)
     return {
         "assessment_id": bundle["assessment_id"],
         "resource": resource,

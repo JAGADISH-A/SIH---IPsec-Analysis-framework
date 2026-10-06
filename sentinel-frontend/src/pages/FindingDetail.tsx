@@ -3,9 +3,11 @@ import { getFindingExplanation } from '@/api/analytics'
 import { useResource } from '@/hooks/useResource'
 import { ErrorState, LoadingPanel } from '@/components/states'
 import { Panel, Prose, SeverityBadge, StatusPill, Tag, LinkButton, HashChip } from '@/components/ui'
+import { IdRow, ProvenanceDetails } from '@/components/kit'
 import { Breadcrumbs } from '@/layouts/AppLayout'
 import { ApiRequestError } from '@/api/client'
-import { formatBytes, formatValue, humanize } from '@/lib/format'
+import { formatBytes, formatValue } from '@/lib/format'
+import { acronymLabel, configTermLabel, statusLabel } from '@/lib/labels'
 import type { CustodyExplanation, Severity } from '@/types'
 
 /* ------------------------------------------------------------- primitives */
@@ -46,7 +48,7 @@ function ExpectedObserved({
         <p className="mono mt-1.5 break-all text-base text-sentinel">{expectedText}</p>
         {variable && (
           <p className="mt-1 text-xs text-ink-faint">
-            variable <span className="mono">{variable}</span>
+            parameter <span>{configTermLabel(variable)}</span>
           </p>
         )}
       </div>
@@ -158,16 +160,17 @@ function CustodyFacts({ facts }: { facts: CustodyExplanation['facts'] }) {
                 {fact.detail && (
                   <p className="mt-1 text-xs leading-snug text-ink-faint">{fact.detail}</p>
                 )}
-                <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-ink-faint">
-                  <span className="mono">{fact.fact_id}</span>
-                  {fact.source && <span className="mono">from {fact.source}</span>}
+                <ProvenanceDetails title="Fact record" className="mt-1.5">
+                  <IdRow label="Fact id" value={fact.fact_id ?? '—'} title={fact.fact_id ?? undefined} />
+                  {fact.source && <IdRow label="Source" value={fact.source} title={fact.source} />}
                   {fact.evidence_ids && fact.evidence_ids.length > 0 && (
-                    <span className="mono text-sentinel">
-                      {fact.evidence_ids.length} evidence id
-                      {fact.evidence_ids.length === 1 ? '' : 's'}
-                    </span>
+                    <IdRow
+                      label={`Evidence id${fact.evidence_ids.length === 1 ? '' : 's'} (${fact.evidence_ids.length})`}
+                      value={fact.evidence_ids.join(', ')}
+                      title={fact.evidence_ids.join(', ')}
+                    />
                   )}
-                </div>
+                </ProvenanceDetails>
               </li>
             ))}
           </ul>
@@ -308,11 +311,16 @@ export function FindingDetail() {
           <div className="panel p-4">
             <div className="flex flex-wrap items-center gap-2">
               <SeverityBadge severity={chain.severity as Severity} />
-              <span className="mono text-xs text-ink-faint">{chain.finding_id}</span>
-              <Tag>{humanize(chain.category)}</Tag>
+              <Tag>{acronymLabel(chain.category)}</Tag>
               <span className="ml-auto flex items-center gap-2 text-xs text-ink-faint">
-                <span className="mono">{chain.component}</span>
-                <Tag>{chain.component_version}</Tag>
+                <ProvenanceDetails title="Record ids">
+                  <IdRow label="Finding id" value={chain.finding_id} title={chain.finding_id} />
+                  {chain.rule?.rule_id && (
+                    <IdRow label="Rule id" value={chain.rule.rule_id} title={chain.rule.rule_id} />
+                  )}
+                  <IdRow label="Component" value={chain.component ?? '—'} title={chain.component ?? undefined} />
+                </ProvenanceDetails>
+                {chain.component_version && <Tag>{chain.component_version}</Tag>}
               </span>
             </div>
             <h2 className="mt-2 text-lg font-semibold leading-snug text-ink">
@@ -366,16 +374,19 @@ export function FindingDetail() {
               {/* Rule definition */}
               <Panel
                 title="Rule"
-                subtitle={`${chain.rule.rule_id} · registered: ${chain.rule.registered ? 'yes' : 'no'}`}
+                subtitle={`registered: ${chain.rule.registered ? 'yes' : 'no'}`}
               >
+                <ProvenanceDetails title="Rule record" className="px-4 pt-3">
+                  <IdRow label="Rule id" value={chain.rule.rule_id} title={chain.rule.rule_id} />
+                </ProvenanceDetails>
                 <dl className="grid grid-cols-1 gap-x-5 gap-y-3.5 p-4 md:grid-cols-2">
                   {chain.rule.source_variable && (
                     <div>
                       <dt className="label text-ink-faint">
                         Source variable
                       </dt>
-                      <dd className="mono mt-0.5 text-sm text-ink">
-                        {chain.rule.source_variable}
+                      <dd className="mt-0.5 text-sm text-ink">
+                        {configTermLabel(chain.rule.source_variable)}
                       </dd>
                     </div>
                   )}
@@ -477,11 +488,8 @@ export function FindingDetail() {
                     {chain.evidence.map((item) => (
                       <li key={item.evidence_id} className="px-4 py-3">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="mono text-xs text-sentinel">
-                            {item.evidence_id}
-                          </span>
                           <StatusPill
-                            status={item.verification_status ?? 'unknown'}
+                            status={statusLabel(item.verification_status ?? 'unknown')}
                             tone={
                               item.verification_status === 'valid'
                                 ? 'good'
@@ -490,6 +498,12 @@ export function FindingDetail() {
                                   : 'neutral'
                             }
                           />
+                          {item.artifact_type && (
+                            <span className="text-sm text-ink">{acronymLabel(item.artifact_type)}</span>
+                          )}
+                          <ProvenanceDetails title="Evidence record" className="ml-auto">
+                            <IdRow label="Evidence id" value={item.evidence_id} title={item.evidence_id} />
+                          </ProvenanceDetails>
                         </div>
                         <p className="mt-1 text-xs text-ink-faint">
                           {item.verification_detail ?? 'no verification detail reported'}
@@ -497,7 +511,7 @@ export function FindingDetail() {
                         <dl className="mt-2 space-y-1 text-xs">
                           <div className="flex justify-between gap-2">
                             <dt className="text-ink-faint">artifact</dt>
-                            <dd className="mono truncate text-ink-dim">{item.artifact_type ?? '—'}</dd>
+                            <dd className="truncate text-ink-dim">{acronymLabel(item.artifact_type)}</dd>
                           </div>
                           <div className="flex justify-between gap-2">
                             <dt className="text-ink-faint">size</dt>

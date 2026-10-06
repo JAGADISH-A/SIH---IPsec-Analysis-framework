@@ -1,8 +1,9 @@
-import { Panel, Tag, StatusPill } from '@/components/ui'
+import { Panel, SeverityBadge, Tag, StatusPill } from '@/components/ui'
 import { EmptyState } from '@/components/states'
+import { IdRow, ProvenanceDetails } from '@/components/kit'
 import { EvidenceRefTable } from './ObservedPanel'
 import { artifactName, formatBytes, formatNumber, formatUtc, humanize } from '@/lib/format'
-import type { AssessmentBundle } from '@/types'
+import type { AssessmentBundle, Severity } from '@/types'
 
 /**
  * Evidence for one assessment: the refs the risk engine attached, the block the
@@ -86,7 +87,7 @@ export function EvidencePanel({ bundle }: { bundle: AssessmentBundle }) {
           <table className="data-table min-w-[900px]">
             <thead>
               <tr className="border-b border-edge text-left">
-                {['Finding', 'Severity', 'Evidence ID', 'Artifact', 'Captured', 'Size', 'Digest'].map(
+                {['Finding', 'Severity', 'Artifact', 'Captured', 'Size', 'Record ids'].map(
                   (heading) => (
                     <th
                       key={heading}
@@ -108,13 +109,9 @@ export function EvidencePanel({ bundle }: { bundle: AssessmentBundle }) {
                     <span className="block max-w-[200px] truncate text-sm text-ink" title={finding.title}>
                       {finding.title}
                     </span>
-                    <span className="mono text-xs text-ink-faint">{finding.finding_id}</span>
                   </td>
                   <td className="px-4 py-2.5">
-                    <span className="text-xs text-ink-dim">{finding.severity}</span>
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <span className="mono text-xs text-sentinel">{ref.evidence_id ?? '—'}</span>
+                    <SeverityBadge severity={finding.severity as Severity} size="sm" />
                   </td>
                   <td className="px-4 py-2.5">
                     <span
@@ -139,9 +136,16 @@ export function EvidencePanel({ bundle }: { bundle: AssessmentBundle }) {
                     {formatBytes(ref.byte_size)}
                   </td>
                   <td className="px-4 py-2.5">
-                    <span className="mono text-xs text-ink-faint" title={ref.artifact_sha256}>
-                      {ref.artifact_sha256 ? `${ref.artifact_sha256.slice(0, 10)}…` : '—'}
-                    </span>
+                    <ProvenanceDetails title="Record ids">
+                      <IdRow label="Evidence id" value={ref.evidence_id ?? '—'} title={ref.evidence_id ?? undefined} />
+                      <IdRow label="Finding id" value={finding.finding_id} title={finding.finding_id} />
+                      <IdRow
+                        label="sha256"
+                        value={ref.artifact_sha256 ?? '—'}
+                        title={ref.artifact_sha256 ?? undefined}
+                      />
+                      <IdRow label="Path" value={ref.pcap_path} title={ref.pcap_path} />
+                    </ProvenanceDetails>
                   </td>
                 </tr>
               ))}

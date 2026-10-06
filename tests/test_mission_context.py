@@ -848,9 +848,40 @@ class TestApiAndOpenApi(unittest.TestCase):
             "/api/v1/assets/{asset_id}/context",
         }
         named = drift_routes | capture_routes | asset_routes
+        # The security-analysis products (brief areas 1-9) are sub-resources of
+        # the assessment that produced them: same id, same read-only verb, same
+        # envelope. Naming them here is what keeps the pinned base count honest
+        # while asserting that the answer surface grew *inside* an existing
+        # family rather than as a new API.
+        analysis_product_routes = {
+            "/api/assessments/{id}/expected",
+            "/api/assessments/{id}/observed",
+            "/api/assessments/{id}/sa",
+            "/api/assessments/{id}/crypto-evidence",
+            "/api/assessments/{id}/replay",
+            "/api/assessments/{id}/metadata-exposure",
+            "/api/assessments/{id}/threat-matrix",
+            "/api/assessments/{id}/report",
+            "/api/assessments/{id}/executive-report",
+        }
+        named |= analysis_product_routes
         self.assertLessEqual(named, set(document["paths"]))
         self.assertEqual(len(set(document["paths"]) - named), 33)
         self.assertEqual(len(document["paths"]), 33 + len(named))
+        # An assessment sub-resource that is not one of these is a new surface
+        # (or a typo), not a query.
+        self.assertEqual(
+            {path for path in document["paths"]
+             if path.startswith("/api/assessments/{id}/")},
+            {
+                "/api/assessments/{id}/correlation",
+                "/api/assessments/{id}/risk",
+                "/api/assessments/{id}/xai",
+                "/api/assessments/{id}/ml",
+                "/api/assessments/{id}/evidence",
+                "/api/assessments/{id}/ipsec-state",
+            } | analysis_product_routes,
+        )
         # The asset surface is exactly the two sanctioned reads: an asset path
         # that is not one of these is a new surface, not a query.
         self.assertEqual(

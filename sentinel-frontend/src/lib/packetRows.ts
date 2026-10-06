@@ -28,33 +28,12 @@ export type CaptureRow = {
   info: string
   spi: number | null
     classification: string
-    direction: string | null
-    /** Direction resolved for display: INCOMING / OUTGOING / UNKNOWN. */
-    directionLabel: PacketDirection
     severity: Severity | string | null
     /** Per-packet risk word for display; UNASSESSED when the store has none. */
     riskLabel: PacketRiskLabel
     riskScore: number | null
     riskPresent: boolean
     assessmentIds: string[]
-}
-
-/**
- * Direction as the *gateway observation context* reports it.
- *
- * The streaming adapter only produces a direction when the service knows which
- * side of the tunnel it sits on (`capture_ip`, or configured endpoints); it then
- * emits `inbound` / `outbound`. With no capture side configured the journal
- * carries no direction at all, and that is shown as UNKNOWN — it is never
- * guessed from which source address happens to appear first.
- */
-export type PacketDirection = 'INCOMING' | 'OUTGOING' | 'UNKNOWN'
-
-export function packetDirection(direction: string | null | undefined): PacketDirection {
-  const value = (direction ?? '').trim().toLowerCase()
-  if (value === 'inbound' || value === 'incoming') return 'INCOMING'
-  if (value === 'outbound' || value === 'outgoing') return 'OUTGOING'
-  return 'UNKNOWN'
 }
 
 /**
@@ -82,7 +61,11 @@ export function toCaptureRow(packet: FeedPacket, sequence: number): CaptureRow {
   const risk = packet.risk.present === true ? packet.risk : null
   return {
     sequence,
-    key: packet.id,
+    // The journal's byte offset is what actually identifies a row. `id` alone
+    // would collide if the backend ever emitted the same packet id twice in one
+    // buffer, and a duplicate React key silently duplicates or drops rows — so
+    // the key carries the offset too.
+    key: `${packet.id}@${packet.offset ?? ''}`,
     packet,
     time: formatLocalClock(packet.timestamp_ns),
     timeTitle: `${formatLocalFull(packet.timestamp_ns)} · ${formatUtcFull(
@@ -95,8 +78,6 @@ export function toCaptureRow(packet: FeedPacket, sequence: number): CaptureRow {
     info: packet.info,
     spi: packet.spi,
     classification: packet.packet.classification,
-    direction: packet.direction,
-    directionLabel: packetDirection(packet.direction),
     severity: risk ? risk.highest_severity : null,
     riskLabel: packetRiskLabel(risk?.highest_severity, risk !== null),
     riskScore: risk ? risk.highest_risk_score : null,

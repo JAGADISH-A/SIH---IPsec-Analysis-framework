@@ -7,6 +7,8 @@ import { EmptyState, ErrorState, LoadingPanel } from '@/components/states'
 import { Panel, StatusPill, Tag } from '@/components/ui'
 import { PageHeader } from '@/layouts/AppLayout'
 import { formatNumber } from '@/lib/format'
+import { IdRow, ProvenanceDetails } from '@/components/kit'
+import { compoundLabel } from '@/lib/labels'
 
 /**
  * Fleet view of the ML layer.
@@ -77,7 +79,7 @@ export function MlPage() {
               <p className="label text-ink-faint">
                 {card.label}
               </p>
-              <p className={`mono tnum mt-1 text-2xl leading-none ${card.tone}`}>
+              <p className={`tnum mt-1 text-2xl leading-none ${card.tone}`}>
                 {formatNumber(card.value)}
               </p>
             </div>
@@ -159,9 +161,7 @@ export function MlPage() {
                   {anomalies.length === 0 ? (
                     <span className="text-sm text-ink-faint">no assessment flagged</span>
                   ) : (
-                    <span className="mono tnum text-sm text-ink">
-                      {anomalies.length}
-                    </span>
+                    <span className="tnum text-sm text-ink">{anomalies.length}</span>
                   )}
                 </div>
                 <div className="border-t border-edge pt-3">
@@ -228,10 +228,23 @@ export function MlPage() {
                       className="row-hover border-b border-edge-soft last:border-0"
                     >
                       <td className="px-4 py-2.5">
-                        <span className="mono block text-sm text-ink">{header.slot}</span>
-                        <span className="mono block max-w-[260px] truncate text-xs text-ink-faint">
-                          {header.assessment_id}
+                        <span className="block text-sm text-ink">
+                          {compoundLabel(header.slot)}
                         </span>
+                        <ProvenanceDetails title="Assessment record">
+                          <IdRow
+                            label="Assessment id"
+                            value={header.assessment_id}
+                            title={header.assessment_id}
+                          />
+                          {header.dataset_run_id && (
+                            <IdRow
+                              label="Dataset run"
+                              value={header.dataset_run_id}
+                              title={header.dataset_run_id}
+                            />
+                          )}
+                        </ProvenanceDetails>
                       </td>
                       <td className="px-4 py-2.5">
                         <Tag>{header.traffic_profile}</Tag>
@@ -246,9 +259,7 @@ export function MlPage() {
                           <span className="text-sm text-ink-faint">not reported</span>
                         )}
                       </td>
-                      <td className="mono tnum text-sm text-ink-dim">
-                        {header.risk_score}
-                      </td>
+                      <td className="tnum text-sm text-ink-dim">{header.risk_score}</td>
                       <td className="px-4 py-2.5">
                         <Link
                           to={`/assessments/${encodeURIComponent(header.assessment_id)}?tab=ml`}

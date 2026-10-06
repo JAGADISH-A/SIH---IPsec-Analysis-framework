@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react'
+import { IdRow, ProvenanceDetails } from '@/components/kit'
 import { comparisonStyle, formatBytes, formatValue, humanize, severityHex } from '@/lib/format'
-import type { PacketDirection, PacketRiskLabel } from '@/lib/packetRows'
+import { acronymLabel, configTermLabel } from '@/lib/labels'
+import type { PacketRiskLabel } from '@/lib/packetRows'
 import type { ComparisonRow, EvidenceIntegrity, ExpectedState } from '@/types'
 
 /**
@@ -87,28 +89,6 @@ export function PacketRiskBadge({
   )
 }
 
-/**
- * Compact direction badge for one observed packet. `UNKNOWN` means the gateway
- * observation context did not report a direction for it; the capture side is not
- * inferred from the addresses.
- */
-export function PacketDirectionBadge({ direction }: { direction: PacketDirection }) {
-  const known = direction !== 'UNKNOWN'
-  return (
-    <span
-      className={`pw-badge pw-dir${known ? '' : ' pw-badge-none'}`}
-      data-direction={direction}
-      title={
-        known
-          ? `${direction === 'INCOMING' ? 'Arrived at' : 'Left'} the captured gateway interface, as reported by the capture adapter.`
-          : 'The capture adapter reported no direction for this packet. The capture side is not configured, so the addresses are not used to guess one.'
-      }
-    >
-      {direction}
-    </span>
-  )
-}
-
 export function RiskChip({ severity, score }: { severity: string | null; score: number | null }) {
   if (!severity) return <span className="pw-dim">—</span>
   const hex = severityHex(severity)
@@ -125,18 +105,18 @@ export function RiskChip({ severity, score }: { severity: string | null; score: 
 }
 
 /**
- * One labelled verdict for a comparison row. Only the engine's own status word
- * is used (`humanize`), so `UNKNOWN` can never be promoted to a mismatch.
+ * One labelled verdict for a comparison row.
+ *
+ * Only the engine's own status word is used (`humanize`), so `UNKNOWN` can never
+ * be promoted to a mismatch and `MATCH` can never be softened. The word appears
+ * once: the status is the whole answer, and repeating it adds nothing. A row
+ * the backend did not publish is reported as unavailable rather than as an
+ * em dash, which would read as an empty-but-valid result.
  */
 export function ComparisonVerdict({ status }: { status?: ComparisonRow | null }) {
-  if (!status) return <span className="pw-val-muted">—</span>
+  if (!status) return <span className="pw-na">Not available</span>
   const style = comparisonStyle(status.status)
-  return (
-    <span style={{ color: style.hex }}>
-      {humanize(status.status)}
-      {status.status === 'MISMATCH' && ' · mismatch'}
-    </span>
-  )
+  return <span style={{ color: style.hex }}>{humanize(status.status)}</span>
 }
 
 /**
@@ -178,6 +158,15 @@ export function VerdictChip({
   )
 }
 
+/**
+ * One artifact's integrity card.
+ *
+ * The verdict leads because it is the decision. The recorded and actual digests
+ * are the evidence *for* that verdict and stay visible side by side, because an
+ * analyst reconciling against the store needs both. Only the evidence id — a
+ * store key with no meaning outside the database — is pushed behind a
+ * disclosure.
+ */
 export function IntegrityVerdict({ record }: { record: EvidenceIntegrity }) {
   const { evidence_id: id, artifact_type: type, artifact_sha256: sha } = record
   const mismatch = sha && record.actual_sha256 && sha !== record.actual_sha256
@@ -192,13 +181,10 @@ export function IntegrityVerdict({ record }: { record: EvidenceIntegrity }) {
         {mismatch && <span style={{ color: severityHex('CRITICAL') }}>digest mismatch</span>}
       </div>
       <dl className="pw-kv">
-        <dt>Evidence id</dt>
-        <dd className="pw-mono">{id}</dd>
-      </dl>
-      <dl className="pw-kv">
         <dt>Artifact</dt>
-        <dd className="pw-mono">
-          {type ?? '—'} · {formatBytes(record.byte_size)}
+        <dd className="pw-ink">
+          {acronymLabel(type)}
+          <span className="pw-dim"> · {formatBytes(record.byte_size)}</span>
         </dd>
       </dl>
       <dl className="pw-kv">
@@ -214,6 +200,9 @@ export function IntegrityVerdict({ record }: { record: EvidenceIntegrity }) {
         </dd>
       </dl>
       {record.verification_detail && <p className="pw-faint-text">{record.verification_detail}</p>}
+      <ProvenanceDetails title="Evidence record" className="mt-1.5">
+        <IdRow label="Evidence id" value={id} title={id} />
+      </ProvenanceDetails>
     </div>
   )
 }
@@ -221,27 +210,71 @@ export function IntegrityVerdict({ record }: { record: EvidenceIntegrity }) {
 export type ConfigRow = { term: string; variable: string; value: unknown }
 
 /**
+ * Every configuration parameter the analytics plane projects, in the order the
+ * Gateway Config grid has always shown them.
+ */
+const CONFIG_VARIABLES = [
+  'ike.version',
+  'ike.encryption',
+  'ike.integrity',
+  'ike.dh_group',
+  'esp.encryption',
+  'esp.integrity',
+  'esp.dh_group',
+  'esp.pfs',
+  'mode',
+  'address_family',
+  'traffic.profile',
+  'capture_filter',
+  'security_posture',
+]
+
+function variableValue(expected: ExpectedState, variable: string): unknown {
+  switch (variable) {
+    case 'ike.version':
+      return expected.ike?.version
+    case 'ike.encryption':
+      return expected.ike?.encryption
+    case 'ike.integrity':
+      return expected.ike?.integrity
+    case 'ike.dh_group':
+      return expected.ike?.dh_group
+    case 'esp.encryption':
+      return expected.esp?.encryption
+    case 'esp.integrity':
+      return expected.esp?.integrity
+    case 'esp.dh_group':
+      return expected.esp?.dh_group
+    case 'esp.pfs':
+      return expected.esp?.pfs
+    case 'mode':
+      return expected.mode
+    case 'address_family':
+      return expected.address_family
+    case 'traffic.profile':
+      return expected.traffic?.profile
+    case 'capture_filter':
+      return expected.capture_filter
+    case 'security_posture':
+      return expected.security_posture
+    default:
+      return undefined
+  }
+}
+
+/**
  * The one table of configuration intent the analytics plane exposes: the
  * expected (configured) state, projected into display rows. Both the Gateway
  * Config tab and the assessment explanation surface build from this so a
- * parameter can never render differently in the two places.
+ * parameter can never render differently in the two places. The `term` for each
+ * variable comes from the product's single `CONFIG_TERM_LABELS` map.
  */
 export function expectedConfigRows(expected: ExpectedState): ConfigRow[] {
-  return [
-    { term: 'IKE version', variable: 'ike.version', value: expected.ike?.version },
-    { term: 'IKE encryption', variable: 'ike.encryption', value: expected.ike?.encryption },
-    { term: 'IKE integrity', variable: 'ike.integrity', value: expected.ike?.integrity },
-    { term: 'IKE DH group', variable: 'ike.dh_group', value: expected.ike?.dh_group },
-    { term: 'ESP encryption', variable: 'esp.encryption', value: expected.esp?.encryption },
-    { term: 'ESP integrity', variable: 'esp.integrity', value: expected.esp?.integrity },
-    { term: 'ESP DH group', variable: 'esp.dh_group', value: expected.esp?.dh_group },
-    { term: 'PFS enabled', variable: 'esp.pfs', value: expected.esp?.pfs },
-    { term: 'Mode', variable: 'mode', value: expected.mode },
-    { term: 'Address family', variable: 'address_family', value: expected.address_family },
-    { term: 'Traffic profile', variable: 'traffic.profile', value: expected.traffic?.profile },
-    { term: 'Capture filter', variable: 'capture_filter', value: expected.capture_filter },
-    { term: 'Security posture', variable: 'security_posture', value: expected.security_posture },
-  ].filter((row) => row.value !== undefined && row.value !== null)
+  return CONFIG_VARIABLES.map((variable) => ({
+    term: configTermLabel(variable),
+    variable,
+    value: variableValue(expected, variable),
+  })).filter((row) => row.value !== undefined && row.value !== null)
 }
 
 /**

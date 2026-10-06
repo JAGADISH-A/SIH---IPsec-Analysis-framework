@@ -2,7 +2,7 @@
  * Live capture lifecycle smoke — proves the ACTIVELY GROWING journal path,
  * not the recorded one.
  *
- * Mounts the real PacketWorkspace in jsdom against the running analytics API
+ * Mounts the real LiveScreening page in jsdom against the running analytics API
  * (which must be configured with ANALYTICS_API_CAPTURE_FEED pointing at the
  * sensor's live xdp_monitor journal) and drives the REAL testbed around it:
  *
@@ -76,7 +76,7 @@ console.error = (...args: unknown[]) => {
 const { createRoot } = await import('react-dom/client')
 const { act, createElement } = await import('react')
 const { MemoryRouter } = await import('react-router-dom')
-const { PacketWorkspace } = await import('@/pages/PacketWorkspace')
+const { LiveScreening } = await import('@/pages/LiveScreening')
 
 let failures = 0
 function check(label: string, condition: boolean, detail = '') {
@@ -146,7 +146,7 @@ const host = dom.window.document.createElement('div')
 dom.window.document.body.appendChild(host)
 const root = createRoot(host)
 await act(async () => {
-  root.render(createElement(MemoryRouter, { initialEntries: ['/'] }, createElement(PacketWorkspace)))
+  root.render(createElement(MemoryRouter, { initialEntries: ['/'] }, createElement(LiveScreening)))
 })
 await settle(5400)
 
@@ -237,22 +237,21 @@ check(
     /Overview|IKE & SA|Gateway Config|Evidence/.test(afterClick),
   afterClick.slice(0, 220),
 )
-// Per-packet columns, asserted on the real journal the gateway wrote: the
-// direction cell and the risk cell must each carry the backend's own value, and
-// a packet no assessment classified must say so.
+// Per-packet columns, asserted on the real journal the gateway wrote: the risk
+// cell must carry the backend's own value, and a packet no assessment
+// classified must say so. There is deliberately no direction column: the live
+// journal has no direction key, so the feed answers null for every packet.
 const riskCells = Array.from(host.querySelectorAll('tbody tr'))
 const liveRisk = riskCells.map((tr) => tr.querySelector('[data-risk]')?.textContent?.trim() ?? null)
-const liveDirection = riskCells.map((tr) => tr.querySelector('[data-direction]')?.textContent?.trim() ?? null)
 const liveHeaders = Array.from(host.querySelectorAll('thead th')).map((th) => (th.textContent ?? '').trim())
 check(
-  'the live table exposes Direction and Risk as per-packet columns',
-  liveHeaders.join('|') === 'No.|Time|Direction|Source|Destination|Protocol|Length|Info|SPI|Risk',
+  'the live table exposes Source..Risk as per-packet columns, with no Direction',
+  liveHeaders.join('|') === 'No.|Time|Source|Destination|Protocol|Length|Info|SPI|Risk',
   liveHeaders.join(' | '),
 )
 check(
-  'every rendered row carries a direction value',
-  riskCells.length > 0 && liveDirection.every((d) => d === 'INCOMING' || d === 'OUTGOING' || d === 'UNKNOWN'),
-  liveDirection.slice(0, 6).join(','),
+  'no direction cell is rendered for any live row',
+  riskCells.length > 0 && riskCells.every((tr) => tr.querySelector('[data-direction]') === null),
 )
 check(
   'every rendered row carries a backend risk word or UNASSESSED',
@@ -272,13 +271,15 @@ check(
   liveRisk.length === 0 || liveRisk.includes('UNASSESSED') || liveRisk.every((r) => r !== null),
   liveRisk.slice(0, 6).join(','),
 )
-console.log(
-  `  direction values   : ${[...new Set(liveDirection)].join(', ') || '—'} (n=${liveDirection.length})`,
-)
 console.log(`  risk values        : ${[...new Set(liveRisk)].join(', ') || '—'} (n=${liveRisk.length})`)
+// The live stream is now the whole page: findings and the packet investigation
+// live in a window a row selection opens, so nothing may be laid out inline
+// beside or beneath the table while traffic flows.
 check(
-  'the findings filter bar is present during the live run',
-  /FINDINGS/.test(host.textContent ?? '') && host.querySelector('[data-findings-toggle]') !== null,
+  'no findings list or investigation is laid out inline during the live run',
+  host.querySelector('[data-findings-toggle]') === null &&
+    host.querySelector('.ls-inv-overlay') === null &&
+    host.querySelector('.ls-stream-table') !== null,
 )
 
 // ---------------------------------------------------------------------------
@@ -317,12 +318,13 @@ text = host.textContent ?? ''
 check('the empty state says there is no current traffic after the stop', /No current IPsec traffic observed/.test(text))
 check(
   'the cap reads LIVE · 0 pkt/s once the journal is not current',
-  /LIVE · 0 pkt\/s/.test(host.querySelector('.pw-cap-label')?.textContent ?? ''),
-  host.querySelector('.pw-cap-label')?.textContent ?? '',
+  /LIVE · 0 pkt\/s/.test(host.querySelector('.ls-toolbar-fact')?.textContent ?? ''),
+  host.querySelector('.ls-toolbar-fact')?.textContent ?? '',
 )
 check(
-  'findings and risk surfaces remain available after the stop',
-  /Risk/.test(host.textContent ?? '') && /FINDINGS/.test(host.textContent ?? ''),
+  'the stream keeps its risk column after the stop',
+  Array.from(host.querySelectorAll('thead th')).some((th) => /risk/i.test(th.textContent ?? '')),
+  Array.from(host.querySelectorAll('thead th')).map((th) => th.textContent ?? '').join(' | '),
 )
 
 console.log(' ')

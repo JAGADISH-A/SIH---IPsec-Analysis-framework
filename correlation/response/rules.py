@@ -12,6 +12,7 @@ Security semantics follow the Phase-9 brief:
 * RESP-PFS-001 .. RESP-OBS-MISMATCH-005  -> REQUIRE_REVIEW (analyst approval),
 * RESP-ML-*     -> capped by ``ml_handling`` (never blocking),
 * RESP-UNKNOWN-* -> evidence-gap handling (review/capture ONLY, never block),
+* RESP-REPLAY-* -> REQUIRE_REVIEW (analyst approval; anomaly evidence only),
 * NOT_APPLICABLE  -> no security response is created.
 """
 
@@ -156,6 +157,33 @@ RESPONSE_RULE_TRACEABILITY: Dict[str, Dict[str, Any]] = {
             "vulnerability; never a blocking response."
         ],
         "policy_dependency": "response-policy-v1 + unknown_handling",
+    },
+    "replay.duplicate_sequence": {
+        "rule_id": "RESP-REPLAY-009",
+        "finding_rule": "replay.duplicate_sequence",
+        "finding_id": "RISK-REPLAY-DUPLICATE",
+        "input": (
+            "RiskFinding RISK-REPLAY-DUPLICATE (PROTOCOL_ANOMALY, LOW) from "
+            "the replay assessment of the recorded packet journal"
+        ),
+        "condition": (
+            "replay_evidence.status == 'OBSERVED' and "
+            "replay_evidence.duplicate_sequences > 0"
+        ),
+        "action": ACTION_REQUIRE_REVIEW,
+        "priority": PRIORITY_LOW,
+        "authorization_requirement": "ANALYST",
+        "approval_requirement": "required",
+        "limitations": [
+            "Duplicate-sequence anomaly evidence from a capture that cannot "
+            "distinguish an injected replay from a capture-path artefact; it "
+            "is never proof of an attack.",
+            "Sequence gaps are not evidence for this rule and never trigger a "
+            "response; NO_EVIDENCE, INSUFFICIENT_DATA and a missing replay "
+            "product produce no recommendation at all.",
+            "Analyst review only: never a blocking or isolating response.",
+        ],
+        "policy_dependency": "response-policy-v1",
     },
 }
 

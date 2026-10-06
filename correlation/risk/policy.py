@@ -225,6 +225,7 @@ ALL_RULES = (
     "ml.anomaly",
     "ml.classification.disagreement",
     "evidence.insufficient",
+    "replay.duplicate_sequence",
 )
 
 

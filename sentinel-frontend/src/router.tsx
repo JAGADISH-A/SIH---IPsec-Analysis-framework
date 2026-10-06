@@ -20,15 +20,16 @@ import { LoadingPanel } from '@/components/states'
  * to tidy a sidebar would be the wrong trade.
  */
 const Activity = lazy(() => import('@/pages/AnalystConsole').then((m) => ({ default: m.Activity })))
-const PacketWorkspace = lazy(() =>
-  import('@/pages/PacketWorkspace').then((m) => ({ default: m.PacketWorkspace })),
+const LiveScreening = lazy(() => import('@/pages/LiveScreening').then((m) => ({ default: m.LiveScreening })))
+const ConfigurationIndex = lazy(() =>
+  import('@/pages/ConfigurationIndex').then((m) => ({ default: m.ConfigurationIndex })),
 )
+const NotAvailable = lazy(() => import('@/pages/NotAvailable').then((m) => ({ default: m.NotAvailable })))
 const Assessments = lazy(() => import('@/pages/Assessments').then((m) => ({ default: m.Assessments })))
 const AssessmentDetailRoute = lazy(() =>
   import('@/pages/AssessmentDetailRoute').then((m) => ({ default: m.AssessmentDetailRoute })),
 )
 const Findings = lazy(() => import('@/pages/Findings').then((m) => ({ default: m.Findings })))
-const Reports = lazy(() => import('@/pages/Reports').then((m) => ({ default: m.Reports })))
 const FindingDetail = lazy(() =>
   import('@/pages/FindingDetail').then((m) => ({ default: m.FindingDetail })),
 )
@@ -42,6 +43,7 @@ const ExperimentResult = lazy(() =>
   import('@/pages/ExperimentResult').then((m) => ({ default: m.ExperimentResult })),
 )
 const SystemStatus = lazy(() => import('@/pages/SystemStatus').then((m) => ({ default: m.SystemStatus })))
+const ThreatMatrix = lazy(() => import('@/pages/ThreatMatrix').then((m) => ({ default: m.ThreatMatrix })))
 const NotFound = lazy(() => import('@/pages/NotFound').then((m) => ({ default: m.NotFound })))
 
 const router = createBrowserRouter([
@@ -50,29 +52,41 @@ const router = createBrowserRouter([
     element: <AppLayout />,
     errorElement: <RouteErrorBoundary />,
     children: [
-      /* ------------------------------------------------------- primary */
-      { index: true, element: <PacketWorkspace /> },
+      /* ------------------------------------------------------- primary
+         These are the destinations the sidebar names, in the order it names
+         them. Overview and Settings have real pages of their own; the routes
+         the implementation used to call them (/activity, /system) are kept
+         below as redirects. */
+      { index: true, element: <LiveScreening /> },
+      { path: 'overview', element: <Activity /> },
+      { path: 'configuration', element: <ConfigurationIndex /> },
+      { path: 'analysis', element: <MlPage /> },
       { path: 'assessments', element: <Assessments /> },
+      { path: 'reports', element: <NotAvailable kind="report documents" /> },
+      { path: 'threat-matrix', element: <ThreatMatrix /> },
+      { path: 'settings', element: <SystemStatus /> },
       { path: 'assessments/:assessmentId', element: <AssessmentDetailRoute /> },
-      { path: 'reports', element: <Reports /> },
-      { path: 'findings', element: <Findings /> },
-      { path: 'findings/:assessmentId/:findingId', element: <FindingDetail /> },
       { path: 'run', element: <RunAssessment /> },
       { path: 'run/:jobId', element: <ExperimentResult /> },
 
-      /* --------------------------------- reference / cross-cutting views */
-      { path: 'activity', element: <Activity /> },
+      /* --------------------------------- reference / cross-cutting views
+         Deliberately not in the sidebar. These are reached from an assessment
+         in normal use — an analyst follows a finding to its evidence, not the
+         other way round — so a route that only ever makes sense in that context
+         does not need a permanent navigation entry to stay reachable. */
+      { path: 'findings', element: <Findings /> },
+      { path: 'findings/:assessmentId/:findingId', element: <FindingDetail /> },
       { path: 'evidence', element: <EvidencePage /> },
       { path: 'explainability', element: <XaiPage /> },
-      { path: 'analysis', element: <MlPage /> },
-      { path: 'system', element: <SystemStatus /> },
 
       /* ------------------------------------------------------ redirects
          Legacy implementation-shaped URLs. Kept working so nothing that
          already points at them breaks; they simply land on the canonical
          page. */
-      { path: 'console', element: <Navigate to="/activity" replace /> },
-      { path: 'overview', element: <Navigate to="/" replace /> },
+      { path: 'activity', element: <Navigate to="/overview" replace /> },
+      { path: 'system', element: <Navigate to="/settings" replace /> },
+      { path: 'live', element: <Navigate to="/" replace /> },
+      { path: 'console', element: <Navigate to="/" replace /> },
       { path: 'xai', element: <Navigate to="/explainability" replace /> },
       { path: 'ml', element: <Navigate to="/analysis" replace /> },
       { path: 'experiments', element: <Navigate to="/run" replace /> },

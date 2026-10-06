@@ -4,6 +4,7 @@ import { getFindings } from '@/api/analytics'
 import { useResource } from '@/hooks/useResource'
 import { EmptyState, ErrorState, LoadingPanel } from '@/components/states'
 import { Button, Panel, SeverityBadge, Tag } from '@/components/ui'
+import { IdRow, ProvenanceDetails } from '@/components/kit'
 import { PageHeader } from '@/layouts/AppLayout'
 import {
   compareValues,
@@ -13,6 +14,7 @@ import {
   severityStyle,
   truncate,
 } from '@/lib/format'
+import { acronymLabel, assessmentLabel, configTermLabel } from '@/lib/labels'
 import type { Finding, Severity } from '@/types'
 
 type SortKey = 'severity' | 'category' | 'finding_id' | 'assessment_id' | 'title'
@@ -50,13 +52,29 @@ export function Findings() {
     [findings],
   )
 
-  const assessmentOptions = useMemo(() => {
+  /* Every finding carries the scenario of the assessment it belongs to, so the
+     store's assessment ids can be shown as the scenario the analyst recognises
+     without a second request. The id stays the option value. */
+  const assessmentLabelById = useMemo(() => {
     const map = new Map<string, string>()
     for (const finding of findings) {
-      if (finding.assessment_id) map.set(finding.assessment_id, finding.assessment_id)
+      if (finding.assessment_id && !map.has(finding.assessment_id)) {
+        map.set(
+          finding.assessment_id,
+          assessmentLabel({ assessment_id: finding.assessment_id, scenario: finding.scenario }),
+        )
+      }
     }
-    return [...map.values()].sort()
+    return map
   }, [findings])
+
+  const assessmentOptions = useMemo(
+    () =>
+      [...assessmentLabelById.entries()]
+        .sort((a, b) => a[1].localeCompare(b[1]))
+        .map(([id, label]) => ({ id, label })),
+    [assessmentLabelById],
+  )
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -209,8 +227,8 @@ export function Findings() {
           >
             <option value="ALL">All assessments</option>
             {assessmentOptions.map((option) => (
-              <option key={option} value={option}>
-                {option}
+              <option key={option.id} value={option.id}>
+                {option.label}
               </option>
             ))}
           </select>
@@ -266,10 +284,10 @@ export function Findings() {
                 {(
                   [
                     ['severity', 'Severity'],
+                    ['title', 'Finding'],
                     ['category', 'Category'],
-                    ['finding_id', 'Finding'],
-                    ['title', 'Description'],
                     ['assessment_id', 'Assessment'],
+                    ['finding_id', 'Record ids'],
                   ] as [SortKey, string][]
                 ).map(([key, label]) => (
                   <th key={key} scope="col">
@@ -319,13 +337,6 @@ export function Findings() {
                       <SeverityBadge severity={finding.severity as Severity} size="sm" />
                     </td>
                     <td>
-                      <Tag>{humanize(finding.category)}</Tag>
-                    </td>
-                    <td>
-                      <span className="mono block text-sm text-ink">{finding.finding_id}</span>
-                      <span className="mono block text-xs text-ink-faint">{finding.rule_id}</span>
-                    </td>
-                    <td>
                       <span className="block text-base font-medium leading-snug text-ink">
                         {finding.title}
                       </span>
@@ -333,8 +344,10 @@ export function Findings() {
                         {truncate(finding.description, 110)}
                       </span>
                       {mismatch && (
-                        <span className="mono mt-1 block text-xs">
-                          <span className="text-ink-faint">{finding.related_variable}: </span>
+                        <span className="mt-1 block text-xs">
+                          <span className="text-ink-faint">
+                            {configTermLabel(finding.related_variable)}:{' '}
+                          </span>
                           <span className="text-sentinel">
                             {truncate(formatValue(finding.expected_value), 24)}
                           </span>
@@ -346,11 +359,11 @@ export function Findings() {
                       )}
                     </td>
                     <td>
-                      <span
-                        className="mono block max-w-[240px] truncate text-sm text-ink-dim"
-                        title={finding.assessment_id}
-                      >
-                        {finding.assessment_id}
+                      <Tag>{acronymLabel(finding.category)}</Tag>
+                    </td>
+                    <td>
+                      <span className="block text-sm text-ink-dim">
+                        {assessmentLabelById.get(finding.assessment_id) ?? finding.assessment_id}
                       </span>
                       {/* Evidence availability is reported, never assumed: the
                           store states how many references exist, and a finding
@@ -360,6 +373,18 @@ export function Findings() {
                           ? `${finding.evidence_refs.length} evidence ref${finding.evidence_refs.length === 1 ? '' : 's'}`
                           : 'no evidence attached'}
                       </span>
+                    </td>
+                    <td>
+                      <ProvenanceDetails title="Record ids">
+                        <IdRow label="Finding id" value={finding.finding_id} title={finding.finding_id} />
+                        {finding.rule_id && (
+                          <IdRow label="Rule id" value={finding.rule_id} title={finding.rule_id} />
+                        )}
+                        <IdRow label="Assessment id" value={finding.assessment_id} title={finding.assessment_id} />
+                        {finding.dataset_run_id && (
+                          <IdRow label="Dataset run id" value={finding.dataset_run_id} title={finding.dataset_run_id} />
+                        )}
+                      </ProvenanceDetails>
                     </td>
                   </tr>
                 )

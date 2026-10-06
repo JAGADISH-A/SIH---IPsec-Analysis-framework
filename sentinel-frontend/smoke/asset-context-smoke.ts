@@ -69,6 +69,7 @@ define(
 const { createElement, act } = await import('react')
 const { createRoot } = await import('react-dom/client')
 const { AssetContextPanel } = await import('@/components/traffic/panels')
+const { declaredValueLabel } = await import('@/lib/labels')
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const settle = (ms = 400) => act(async () => { await wait(ms) })
@@ -105,6 +106,20 @@ function button(host: HTMLElement, label: string): HTMLButtonElement | null {
  * the smoke about the markup. The label must match exactly, and the value is
  * whatever follows it.
  */
+/**
+ * The asset id is the subject of the panel, so it is rendered as a heading above
+ * the declared values rather than as one more `<dt>`/`<dd>` metric. Read it from
+ * where it is actually published instead of assuming the metric grid.
+ */
+function assetSubject(host: HTMLElement): string | null {
+  const region = host.querySelector('.asset-context-result')
+  if (!region) return null
+  const label = Array.from(region.querySelectorAll('p')).find(
+    (el) => (el.textContent ?? '').trim() === 'Asset',
+  )
+  return label?.nextElementSibling?.textContent?.trim() ?? null
+}
+
 function metric(host: HTMLElement, label: string): string | null {
   const region = host.querySelector('.asset-context-result')
   if (!region) return null
@@ -218,7 +233,7 @@ if (!declared.length) {
   })
   await settle()
 
-  check('the panel renders', (host.textContent ?? '').includes('Asset assessment'))
+  check('the panel renders', (host.textContent ?? '').includes('Asset context'))
   check('the panel offers an apply action', button(host, 'Assess asset') !== null)
 
   /* --- the selector is populated from the backend, not from the browser --- */
@@ -255,7 +270,7 @@ if (!declared.length) {
 
     await waitFor(
       `the result for ${assetId}`,
-      () => metric(host, 'Asset') === assetId,
+      () => assetSubject(host) === assetId,
     )
 
     /* --- the request carried the selected asset --- */
@@ -272,15 +287,15 @@ if (!declared.length) {
     )
 
     /* --- and the panel rendered what the backend said --- */
-    check(`the panel shows the asset it was asked about`, metric(host, 'Asset') === assetId)
+    check(`the panel shows the asset it was asked about`, assetSubject(host) === assetId)
     check(
       `the criticality shown for ${assetId} is the backend's`,
-      metric(host, 'Criticality') === truth.profile?.criticality,
+      metric(host, 'Criticality') === declaredValueLabel(truth.profile?.criticality),
       `shown=${metric(host, 'Criticality')} backend=${truth.profile?.criticality}`,
     )
     check(
       `the mission impact shown for ${assetId} is the backend's`,
-      metric(host, 'Mission impact') === truth.profile?.mission_impact,
+      metric(host, 'Mission impact') === declaredValueLabel(truth.profile?.mission_impact),
       `shown=${metric(host, 'Mission impact')} backend=${truth.profile?.mission_impact}`,
     )
     check(
@@ -296,7 +311,7 @@ if (!declared.length) {
     check(
       `the severity shown for ${assetId} is the backend's`,
       metric(host, 'Contextualized') === String(truth.risk?.contextualized_severity) ||
-        (host.textContent ?? '').includes(truth.risk?.contextualized_severity ?? ' '),
+        (host.textContent ?? '').includes(truth.risk?.contextualized_severity ?? ''),
       `backend=${truth.risk?.contextualized_severity}`,
     )
   }
@@ -348,12 +363,12 @@ if (!declared.length) {
     if (apply) await click(apply)
     await waitFor(
       `the substituted answer for ${target}`,
-      () => metric(host, 'Criticality') === forgedCriticality,
+      () => metric(host, 'Criticality') === declaredValueLabel(forgedCriticality),
     )
 
     check(
       'the criticality follows the backend response, not a local asset table',
-      metric(host, 'Criticality') === forgedCriticality,
+      metric(host, 'Criticality') === declaredValueLabel(forgedCriticality),
       `shown=${metric(host, 'Criticality')} backend=${forgedCriticality} real=${truth.profile!.criticality}`,
     )
     check(

@@ -7,6 +7,7 @@ import { ErrorState, LoadingPanel } from '@/components/states'
 import { Button, Panel, Tag } from '@/components/ui'
 import { PageHeader } from '@/layouts/AppLayout'
 import { humanize } from '@/lib/format'
+import { configTermLabel } from '@/lib/labels'
 import type { ExperimentRequest } from '@/types'
 
 type Draft = {
@@ -131,22 +132,22 @@ function PlannedConfiguration({ draft }: { draft: Draft }) {
       <dl className="grid grid-cols-2 gap-x-5 gap-y-4 p-4 sm:grid-cols-3 lg:grid-cols-4">
         {(
           [
-            ['Mode', draft.mode],
-            ['Address family', draft.address_family],
-            ['IKE encryption', draft.ike_encryption],
-            ['IKE integrity', draft.ike_integrity],
-            ['IKE DH group', draft.ike_dh_group],
-            ['ESP encryption', draft.esp_encryption],
-            ['ESP integrity', draft.esp_integrity],
-            ['ESP DH group', draft.esp_dh_group],
+            ['Mode', configTermLabel(draft.mode)],
+            ['Address family', configTermLabel(draft.address_family)],
+            ['IKE encryption', configTermLabel(draft.ike_encryption)],
+            ['IKE integrity', configTermLabel(draft.ike_integrity)],
+            ['IKE DH group', configTermLabel(draft.ike_dh_group)],
+            ['ESP encryption', configTermLabel(draft.esp_encryption)],
+            ['ESP integrity', configTermLabel(draft.esp_integrity)],
+            ['ESP DH group', configTermLabel(draft.esp_dh_group)],
             ['PFS', draft.esp_pfs ? 'Enabled' : 'Disabled'],
-            ['Traffic profile', draft.traffic_profile],
+            ['Traffic profile', configTermLabel(draft.traffic_profile)],
             ['Duration', `${draft.traffic_duration}s`],
           ] as const
         ).map(([label, value]) => (
           <div key={label} className="min-w-0">
             <dt className="label">{label}</dt>
-            <dd className="mono mt-0.5 truncate text-sm text-ink" title={value}>
+            <dd className="mt-0.5 truncate text-sm text-ink" title={value}>
               {value || 'none'}
             </dd>
           </div>

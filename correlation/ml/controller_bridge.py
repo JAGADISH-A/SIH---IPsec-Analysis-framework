@@ -24,7 +24,9 @@ Scope boundaries (all enforced here, none changed elsewhere):
   invented; a profile outside ``ALLOWED_TRAFFIC_PROFILES`` is rejected.
 * ``anomaly`` / ``anomaly_score`` stay ``None`` (the model has no anomaly
   capability).  No anomaly logic is added.
-* The full probability vector is preserved verbatim in ``extras``.
+* The full probability vector is preserved verbatim in ``extras``, together
+  with ``classes`` -- the six class names the vector is indexed by, in the
+  contract order (or the producer's own set-equal order when it recorded one).
 * Optional artifact provenance (``model_artifact_sha256``, the training commit
   and dataset run ids) is passed through verbatim when the producer supplies
   it, so a result is traceable to one exact model file.  It is never derived or
@@ -164,6 +166,19 @@ def require_controller_result(result: Mapping[str, Any]) -> Dict[str, Any]:
         "timestamp": result["timestamp"],
         "traffic_profile": profile,
         "probabilities": normalized,
+        # The class list the probabilities are indexed by, in the order the
+        # caller may display them. A producer-supplied list is preferred when
+        # it covers exactly the same six classes; otherwise the validated
+        # contract order is emitted. Never a partial or extended list: it is
+        # set-equal to the probability keys by construction above.
+        "classes": (
+            list(result["classes"])
+            if isinstance(result.get("classes"), (list, tuple))
+            and len(result["classes"]) == len(CANONICAL_TRAFFIC_PROFILES)
+            and all(isinstance(item, str) for item in result["classes"])
+            and set(result["classes"]) == set(CANONICAL_TRAFFIC_PROFILES)
+            else list(CANONICAL_TRAFFIC_PROFILES)
+        ),
     }
     # Artifact provenance is optional: it is carried only when the producer
     # supplied it, so a result can be tied to one exact model file.  Recorded
@@ -188,8 +203,8 @@ def controller_result_to_ml_result(result: Mapping[str, Any]) -> MLResult:
     * ``anomaly_score``        -> ``None``
     * ``extras``               -> ``source="ml"`` plus the full controller
        contract preserved verbatim (model_version, feature_schema_version,
-       window_id, timestamp, traffic_profile, probabilities) and any optional
-       artifact provenance the result carried.
+       window_id, timestamp, traffic_profile, probabilities, classes) and any
+       optional artifact provenance the result carried.
 
     Expected state is never consulted; the full probability vector is never
     discarded.
@@ -206,6 +221,7 @@ def controller_result_to_ml_result(result: Mapping[str, Any]) -> MLResult:
         "timestamp": validated["timestamp"],
         "traffic_profile": traffic_class,
         "probabilities": dict(validated["probabilities"]),
+        "classes": list(validated["classes"]),
     }
     extras.update({
         key: validated[key] for key in OPTIONAL_PROVENANCE_KEYS

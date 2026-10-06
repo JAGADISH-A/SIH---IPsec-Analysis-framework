@@ -19,6 +19,19 @@ Design rules enforced here (Phase 6 brief, sections 6-8, 17-19, 27):
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
 
+# The shared evidence-state vocabulary. ``correlation.analysis.states`` has no
+# project imports of its own and ``correlation.analysis`` deliberately does not
+# import its sub-modules eagerly, so importing the vocabulary here introduces
+# no import cycle even though the analysis package consumes ``RiskFinding``.
+from ..analysis.states import (
+    STATE_ASSESSED,
+    STATE_CONFIGURED,
+    STATE_INFERRED,
+    STATE_OBSERVED,
+    STATE_UNKNOWN,
+    VALID_STATES,
+    validate_state,
+)
 from ..models._base import JsonModel
 from ..models.evidence import EvidenceRef
 from ..models.identity import CorrelationIdentity
@@ -154,6 +167,17 @@ class RiskFinding(JsonModel):
     confidence: Optional[float] = None
     model_version: Optional[str] = None
     evidence_refs: Tuple[EvidenceRef, ...] = field(default_factory=tuple)
+    # -- Phase 11 (brief area 6): scoring facts, filled by the risk engine ---
+    #: Severity weight this finding carries under the scoring policy, i.e. its
+    #: score *before* the per-category cap (``policy.weight_of(severity)``).
+    #: ``None`` before scoring and on a finding rebuilt from a payload that
+    #: predates this field; it is never guessed.
+    score: Optional[int] = None
+    #: Points this finding actually added to the overall score after the
+    #: per-category cap and the score cap (``0`` when the category was already
+    #: capped). Together with ``score`` it separates "this rule weighs 25" from
+    #: "this rule contributed 0 to the total you are reading".
+    score_added: Optional[int] = None
 
     def __post_init__(self) -> None:
         for name in ("finding_id", "rule_id", "title", "description", "reason",
@@ -165,6 +189,14 @@ class RiskFinding(JsonModel):
         validate_severity(self.severity)
         validate_risk_source(self.source)
         validate_evidence_type(self.evidence_type)
+        for name in ("score", "score_added"):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise ValueError(f"{name} must be a non-negative integer or None")
+            if value < 0:
+                raise ValueError(f"{name} must be >= 0, got {value}")
         if self.related_variable is not None and (
             not isinstance(self.related_variable, str)
             or not self.related_variable.strip()
@@ -198,31 +230,109 @@ class RiskFinding(JsonModel):
         """
         return (self.category, self.related_variable, self.source)
 
+    # -- Phase 11 (brief area 6): values derived from what the finding already
+    # is, so the API, the threat matrix and the reports all read one definition
+    # instead of each inventing its own. None of them adds a fact.
+    @property
+    def configured_value(self) -> Any:
+        """The expected side of this finding, under the brief's name.
+
+        ``expected_value`` is what Phase 4 compared against; for a finding
+        drawn from the expected configuration it *is* the configured value.
+        ``None`` when the finding expected nothing (for example an
+        observation-only finding).
+        """
+        return self.expected_value
+
+    @property
+    def state(self) -> str:
+        """Why this finding's value holds -- one of ``VALID_STATES``.
+
+        Derived from where the finding came from, never asserted from an
+        evidence gap: a comparison that produced no observed value stays
+        ``ASSESSED`` rather than being upgraded to ``OBSERVED``.
+        """
+        if self.source == SOURCE_EXPECTED_CONFIGURATION:
+            return STATE_CONFIGURED
+        if self.source == SOURCE_ML:
+            return STATE_INFERRED
+        if self.source == SOURCE_OBSERVED_PROTOCOL:
+            return STATE_OBSERVED
+        if self.source == SOURCE_EVIDENCE:
+            return STATE_UNKNOWN
+        # CORRELATION: an observed counterpart is observed evidence; without
+        # one the finding is this engine's assessment of the comparison.
+        return STATE_OBSERVED if self.observed_value is not None else STATE_ASSESSED
+
+    @property
+    def runtime_applicable(self) -> bool:
+        """Could runtime evidence confirm or refute this finding?
+
+        ``False`` for findings drawn from the expected configuration: the
+        runtime crypto-evidence product classifies exactly those properties
+        (PFS, cipher family, DH group) as not observable from a capture, so
+        offering them as runtime-verifiable would overstate the evidence.
+        ``True`` for everything observed, compared, model-derived or
+        evidence-gapped, all of which more evidence could speak to.
+        """
+        return self.source != SOURCE_EXPECTED_CONFIGURATION
+
+    @property
+    def evidence(self) -> Dict[str, Any]:
+        """The brief's ``evidence`` key: what backs this finding, structured.
+
+        Built only from fields the finding already carries, so it can never
+        claim a reference that ``evidence_refs`` does not hold.
+        """
+        refs = [ref.to_dict() for ref in self.evidence_refs]
+        return {
+            "evidence_type": self.evidence_type,
+            "source": self.source,
+            "state": self.state,
+            "ref_count": len(refs),
+            "refs": refs,
+            "limitations": [] if refs else [
+                "This finding carries no evidence reference; its support is "
+                "the recorded value itself (expected_value / observed_value)."
+            ],
+        }
+
     def to_dict(self) -> Dict[str, Any]:
-        ordered = [
-            ("finding_id", self.finding_id),
-            ("rule_id", self.rule_id),
-            ("category", self.category),
-            ("severity", self.severity),
-            ("related_variable", self.related_variable),
-            ("condition", self.condition),
-            ("title", self.title),
-            ("description", self.description),
-            ("reason", self.reason),
-            ("expected_value", self.expected_value),
-            ("observed_value", self.observed_value),
-            ("source", self.source),
-            ("evidence_type", self.evidence_type),
-            ("confidence", self.confidence),
-            ("model_version", self.model_version),
-            ("evidence_refs", [ev.to_dict() for ev in self.evidence_refs]),
-        ]
-        return {key: value for key, value in ordered if value is not None or key in (
-            "expected_value", "observed_value", "confidence", "model_version",
-        )}
+        """Every key, always present (``None`` where a value does not exist).
+
+        The API view of a finding is this dictionary verbatim, so the report,
+        the threat matrix and the dashboard cannot drift apart on key names.
+        """
+        return {
+            "finding_id": self.finding_id,
+            "rule_id": self.rule_id,
+            "category": self.category,
+            "severity": self.severity,
+            "score": self.score,
+            "score_added": self.score_added,
+            "related_variable": self.related_variable,
+            "condition": self.condition,
+            "title": self.title,
+            "description": self.description,
+            "reason": self.reason,
+            "configured_value": self.configured_value,
+            "expected_value": self.expected_value,
+            "observed_value": self.observed_value,
+            "source": self.source,
+            "state": self.state,
+            "runtime_applicable": self.runtime_applicable,
+            "evidence_type": self.evidence_type,
+            "evidence": self.evidence,
+            "confidence": self.confidence,
+            "model_version": self.model_version,
+            "evidence_refs": [ev.to_dict() for ev in self.evidence_refs],
+        }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RiskFinding":
+        # Derived keys (configured_value / state / runtime_applicable /
+        # evidence) are recomputed from the stored fields on the next
+        # ``to_dict`` rather than being trusted from the payload.
         return cls(
             finding_id=data["finding_id"],
             rule_id=data["rule_id"],
@@ -239,6 +349,8 @@ class RiskFinding(JsonModel):
             observed_value=data.get("observed_value"),
             confidence=data.get("confidence"),
             model_version=data.get("model_version"),
+            score=data.get("score"),
+            score_added=data.get("score_added"),
             evidence_refs=tuple(
                 EvidenceRef.from_dict(ev) for ev in data.get("evidence_refs") or []
             ),

@@ -1,4 +1,4 @@
-import { AI_API_URL } from '@/config'
+import { AI_API_URL, API_TIMEOUT_MS } from '@/config'
 import { ApiRequestError, request } from '@/api/client'
 import type { AiAnalysisRequest, AiAnalysisResult, AiExplainResponse, AiHealthResponse } from '@/types'
 
@@ -24,6 +24,20 @@ import type { AiAnalysisRequest, AiAnalysisResult, AiExplainResponse, AiHealthRe
 
 const EXPLAIN_PATH = '/ai/explain'
 const HEALTH_PATH = '/ai/health'
+
+/**
+ * Client deadline for one explanation.
+ *
+ * The service may spend up to its own configured model timeout inside a single
+ * `/ai/explain` call (it answers from recorded values when no model responds,
+ * but a real model call legitimately runs for tens of seconds). A client
+ * deadline set at exactly `API_TIMEOUT_MS` therefore races the server: the
+ * browser aborts, the panel reports "explanation service not connected", and
+ * the answer that was seconds from arriving is discarded. The extra headroom
+ * keeps the client outliving the server it is waiting on, so a slow model is
+ * reported as a slow model rather than as a missing service.
+ */
+const EXPLAIN_TIMEOUT_MS = API_TIMEOUT_MS * 2
 
 /**
  * Asked for on first use, so the UI can say *why* an explanation is missing
@@ -72,6 +86,7 @@ function unavailable(
   request_: AiAnalysisRequest,
   reason: string,
   status: AiAnalysisResult['status'],
+  health: AiHealthResponse | null = null,
 ): AiAnalysisResult {
   return {
     status,
@@ -79,6 +94,10 @@ function unavailable(
     entityId: request_.entityId,
     context: request_.context,
     reason,
+    // Carried through so the panel can say *why* the answer is limited instead
+    // of only that it is missing. Null when the probe itself failed, which is
+    // the honest "no capability statement available" case.
+    health,
   }
 }
 
@@ -111,6 +130,9 @@ export async function analyzeWithAI(
     .map((turn) => ({ question: turn.question, answer: turn.answer }))
 
   try {
+    // Probed alongside the answer, and only once the answer has failed to
+    // arrive, so a healthy service costs exactly one request. Its statement is
+    // what lets the panel name the limitation behind an unavailable answer.
     const analysis = await request<AiExplainResponse>('ai', AI_API_URL, EXPLAIN_PATH, {
       method: 'POST',
       body: {
@@ -124,6 +146,7 @@ export async function analyzeWithAI(
         history,
       },
       signal: options.signal,
+      timeoutMs: EXPLAIN_TIMEOUT_MS,
       title: 'Unable to explain this assessment',
       fallback: 'The explanation service did not return an answer.',
     })
@@ -136,6 +159,7 @@ export async function analyzeWithAI(
         request_,
         'The explanation service returned a payload that does not declare itself read-only, so it was not displayed.',
         'unavailable',
+        await aiHealth(options),
       )
     }
 
@@ -160,6 +184,7 @@ export async function analyzeWithAI(
       cause instanceof ApiRequestError && (cause.status === 0 || cause.status === 404)
         ? 'not_connected'
         : 'unavailable',
+      await aiHealth(options),
     )
   }
 }

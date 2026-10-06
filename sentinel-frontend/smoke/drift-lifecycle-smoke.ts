@@ -42,6 +42,14 @@ function check(label: string, condition: boolean, detail = '') {
 const render = (drift: AssessmentDriftResponse | null) =>
   renderToStaticMarkup(createElement(AssessmentDriftBlock, { drift }))
 
+/**
+ * The rendered text with every tag collapsed to a space. Assertions read values
+ * through this rather than through raw markup, so a label and its value stay
+ * comparable whether the component puts them in one node or in two — what is
+ * being checked is that the value reached the screen, not how it is nested.
+ */
+const flat = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
+
 /* ------------------------------------------------------------------ wiring */
 
 const calls: string[] = []
@@ -155,7 +163,7 @@ check(
   'shows the provenance of the run the assessment came from',
   recordedHtml.includes(ASSESSMENT_ID) || recordedHtml.includes('testbed-b5dbc272'),
 )
-check('shows the sequence recorded for that run', /sequence 1/.test(recordedHtml))
+check('shows the sequence recorded for that run', /Sequence 1/.test(flat(recordedHtml)))
 
 /* ------------------------------------------------------------ genericity */
 
@@ -198,7 +206,7 @@ check(
 )
 check(
   'surfaces variables the comparison could not establish',
-  /not established/.test(unseenHtml) && /ah\.presence/.test(unseenHtml),
+  /Not established/i.test(flat(unseenHtml)) && /ah\.presence/.test(flat(unseenHtml)),
 )
 
 /* ------------------------------------------------------ lifecycle: no verdict */
@@ -274,7 +282,7 @@ const noDriftHtml = render(NO_DRIFT)
 check('a clean comparison reads as no drift', /No drift detected/.test(noDriftHtml))
 check(
   'a clean comparison still shows provenance',
-  /baseline-transport-ipv4/.test(noDriftHtml) && /sequence 1/.test(noDriftHtml),
+  /baseline-transport-ipv4/.test(noDriftHtml) && /Sequence 1/.test(flat(noDriftHtml)),
 )
 check('a missing drift record is stated, not silently blank', /No drift record/.test(render(null)))
 

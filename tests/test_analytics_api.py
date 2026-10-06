@@ -1190,9 +1190,16 @@ class TestOpenApiDoesNotDrift(unittest.TestCase):
         # than generated: a mismatch is exactly the drift being tested for.
         probes = [
             "/api/health", "/api/assessments", "/api/assessments/{id}",
+            "/api/assessments/{id}/expected", "/api/assessments/{id}/observed",
             "/api/assessments/{id}/correlation", "/api/assessments/{id}/risk",
             "/api/assessments/{id}/xai", "/api/assessments/{id}/ml",
             "/api/assessments/{id}/evidence", "/api/assessments/{id}/ipsec-state",
+            "/api/assessments/{id}/sa", "/api/assessments/{id}/crypto-evidence",
+            "/api/assessments/{id}/replay",
+            "/api/assessments/{id}/metadata-exposure",
+            "/api/assessments/{id}/threat-matrix",
+            "/api/assessments/{id}/report",
+            "/api/assessments/{id}/executive-report",
             "/api/v1/health", "/api/v1/metrics", "/api/v1/traffic-generator",
             "/api/v1/evidence", "/api/v1/evidence/{evidence_id}",
             "/api/v1/evidence/{evidence_id}/pcap",

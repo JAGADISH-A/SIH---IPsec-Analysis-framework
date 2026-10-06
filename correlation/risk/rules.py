@@ -26,7 +26,7 @@ Discipline enforced here (sections 4, 13, 15, 16):
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 from ..adapters.expected_state import MaterializedExpectedState
 from ..models import (
@@ -58,6 +58,7 @@ from .models import (
     SOURCE_CORRELATION,
     SOURCE_EXPECTED_CONFIGURATION,
     SOURCE_ML,
+    SOURCE_OBSERVED_PROTOCOL,
     RiskFinding,
 )
 from .policy import RiskPolicy
@@ -77,6 +78,15 @@ class RiskRuleContext:
     observed: Optional[ObservedState] = None
     ml_result: Optional[MLResult] = None
     evidence_refs: Tuple[EvidenceRef, ...] = ()
+    #: The replay-assessment product for this observation, as a plain mapping
+    #: (``correlation.analysis.replay.ReplayAnalysis.to_dict()``), or ``None``
+    #: when the caller supplied none. It is passed as a mapping rather than as
+    #: the analysis object so the risk package never has to import the analysis
+    #: package (which imports the risk package's models), and so a rule that
+    #: reads it can be sure its inputs were already serialised and validated
+    #: upstream. ``None`` means "no replay evidence was supplied", which is an
+    #: evidence gap and never a finding.
+    replay_evidence: Optional[Mapping[str, Any]] = None
 
     def source_evidence(self) -> Tuple[EvidenceRef, ...]:
         return self.evidence_refs
@@ -99,16 +109,22 @@ def rule_esp_pfs_disabled(ctx: RiskRuleContext) -> List[RiskFinding]:
             rule_id="esp.pfs.disabled",
             category=CATEGORY_CONFIGURATION_WEAKNESS,
             severity=SEVERITY_MEDIUM,
-            title="PFS disabled in expected ESP configuration",
+            title="Perfect Forward Secrecy is not enabled for this tunnel",
             description=(
-                "Expected ESP configuration has Perfect Forward Secrecy (PFS) "
-                "disabled. The authoritative SIH posture scoring "
-                "(posture_of_config) contributes 2 points to PFS; a PFS-off "
-                "configuration can never reach the STRONG band. This is a "
-                "documented forward-secrecy deficiency of the EXPECTED "
-                "configuration, not runtime evidence."
+                "The tunnel's configured ESP protection does not enable Perfect "
+                "Forward Secrecy (PFS). Forward secrecy contributes to the "
+                "authoritative posture band, so a configuration without it "
+                "cannot reach the strongest band. This is a deficiency of the "
+                "CONFIGURED protection, not observed runtime evidence: PFS is "
+                "only indirectly observable (presence of a rekey DH "
+                "exchange), which this analysis does not collect."
             ),
-            reason=f"Expected esp.pfs={esp.pfs!r}; PFS is disabled (posture PFS contribution 0/2).",
+            reason=(
+                "The configured ESP protection for this tunnel does not enable "
+                "Perfect Forward Secrecy. Runtime PFS state is unavailable in "
+                "this capture, so no claim is made about PFS negotiation on the "
+                "active security association."
+            ),
             condition="esp.pfs == False",
             expected_value=esp.pfs,
             observed_value=None,
@@ -137,18 +153,21 @@ def rule_esp_encryption_cbc(ctx: RiskRuleContext) -> List[RiskFinding]:
             rule_id="esp.encryption.cbc",
             category=CATEGORY_CONFIGURATION_WEAKNESS,
             severity=SEVERITY_MEDIUM,
-            title="Weak ESP cipher family in expected configuration (CBC)",
+            title="Configured ESP cipher is CBC rather than an AEAD algorithm",
             description=(
-                "Expected ESP cipher {0} is a CBC (non-AEAD) algorithm. The "
-                "authoritative SIH posture scoring contributes 2 points to the "
-                "cipher family vs 4 for GCM16, so this configuration can never "
-                "reach the STRONG band. CBC is still a supported, valid "
-                "configuration in the authoritative model (it must carry a "
-                "separate integrity algorithm) - this is a configuration "
-                "weakness, not runtime evidence."
+                "The configured ESP encryption algorithm is a CBC (non-AEAD) "
+                "cipher. CBC is the weaker cipher family in the authoritative "
+                "posture model and must be paired with a separate integrity "
+                "algorithm. It remains a supported, valid configuration; this "
+                "is a deficiency of the CONFIGURED protection, not observed "
+                "runtime evidence."
             ).format(esp.encryption),
-            reason=f"Expected esp.encryption={esp.encryption!r} is in the CBC family "
-                   f"{CBC_ENCIPHERMENTS}; posture cipher-family contribution 2/4.",
+            reason=(
+                "The configured ESP encryption algorithm is a CBC (non-AEAD) "
+                "cipher, which is the weaker cipher family and requires a "
+                "separate integrity algorithm. Runtime cipher state is "
+                "unavailable in this capture."
+            ),
             condition="esp.encryption in ('aes128cbc', 'aes256cbc')",
             expected_value=esp.encryption,
             observed_value=None,
@@ -178,16 +197,22 @@ def rule_esp_dh_group_weak(ctx: RiskRuleContext) -> List[RiskFinding]:
             rule_id="esp.dh_group.weak",
             category=CATEGORY_CONFIGURATION_WEAKNESS,
             severity=SEVERITY_LOW,
-            title="Lowest ESP DH group rung (modp2048) while PFS is enabled",
+            title="Configured ESP DH group is the lowest supported rung while PFS is enabled",
             description=(
-                "Expected ESP DH group is {0} with PFS enabled. The "
-                "authoritative SIH posture scoring contributes 1/4 DH points "
-                "for modp2048. Informational configuration weakness only; the "
-                "group remains a supported, valid rung in the authoritative "
-                "model."
+                "The configured ESP Diffie-Hellman group is {0}, the lowest "
+                "supported rung, while Perfect Forward Secrecy is enabled. The "
+                "authoritative posture model scores the DH group only while PFS "
+                "is enabled, so this bounds the strength of each rekey. "
+                "Informational weakness only; the group remains a supported, "
+                "valid rung, and this is a deficiency of the CONFIGURED "
+                "protection rather than observed runtime evidence."
             ).format(esp.dh_group),
-            reason=f"Expected esp.dh_group={esp.dh_group!r} with esp.pfs=True; "
-                   f"posture DH contribution 1/4.",
+            reason=(
+                "The configured ESP Diffie-Hellman group is the lowest "
+                "supported rung while Perfect Forward Secrecy is enabled, which "
+                "bounds the strength of each rekey. Runtime DH state is "
+                "unavailable in this capture."
+            ),
             condition="esp.pfs == True and esp.dh_group == 'modp2048'",
             expected_value=esp.dh_group,
             observed_value=None,
@@ -454,6 +479,105 @@ def rule_evidence_insufficient(ctx: RiskRuleContext) -> List[RiskFinding]:
     return findings
 
 
+# ---- replay evidence rule (Phase 9, areas 3 -> 6) ----------------------------
+#: Replay-assessment statuses, mirroring ``correlation.analysis.replay``. The
+#: values are quoted, not re-derived: the analysis package decides the status
+#: and this rule only reads it.
+REPLAY_STATUS_OBSERVED = "OBSERVED"
+
+#: Evidence the analysis product publishes for one duplicate sequence.
+REPLAY_KIND_DUPLICATE = "duplicate_sequence"
+
+
+def rule_replay_duplicate_sequence(ctx: RiskRuleContext) -> List[RiskFinding]:
+    """Duplicate ESP sequence numbers observed under a security association.
+
+    The only finding the replay analysis is allowed to produce, and it fires
+    under exactly one condition: the caller supplied replay evidence whose
+    status is ``OBSERVED`` **and** whose ``duplicate_sequences`` is a positive
+    integer. Everything else is deliberately not a finding:
+
+    * ``NO_EVIDENCE`` -- the sequences were analysed and were clean;
+    * ``INSUFFICIENT_DATA`` -- the evidence cannot decide, so no violation is
+      asserted (an evidence gap is never converted into a finding);
+    * no evidence at all (``replay_evidence is None``) -- same reason;
+    * sequence **gaps** -- counted and published by the analysis, never a
+      finding here, because a gap is what capture loss looks like.
+
+    Severity is LOW: a duplicate is anomaly evidence, and the journal cannot
+    say whether the copy was injected or duplicated by the capture path.
+    """
+    replay = ctx.replay_evidence
+    if not isinstance(replay, Mapping):
+        return []
+    if replay.get("status") != REPLAY_STATUS_OBSERVED:
+        return []
+    duplicates = replay.get("duplicate_sequences")
+    if not isinstance(duplicates, int) or isinstance(duplicates, bool):
+        return []
+    if duplicates <= 0:
+        return []
+    source_path = replay.get("source")
+    duplicate_entries = [
+        entry for entry in replay.get("evidence") or ()
+        if isinstance(entry, Mapping)
+        and entry.get("kind") == REPLAY_KIND_DUPLICATE
+    ]
+    spis = sorted({
+        str(entry.get("spi")) for entry in duplicate_entries
+        if entry.get("spi")
+    })
+    sequence_tokens = [
+        (str(entry.get("spi")), entry.get("sequence"))
+        for entry in duplicate_entries
+        if entry.get("sequence") is not None
+    ]
+    observed_value = {
+        "duplicate_sequences": duplicates,
+        "spis": spis,
+        "repeated_sequences": sequence_tokens,
+        "status": replay.get("status"),
+        "source": source_path,
+    }
+    return [
+        make_finding(
+            finding_id="RISK-REPLAY-DUPLICATE",
+            rule_id="replay.duplicate_sequence",
+            category=CATEGORY_PROTOCOL_ANOMALY,
+            severity=SEVERITY_LOW,
+            title="Duplicate ESP sequence number carried under a security association",
+            description=(
+                "The recorded packet journal carried the same ESP sequence "
+                "number more than once under a single SPI ({0} duplicate(s) "
+                "across {1}). An RFC 4303 replay window exists to discard "
+                "exactly this, so a duplicate reaching the analysis is "
+                "anomaly evidence worth reporting. The journal does not say "
+                "whether the copy was injected by an on-path party or "
+                "duplicated by the capture path, so this finding asserts an "
+                "observed anomaly, never a confirmed replay attack."
+            ).format(duplicates, ", ".join(spis) or "an unnamed SPI"),
+            reason=(
+                "The replay analysis of the recorded packet journal "
+                f"({source_path}) reported status OBSERVED with "
+                f"{duplicates} duplicate sequence number(s)"
+                + (f" under SPI(s) {', '.join(spis)}" if spis else "")
+                + ". Sequence gaps, if any, are reported separately by the "
+                "analysis and contribute nothing to this finding."
+            ),
+            condition=(
+                "replay_evidence.status == 'OBSERVED' and "
+                "replay_evidence.duplicate_sequences > 0"
+            ),
+            expected_value=0,
+            observed_value=observed_value,
+            source=SOURCE_OBSERVED_PROTOCOL,
+            evidence_type=EVIDENCE_TYPE_OBSERVATION,
+            related_variable="esp.sequence.replay",
+            evidence_refs=ctx.source_evidence(),
+        )
+    ]
+
+
 # ---- registry ---------------------------------------------------------------
 RULE_REGISTRY = {
     "esp.pfs.disabled": rule_esp_pfs_disabled,
@@ -463,6 +587,7 @@ RULE_REGISTRY = {
     "ml.anomaly": rule_ml_anomaly,
     "ml.classification.disagreement": rule_ml_classification_disagreement,
     "evidence.insufficient": rule_evidence_insufficient,
+    "replay.duplicate_sequence": rule_replay_duplicate_sequence,
 }
 
 # rule metadata (source of truth for PHASE_6_RISK_RULE_TRACEABILITY.md)
@@ -598,6 +723,34 @@ RULE_TRACEABILITY: Dict[str, Dict[str, Any]] = {
         "evidence_requirement": "none added; surfaces existing outcome reasons",
         "unknown_handling": "explicit opt-in only; INFO severity never inflates score",
         "dedup_behavior": "dedup by (category, variable, CORRELATION)",
+    },
+    "replay.duplicate_sequence": {
+        "rule_id": "replay.duplicate_sequence",
+        "finding_id": "RISK-REPLAY-DUPLICATE",
+        "source_variable": "replay_evidence.duplicate_sequences",
+        "authoritative_source": (
+            "correlation.analysis.replay.ReplayAnalysis over the recorded "
+            "packet journal (per-packet SPI + sequence records)"
+        ),
+        "condition": (
+            "replay_evidence.status == 'OBSERVED' and "
+            "replay_evidence.duplicate_sequences > 0"
+        ),
+        "severity": SEVERITY_LOW,
+        "score_contribution": 6,
+        "evidence_requirement": (
+            "per-packet journal evidence only: the rule is unreachable "
+            "without a caller supplying OBSERVED replay evidence, so an "
+            "aggregate-only capture can never produce it"
+        ),
+        "unknown_handling": (
+            "INSUFFICIENT_DATA, NO_EVIDENCE and a missing replay product all "
+            "return no finding; sequence gaps are never evidence for this rule"
+        ),
+        "dedup_behavior": (
+            "dedup by (category, esp.sequence.replay, OBSERVED_PROTOCOL); one "
+            "finding covers every duplicated sequence in the journal"
+        ),
     },
 }
 

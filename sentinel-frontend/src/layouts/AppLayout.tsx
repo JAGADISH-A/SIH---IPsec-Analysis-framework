@@ -4,6 +4,7 @@ import { Sidebar } from '@/components/Sidebar'
 import { getAnalyticsHealth } from '@/api/analytics'
 import { getControlHealth } from '@/api/control'
 import { useResource } from '@/hooks/useResource'
+import { ProvenanceDetails } from '@/components/kit'
 import { ANALYTICS_API_URL, CONTROL_API_URL } from '@/config'
 
 /**
@@ -14,18 +15,25 @@ import { ANALYTICS_API_URL, CONTROL_API_URL } from '@/config'
  */
 function useRouteTitle(): string {
   const { pathname } = useLocation()
-  if (pathname === '/' || pathname === '/console' || pathname === '/overview') return 'Packet Analysis'
+  // Mirrors the canonical route table in `src/router.tsx` and the labels in
+  // `src/components/Sidebar.tsx`. A routed page whose title resolves to
+  // "Not Found" is a contradiction the smoke test guards against: the body
+  // rendered a real screen while the chrome claimed there was not one.
+  if (pathname === '/' || pathname === '/live') return 'Live Screening'
+  if (pathname === '/overview') return 'Overview'
+  if (pathname === '/configuration') return 'IPsec Configuration'
+  if (pathname === '/analysis' || pathname === '/ml') return 'Traffic Analysis'
+  if (pathname === '/assessments') return 'Security Assessment'
   if (pathname.startsWith('/assessments/')) return 'Assessment'
-  if (pathname === '/assessments') return 'Assessments'
   if (pathname === '/reports') return 'Reports'
-  if (pathname.startsWith('/findings/')) return 'Finding'
-  if (pathname === '/findings') return 'Findings'
-  if (pathname === '/evidence') return 'Evidence Library'
-  if (pathname === '/xai' || pathname === '/explainability') return 'Explainability'
-  if (pathname === '/ml' || pathname === '/analysis') return 'ML Analysis'
+  if (pathname === '/threat-matrix') return 'Threat Matrix'
+  if (pathname === '/settings' || pathname === '/system') return 'System Status'
   if (pathname.startsWith('/run/') || pathname.startsWith('/experiments/')) return 'Run Assessment'
   if (pathname === '/run' || pathname === '/experiments') return 'Run Assessment'
-  if (pathname === '/system') return 'System Status'
+  if (pathname === '/findings') return 'Findings'
+  if (pathname.startsWith('/findings/')) return 'Finding'
+  if (pathname === '/evidence') return 'Evidence Library'
+  if (pathname === '/explainability' || pathname === '/xai') return 'Explainability'
   return 'Not Found'
 }
 
@@ -147,12 +155,19 @@ export function AppLayout() {
         <main id="main-scroll" className="flex-1 px-4 py-5 lg:px-6 lg:py-6">
           <Outlet />
         </main>
-        <footer className="border-t border-edge px-6 py-3">
-          <p className="text-xs text-ink-faint">
-            Sentinel reads the deterministic assessment store. Every score, severity and
-            finding shown here is produced by the backend risk engine — nothing is
-            synthesised in the browser.
-          </p>
+        {/* This assurance used to be three printed lines on every screen. It is
+            the same sentence everywhere, so it is stated once here and the
+            reasoning is one click away rather than repeated per page. */}
+        <footer className="border-t border-edge px-6 py-2.5">
+          <ProvenanceDetails title="Where these numbers come from">
+            <p className="max-w-3xl text-xs text-ink-dim">
+              Sentinel is a read-only client for the deterministic assessment store. Every score,
+              severity, finding and verdict on this screen was produced by the backend risk
+              engine over the stored artifacts — nothing is recomputed, recalibrated or
+              synthesised in the browser, and a value the store did not provide is shown as
+              absent rather than filled in.
+            </p>
+          </ProvenanceDetails>
         </footer>
       </div>
     </div>

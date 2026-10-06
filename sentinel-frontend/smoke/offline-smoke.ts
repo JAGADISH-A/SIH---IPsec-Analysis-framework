@@ -52,7 +52,7 @@ const { act, createElement } = await import('react')
 const { MemoryRouter, Route, Routes } = await import('react-router-dom')
 const { AppLayout } = await import('@/layouts/AppLayout')
 const { SystemStatus } = await import('@/pages/SystemStatus')
-const { PacketWorkspace } = await import('@/pages/PacketWorkspace')
+const { LiveScreening } = await import('@/pages/LiveScreening')
 const { Activity } = await import('@/pages/AnalystConsole')
 const { Assessments } = await import('@/pages/Assessments')
 
@@ -102,14 +102,15 @@ check('status reports an unreachable plane', /unreachable|not connected|could no
 check('status never claims connected', !/\bconnected\b(?![^.]*unreachable)/i.test(status.text.replace(/unreachable/gi, '')))
 check('status shows a retry affordance', /re-?check|retry/i.test(status.text))
 
-const workspace = await mount('PacketWorkspace', '/', PacketWorkspace as never)
-// The workspace is a packet-style console built from real journal data. With
-// the plane down it must report the failure, not present an empty packet list
-// that could read as "no traffic on the link".
-check('workspace surfaces a failure, not a fake packet list', /could not reach|Unable|unreachable|Retry|re-?check/i.test(workspace.text))
-check('workspace does not claim packets were received', !/No packets received|packets received/i.test(workspace.text))
-check('workspace does not render a packet table when down', workspace.rows === 0, `rows=${workspace.rows}`)
-check('workspace never presents risk as a live measurement', !/CRITICAL|HIGH|MEDIUM|LOW/.test(workspace.text))
+const screening = await mount('LiveScreening', '/', LiveScreening as never)
+// Live screening is built from real journal data. With the plane down it must
+// report the failure, not present an empty packet list that could read as
+// "no traffic on the link".
+check('live screening surfaces a failure, not a fake packet list', /could not reach|Unable|unreachable|Retry|re-?check/i.test(screening.text))
+check('live screening does not claim packets were received', !/No packets received|packets received/i.test(screening.text))
+check('live screening does not render a packet table when down', screening.rows === 0, `rows=${screening.rows}`)
+check('live screening never presents risk as a live measurement', !/CRITICAL|HIGH|MEDIUM|LOW/.test(screening.text))
+check('live screening offers no packet to investigate when down', !/Packet Investigation/i.test(screening.text))
 
 const assessments = await mount('Assessments', '/assessments', Assessments as never)
 check('assessment index reports the failure', /could not reach|Unable|unreachable|Retry/i.test(assessments.text))

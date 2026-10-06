@@ -218,6 +218,16 @@ DEFAULT_RULE_OVERRIDES: Dict[str, Dict[str, Any]] = {
         "authorization_required": False,
         "required_roles": (ROLE_ANALYST,),
     },
+    # RESP-REPLAY-009: duplicate ESP sequence numbers -> REQUIRE_REVIEW, so the
+    # planner's action always matches RESPONSE_RULE_TRACEABILITY (a LOW-severity
+    # default would be ALERT_ONLY, and the registry documents REVIEW).
+    "replay.duplicate_sequence": {
+        "action": ACTION_REQUIRE_REVIEW,
+        "priority": PRIORITY_LOW,
+        "approval_required": True,
+        "authorization_required": False,
+        "required_roles": (ROLE_ANALYST,),
+    },
 }
 
 # Plan-level limitations appended to every deterministic plan.

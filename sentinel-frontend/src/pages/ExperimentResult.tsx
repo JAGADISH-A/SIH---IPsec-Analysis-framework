@@ -4,7 +4,9 @@ import { getExperiment } from '@/api/control'
 import { useJobPolling, useResource } from '@/hooks/useResource'
 import { ErrorState, LoadingPanel } from '@/components/states'
 import { Button, LinkButton, Panel, StatusPill, Tag } from '@/components/ui'
+import { acronymLabel, declaredValueLabel, statusLabel } from '@/lib/labels'
 import { Breadcrumbs, PageHeader } from '@/layouts/AppLayout'
+import { IdRow, ProvenanceDetails } from '@/components/kit'
 import { EXPERIMENT_POLL_MS } from '@/config'
 import { formatNumber, humanize } from '@/lib/format'
 import { STAGE_SEQUENCE } from './RunAssessment'
@@ -202,6 +204,9 @@ export function ExperimentResult() {
           <div className="flex flex-wrap items-center gap-2">
             <StatusPill
               status={job.status}
+              // The headline state is a human state; the control-plane token
+              // stays available in the run provenance disclosure.
+              label={statusLabel(job.status.toLowerCase())}
               tone={completed ? 'good' : failed ? 'bad' : running ? 'info' : 'neutral'}
             />
             <span className="mono text-xs text-ink-faint">{job.job_id}</span>
@@ -220,8 +225,8 @@ export function ExperimentResult() {
                   }
                   label={`lab result ${result.status ?? 'unknown'}`}
                 />
-                {result.mode && <Tag>{result.mode} mode</Tag>}
-                {result.address_family && <Tag>{result.address_family}</Tag>}
+                {result.mode && <Tag>{declaredValueLabel(result.mode)} mode</Tag>}
+                {result.address_family && <Tag>{acronymLabel(result.address_family)}</Tag>}
               </>
             )}
           </div>
@@ -264,6 +269,7 @@ export function ExperimentResult() {
                         <div className="flex flex-wrap items-center gap-4">
                           <StatusPill
                             status={result.connectivity.status ?? 'unknown'}
+                            label={`Connectivity ${result.connectivity.status ?? 'unknown'}`}
                             tone={result.connectivity.status === 'PASS' ? 'good' : 'bad'}
                           />
                           <span className="tnum text-sm text-ink-dim">
@@ -348,20 +354,26 @@ export function ExperimentResult() {
               <Panel title="Run details">
                 <dl className="space-y-2 p-4 text-sm">
                   <div className="flex items-center justify-between gap-2">
-                    <dt className="text-ink-faint">Run id</dt>
-                    <dd className="mono truncate text-ink-dim" title={job.job_id}>
-                      {job.job_id}
+                    <dt className="text-ink-faint">Status</dt>
+                    <dd className="text-ink">
+                      {failed ? 'Failed' : completed ? 'Completed' : humanize(job.status)}
                     </dd>
                   </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <dt className="text-ink-faint">Status</dt>
-                    <dd className="text-ink">{job.status}</dd>
-                  </div>
-                  <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-baseline justify-between gap-2">
                     <dt className="text-ink-faint">Stage</dt>
-                    <dd className="mono text-ink">{job.stage}</dd>
+                    <dd className="text-right text-ink">
+                      {STAGE_SEQUENCE.find((entry) => entry.key === job.stage)?.label ??
+                        humanize(job.stage)}
+                    </dd>
                   </div>
                 </dl>
+                <div className="border-t border-edge-soft p-3">
+                  <ProvenanceDetails title="Run provenance">
+                    <IdRow label="Run id" value={job.job_id} title={job.job_id} />
+                    <IdRow label="Status token" value={job.status} title={job.status} />
+                    <IdRow label="Stage token" value={job.stage} title={job.stage} />
+                  </ProvenanceDetails>
+                </div>
                 <div className="border-t border-edge-soft p-3">
                   <Button variant="secondary" className="w-full" onClick={resource.reload}>
                     {resource.refreshing ? 'Refreshing…' : 'Refresh now'}

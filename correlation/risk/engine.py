@@ -6,6 +6,7 @@ The engine is a deterministic, read-only orchestrator:
     ObservedState  ────────────┤-> RiskEngine.assess -> RiskAssessment
     CorrelationResult          │     (findings + severity + score)
     MLResult (optional)        │
+    replay_evidence (optional) │
     evidence_refs (optional)   │
 
 Pipeline: identity safety -> rule evaluation (fixed order) -> deterministic
@@ -24,8 +25,8 @@ Guarantees enforced here (Phase 6 brief sections 9, 17, 23, 25, 26, 27):
 * every finding records the policy version and a rule id (sections 26-27).
 """
 
-from dataclasses import dataclass
-from typing import Any, Dict, Optional, Sequence, Union
+from dataclasses import dataclass, replace
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
 from ..adapters.expected_state import MaterializedExpectedState
 from ..comparison.engine import IdentityMismatchError, assert_identity_compatible
@@ -106,6 +107,40 @@ def _derive_evidence(correlation: CorrelationResult) -> tuple:
     return evidence_from_comparison(correlation)
 
 
+def _attach_scores(
+    findings: Sequence[RiskFinding],
+    score_result,
+    policy,
+) -> List[RiskFinding]:
+    """Stamp the scoring facts onto each finding (brief area 6, ``score``).
+
+    Two numbers, because they answer different questions: ``score`` is the
+    weight the policy gives this severity (what the rule is worth), and
+    ``score_added`` is what it actually contributed after the per-category and
+    overall caps (what moved the number the reader is shown). A finding the
+    scorer stopped reaching is stamped ``0`` rather than left unknown: it
+    demonstrably contributed nothing, and saying so is not a claim about the
+    risk it describes.
+    """
+    by_finding_id = {
+        contribution.get("finding_id"): contribution
+        for contribution in score_result.contributions
+    }
+    stamped: List[RiskFinding] = []
+    for finding in findings:
+        contribution = by_finding_id.get(finding.finding_id)
+        stamped.append(
+            replace(
+                finding,
+                score=policy.weight_of(finding.severity),
+                score_added=int(contribution.get("added", 0))
+                if contribution is not None
+                else 0,
+            )
+        )
+    return stamped
+
+
 @dataclass(frozen=True)
 class RiskEngine:
     """Deterministic risk assessment engine (one policy instance)."""
@@ -124,6 +159,7 @@ class RiskEngine:
         correlation: CorrelationResult,
         ml_result: Optional[MLResult] = None,
         evidence_refs: Sequence = (),
+        replay_evidence: Optional[Mapping[str, Any]] = None,
     ) -> RiskAssessment:
         """Assess one correlation and return a deterministic RiskAssessment.
 
@@ -131,11 +167,20 @@ class RiskEngine:
         ``correlation.identity``) or a ``MaterializedExpectedState`` (identity
         carried by the materialized object and verified against the
         correlation). ``correlation`` is required.
+
+        ``replay_evidence`` is the replay-assessment product for this
+        observation (``ReplayAnalysis.to_dict()``) or ``None``. It is optional
+        so every existing caller keeps working unchanged, and ``None`` means
+        "no replay evidence was supplied" -- an evidence gap, never a finding.
         """
         if not isinstance(correlation, CorrelationResult):
             raise TypeError("correlation must be a CorrelationResult")
         if observed is not None and not isinstance(observed, ObservedState):
             raise TypeError("observed must be an ObservedState or None")
+        if replay_evidence is not None and not isinstance(
+            replay_evidence, Mapping
+        ):
+            raise TypeError("replay_evidence must be a mapping or None")
 
         expected_state, expected_identity = _resolve_expected(expected, correlation)
         assert_identity_compatible(expected_identity, correlation.identity)
@@ -154,14 +199,17 @@ class RiskEngine:
             observed=observed,
             ml_result=ml,
             evidence_refs=evidence,
+            replay_evidence=replay_evidence,
         )
         raw_findings = run_rules(context)
         findings = deduplicate_findings(raw_findings, self.policy)
 
         score_result = score_findings(findings, self.policy)
+        findings = _attach_scores(findings, score_result, self.policy)
 
         metadata = self._build_metadata(
-            expected_state, correlation, ml, findings, score_result
+            expected_state, correlation, ml, findings, score_result,
+            replay_evidence,
         )
         return RiskAssessment(
             schema_version=RISK_SCHEMA_VERSION,
@@ -182,8 +230,16 @@ class RiskEngine:
         ml: Optional[MLResult],
         findings: Sequence[RiskFinding],
         score_result,
+        replay_evidence: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         posture = expected_state.security_posture
+        # Replay evidence is never derived here: the engine only records what
+        # the caller handed over, so an absent product stays an evidence gap.
+        replay_supplied = isinstance(replay_evidence, Mapping)
+        replay_status = replay_evidence.get("status") if replay_supplied else None
+        replay_duplicates = (
+            replay_evidence.get("duplicate_sequences") if replay_supplied else None
+        )
         return {
             "posture_context": {
                 "authoritative_posture": posture,
@@ -202,6 +258,19 @@ class RiskEngine:
             },
             "expected_configuration": {
                 "configuration_id": expected_state.configuration_id,
+            },
+            "replay_evidence": {
+                "supplied": replay_supplied,
+                "status": replay_status,
+                "duplicate_sequences": replay_duplicates,
+                "derived_by_this_engine": False,
+                "absent_means": "evidence gap, never a finding",
+                "gaps_are_never_findings": True,
+                "finding_rule": "replay.duplicate_sequence",
+                "finding_emitted": any(
+                    finding.rule_id == "replay.duplicate_sequence"
+                    for finding in findings
+                ),
             },
             "evidence_policy": {
                 "fabricates_references": False,

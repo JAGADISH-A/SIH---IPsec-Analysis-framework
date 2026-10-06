@@ -3,9 +3,16 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { getAssessments, getFindings } from '@/api/analytics'
 import { useResource } from '@/hooks/useResource'
 import { EmptyState, ErrorState, LoadingPanel } from '@/components/states'
-import { Panel, SeverityBadge, Tag } from '@/components/ui'
+import { IdRow, ProvenanceDetails } from '@/components/kit'
+import { Panel, SeverityBadge } from '@/components/ui'
 import { PageHeader } from '@/layouts/AppLayout'
 import { artifactName, formatBytes, formatNumber, formatUtc } from '@/lib/format'
+import {
+  assessmentLabel,
+  evidenceSourceLabel,
+  evidenceTypeLabel,
+  evidenceTypeMeaning,
+} from '@/lib/labels'
 import type { AssessmentHeader, EvidenceRef, Severity } from '@/types'
 
 type Row = EvidenceRef & {
@@ -26,6 +33,22 @@ type Row = EvidenceRef & {
  * provenance is browsable across the whole store. The v1 evidence registry
  * returns zero rows on this deployment, and no reference is fabricated to fill
  * the gap.
+ *
+ * ## Two layers
+ *
+ * The page is ordered around the two questions an analyst asks in sequence:
+ *
+ * 1. "What evidence do I have, and why does it matter?" — the primary layer.
+ *    Every row leads with the kind of evidence, what that kind is, the finding
+ *    that cited it with its severity, and the assessment it belongs to, all in
+ *    readable labels.
+ * 2. "Where exactly did this come from?" — the secondary layer, behind a
+ *    `ProvenanceDetails` disclosure on each row: full artifact paths, digests,
+ *    capture-feed names, internal evidence/finding/assessment ids, packet
+ *    offsets and storage metadata.
+ *
+ * Nothing was dropped in the move: every field the backend sends is still
+ * rendered, and the raw tokens stay reachable. Only the reading order changed.
  */
 export function Evidence() {
   const navigate = useNavigate()
@@ -55,6 +78,16 @@ export function Evidence() {
   }, [findings.data])
 
   const headers = useMemo(() => assessments.data?.headers ?? [], [assessments.data])
+
+  /* Assessments are referred to by scenario and slot everywhere they are named,
+     with the raw id kept one column away for anyone reconciling against the
+     store. Headers may be absent or truncated, so the id is the fallback rather
+     than a blank cell. */
+  const headerById = useMemo(
+    () => new Map(headers.map((header) => [header.assessment_id, header])),
+    [headers],
+  )
+  const assessmentIdLabel = (id: string): string => assessmentLabel(headerById.get(id) ?? { assessment_id: id })
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -119,12 +152,76 @@ export function Evidence() {
     [artifacts],
   )
 
+  /**
+   * The distinct kinds of evidence in the store, with a count and the one
+   * sentence that says what each kind is. This is the answer to "what evidence
+   * do I have and what does it mean" in one place, so the catalogue below can
+   * stay a list of artifacts rather than repeating the explanation per row.
+   *
+   * Built from the `artifact_type` the backend actually sent. A kind the
+   * product has no description for still appears, by its raw token, with the
+   * count that was observed.
+   */
+  const kinds = useMemo(() => {
+    const counts = new Map<string, { refs: number; artifacts: Set<string> }>()
+    for (const row of rows) {
+      const key = row.artifact_type ?? ''
+      const entry = counts.get(key) ?? { refs: 0, artifacts: new Set<string>() }
+      entry.refs += 1
+      entry.artifacts.add(row.key)
+      counts.set(key, entry)
+    }
+    return [...counts.entries()]
+      .map(([type, entry]) => ({
+        type,
+        label: evidenceTypeLabel(type),
+        meaning: evidenceTypeMeaning(type),
+        refs: entry.refs,
+        artifacts: entry.artifacts.size,
+      }))
+      .sort((a, b) => b.refs - a.refs)
+  }, [rows])
+
   return (
     <div className="space-y-4">
       <PageHeader
         title="Evidence"
-        description="Read-only evidence records, their digests, and the chain back to the assessment."
+        description="What evidence the findings in this store rest on, and what each kind is. Paths, digests, capture feeds and record ids are behind the Provenance disclosure on every row."
       />
+
+      {/* Primary layer, stated once at the top: what kinds of evidence exist and
+          what each one is. An analyst should be able to answer "what do I have
+          and why does it matter" without expanding anything. */}
+      {findings.loading ? (
+        <Panel title="Evidence kinds" bodyClassName="p-4">
+          <LoadingPanel label="Loading evidence kinds" rows={2} />
+        </Panel>
+      ) : kinds.length > 0 ? (
+        <Panel
+          title="Evidence kinds"
+          subtitle="what this store's evidence is, before any individual citation"
+          bodyClassName="p-4"
+        >
+          <ul className="grid gap-3 sm:grid-cols-2">
+            {kinds.map((kind) => (
+              <li
+                key={kind.type || 'untyped'}
+                data-evidence-kind={kind.type || 'untyped'}
+                className="rounded border border-edge-soft bg-panel-2/40 p-3"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium text-ink">{kind.label}</span>
+                  <span className="tnum text-xs text-ink-faint">
+                    {formatNumber(kind.refs)} reference{kind.refs === 1 ? '' : 's'} ·{' '}
+                    {formatNumber(kind.artifacts)} artifact{kind.artifacts === 1 ? '' : 's'}
+                  </span>
+                </div>
+                <p className="mt-1.5 text-xs leading-relaxed text-ink-dim">{kind.meaning}</p>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      ) : null}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-ink-faint">
@@ -176,7 +273,7 @@ export function Evidence() {
             <option value="ALL">All assessments</option>
             {headers.map((header: AssessmentHeader) => (
               <option key={header.assessment_id} value={header.assessment_id}>
-                {header.assessment_id}
+                {assessmentLabel(header)}
               </option>
             ))}
           </select>
@@ -200,7 +297,7 @@ export function Evidence() {
       {/* Artifact catalogue */}
       <Panel
         title="Artifact Catalogue"
-        subtitle="unique recorded files behind the findings in this store"
+        subtitle="the distinct recorded files behind the findings in this store"
         bodyClassName="overflow-x-auto"
       >
         {findings.loading ? (
@@ -214,10 +311,12 @@ export function Evidence() {
             icon="inbox"
           />
         ) : (
-          <table className="data-table min-w-[860px]">
+          <table className="data-table min-w-[720px]">
             <thead>
+              {/* Primary layer leads: what the artifact is, which file, and how
+                  much it is used for. Storage details sit behind the disclosure. */}
               <tr className="border-b border-edge text-left">
-                {['Artifact', 'Type', 'Source', 'Size', 'Cited by', 'Digest'].map((heading) => (
+                {['Evidence', 'Artifact', 'Used by', 'Provenance'].map((heading) => (
                   <th
                     key={heading}
                     className="px-4 py-2.5 label text-ink-faint"
@@ -229,40 +328,61 @@ export function Evidence() {
             </thead>
             <tbody>
               {artifacts.map((artifact) => (
-                <tr key={artifact.key} className="border-b border-edge-soft last:border-0">
+                <tr key={artifact.key} className="border-b border-edge-soft align-top last:border-0">
                   <td className="px-4 py-2.5">
-                    <span className="mono block text-sm text-ink">
+                    <span className="block text-sm font-medium text-ink">
+                      {evidenceTypeLabel(artifact.type)}
+                    </span>
+                    <span className="mt-0.5 block max-w-[280px] text-xs leading-relaxed text-ink-faint">
+                      {evidenceTypeMeaning(artifact.type)}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <span className="mono block text-sm text-ink-dim">
                       {artifactName(artifact.path)}
                     </span>
-                    <span
-                      className="mono block max-w-[300px] truncate text-xs text-ink-faint"
-                      title={artifact.path}
-                    >
-                      {artifact.path}
+                    <span className="tnum block text-xs text-ink-faint">
+                      {formatBytes(artifact.bytes)}
                     </span>
                   </td>
                   <td className="px-4 py-2.5">
-                    <Tag>{artifact.type ?? '—'}</Tag>
-                  </td>
-                  <td className="text-sm text-ink-dim">
-                    {artifact.source ?? '—'}
-                  </td>
-                  <td className="mono tnum text-sm text-ink-dim">
-                    {formatBytes(artifact.bytes)}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <span className="mono tnum text-sm text-ink">
-                      {artifact.count}
+                    <span className="tnum block text-sm text-ink">
+                      {formatNumber(artifact.count)} finding{artifact.count === 1 ? '' : 's'}
                     </span>
                     <span className="block text-xs text-ink-faint">
-                      {artifact.assessments.size} assessment
+                      across {artifact.assessments.size} assessment
                       {artifact.assessments.size === 1 ? '' : 's'}
                     </span>
                   </td>
                   <td className="px-4 py-2.5">
-                    <span className="mono text-xs text-sentinel" title={artifact.sha}>
-                      {artifact.sha ? `${artifact.sha.slice(0, 12)}…` : '—'}
-                    </span>
+                    <ProvenanceDetails title="Provenance">
+                      <IdRow
+                        label="Path"
+                        value={artifact.path}
+                        title={artifact.path}
+                      />
+                      <IdRow
+                        label="File"
+                        value={artifactName(artifact.path)}
+                      />
+                      <IdRow label="sha256" value={artifact.sha ?? '—'} title={artifact.sha ?? undefined} />
+                      <IdRow
+                        label="Capture feed"
+                        value={evidenceSourceLabel(artifact.source)}
+                        title={artifact.source ?? undefined}
+                      />
+                      <IdRow
+                        label="source"
+                        value={artifact.source ?? '—'}
+                        title={artifact.source ?? undefined}
+                      />
+                      <IdRow
+                        label="artifact_type"
+                        value={artifact.type ?? '—'}
+                        title={artifact.type ?? undefined}
+                      />
+                      <IdRow label="Bytes" value={formatBytes(artifact.bytes)} />
+                    </ProvenanceDetails>
                   </td>
                 </tr>
               ))}
@@ -274,7 +394,7 @@ export function Evidence() {
       {/* Reference list */}
       <Panel
         title="Evidence References"
-        subtitle="every citation, with the finding and assessment that made it"
+        subtitle="every citation, with the finding that made it and the evidence it rests on"
         bodyClassName="overflow-x-auto"
       >
         {findings.loading ? (
@@ -294,17 +414,18 @@ export function Evidence() {
         ) : (
           <table className="data-table min-w-[1080px]">
             <thead>
+              {/* The finding that cited the evidence leads, then the kind of
+                  evidence and the assessment it belongs to. Capture-feed names
+                  and record ids trail behind one disclosure. */}
               <tr className="border-b border-edge text-left">
-                {['Evidence ID', 'Artifact', 'Source', 'Cited by', 'Captured', 'Assessment'].map(
-                  (heading) => (
-                    <th
-                      key={heading}
-                      className="px-4 py-2.5 label text-ink-faint"
-                    >
-                      {heading}
-                    </th>
-                  ),
-                )}
+                {['Finding', 'Evidence', 'Assessment', 'Provenance'].map((heading) => (
+                  <th
+                    key={heading}
+                    className="px-4 py-2.5 label text-ink-faint"
+                  >
+                    {heading}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -319,53 +440,92 @@ export function Evidence() {
                   className="row-hover cursor-pointer border-b border-edge-soft align-top last:border-0"
                 >
                   <td className="px-4 py-2.5">
-                    <span className="mono block text-xs text-sentinel">
-                      {row.evidence_id ?? '—'}
-                    </span>
-                    {row.run_id && (
-                      <span className="mono block text-xs text-ink-faint">
-                        run {row.run_id}
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <span
-                      className="mono block max-w-[260px] truncate text-xs text-ink-dim"
-                      title={row.pcap_path}
-                    >
-                      {row.pcap_path}
-                    </span>
-                    <span className="text-xs text-ink-faint">
-                      {formatBytes(row.byte_size)}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <Tag>{row.source ?? '—'}</Tag>
-                  </td>
-                  <td className="px-4 py-2.5">
                     <div className="flex flex-wrap items-center gap-1.5">
                       <SeverityBadge severity={row.findingSeverity as Severity} size="sm" />
-                      <span className="mono text-xs text-ink-dim">{row.findingId}</span>
+                      <span className="text-sm font-medium text-ink">{row.findingTitle}</span>
                     </div>
-                    <span className="mt-0.5 block max-w-[280px] truncate text-xs text-ink-faint">
-                      {row.findingTitle}
+                    <span className="mt-0.5 block text-xs text-ink-faint">
+                      {row.findingSeverity}
                     </span>
                   </td>
                   <td className="px-4 py-2.5">
-                    <span className="mono text-xs text-ink-dim">
-                      {row.capture_sequence ?? row.sequence ?? '—'}
+                    <span className="block text-sm text-ink-dim">
+                      {evidenceTypeLabel(row.artifact_type)}
                     </span>
                     <span className="mono block text-xs text-ink-faint">
-                      {formatUtc(row.capture_start_ns ?? row.capture_end_ns)}
+                      {artifactName(row.pcap_path)} · {formatBytes(row.byte_size)}
                     </span>
                   </td>
                   <td className="px-4 py-2.5">
-                    <span
-                      className="mono block max-w-[220px] truncate text-xs text-ink-dim"
-                      title={row.assessmentId}
-                    >
-                      {row.assessmentId}
+                    <span className="block max-w-[220px] truncate text-sm text-ink-dim">
+                      {assessmentIdLabel(row.assessmentId)}
                     </span>
+                    <span className="block text-xs text-ink-faint">
+                      {row.capture_sequence !== undefined
+                        ? `capture ${formatNumber(row.capture_sequence)}`
+                        : 'capture not numbered'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <ProvenanceDetails title="Provenance">
+                      <IdRow
+                        label="Artifact path"
+                        value={row.pcap_path}
+                        title={row.pcap_path}
+                      />
+                      <IdRow
+                        label="Capture feed"
+                        value={evidenceSourceLabel(row.source)}
+                        title={row.source ?? undefined}
+                      />
+                      <IdRow
+                        label="source"
+                        value={row.source ?? '—'}
+                        title={row.source ?? undefined}
+                      />
+                      <IdRow label="sha256" value={row.artifact_sha256 ?? '—'} title={row.artifact_sha256 ?? undefined} />
+                      <IdRow
+                        label="Evidence id"
+                        value={row.evidence_id ?? '—'}
+                        title={row.evidence_id ?? undefined}
+                      />
+                      <IdRow label="Finding id" value={row.findingId} title={row.findingId} />
+                      <IdRow label="Assessment id" value={row.assessmentId} title={row.assessmentId} />
+                      {row.run_id && <IdRow label="Run id" value={row.run_id} title={row.run_id} />}
+                      {row.experiment_id && (
+                        <IdRow label="Experiment id" value={row.experiment_id} title={row.experiment_id} />
+                      )}
+                      <IdRow
+                        label="artifact_type"
+                        value={row.artifact_type ?? '—'}
+                        title={row.artifact_type ?? undefined}
+                      />
+                      <IdRow label="Bytes" value={formatBytes(row.byte_size)} />
+                      <IdRow
+                        label="capture_sequence"
+                        value={row.capture_sequence ?? '—'}
+                      />
+                      <IdRow label="sequence" value={row.sequence ?? '—'} />
+                      <IdRow label="window_index" value={row.window_index ?? '—'} />
+                      <IdRow
+                        label="packet_start"
+                        value={row.packet_start ?? 'not reported'}
+                      />
+                      <IdRow label="packet_end" value={row.packet_end ?? 'not reported'} />
+                      <IdRow
+                        label="Captured"
+                        value={
+                          row.capture_start_ns || row.capture_end_ns
+                            ? formatUtc(row.capture_start_ns ?? row.capture_end_ns)
+                            : 'no capture time recorded'
+                        }
+                      />
+                      <IdRow
+                        label="Audit event"
+                        value={row.audit_event_reference ?? '—'}
+                        title={row.audit_event_reference ?? undefined}
+                      />
+                    </ProvenanceDetails>
                   </td>
                 </tr>
               ))}
@@ -373,12 +533,6 @@ export function Evidence() {
           </table>
         )}
       </Panel>
-
-      <p className="px-1 text-xs leading-relaxed text-ink-faint">
-        Provenance is shown exactly as recorded by the analysis pipeline: artifact path,
-        source, SHA-256 digest and byte size. Where a field is not present in the backend
-        response it is omitted rather than filled in.
-      </p>
 
       <div className="flex flex-wrap gap-2">
         <Link

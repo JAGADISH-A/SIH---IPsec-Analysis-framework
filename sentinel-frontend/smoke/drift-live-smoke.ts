@@ -62,7 +62,19 @@ check(
   'the comparison comes from the read-only per-assessment endpoint',
   drift.read_only === true && drift.assessment_id === assessmentId,
 )
-check('the rendered page reflects the status the API reported', text.includes(drift.status))
+
+/**
+ * Which verdict the panel shows must follow the status the API reported. The
+ * status word itself is not asserted verbatim because the panel states each
+ * status in its own prose; what matters is that a status it did not report can
+ * never be the one on screen.
+ */
+const verdict = drift.drift_detected
+  ? /DRIFT DETECTED/.test(text)
+  : drift.status === 'no_drift'
+    ? /No drift detected/.test(text)
+    : !/DRIFT DETECTED/.test(text) && !/No drift detected/.test(text)
+check(`the rendered verdict follows the reported status (${drift.status})`, verdict)
 
 if (drift.status === 'drift') {
   check('a reported drift reads as drift detected', /DRIFT DETECTED/.test(text))

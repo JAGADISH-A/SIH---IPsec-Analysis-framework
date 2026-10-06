@@ -90,6 +90,17 @@ MUTATING_METHODS = ("POST", "PUT", "PATCH", "DELETE")
 #: a caller push an arbitrarily long string into our logs and their devtools.
 MAX_ECHOED_VALUE = 120
 
+#: Socket errors that mean "the client is no longer there", not "the server is
+#: broken".  A browser routinely closes a connection it no longer needs: a poll
+#: superseded by the next one, a component unmounted mid-fetch, a tab closed, a
+#: cancelled capture download.  Those are normal, and on a LAN deployment they
+#: arrive constantly, so they must not be reported as server faults.
+#:
+#: Only these three are treated as an expected disconnect.  Every other
+#: exception -- including a genuine ``OSError`` from the write itself -- keeps
+#: propagating so real faults still surface.
+CLIENT_DISCONNECT_ERRORS = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)
+
 
 def to_json_bytes(payload: dict) -> bytes:
     return (json.dumps(payload, indent=2, sort_keys=False) + "\n").encode("utf-8")
@@ -433,6 +444,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 if not chunk:
                     break
                 self.wfile.write(chunk)
+        except CLIENT_DISCONNECT_ERRORS:
+            # A cancelled or superseded download is the expected way a capture
+            # stream ends early; abandoning the rest of the stream is correct.
+            pass
         finally:
             stream.close()
 
@@ -497,12 +512,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _end(self, status: int, extra: Optional[Dict[str, str]] = None) -> None:
         """Send headers with no body (preflight)."""
-        self.send_response(status)
-        for name, value in self._common_headers().items():
-            self.send_header(name, value)
-        for name, value in (extra or {}).items():
-            self.send_header(name, value)
-        self.end_headers()
+        try:
+            self.send_response(status)
+            for name, value in self._common_headers().items():
+                self.send_header(name, value)
+            for name, value in (extra or {}).items():
+                self.send_header(name, value)
+            self.end_headers()
+        except CLIENT_DISCONNECT_ERRORS:
+            # Client already gone; nothing left to hand it. See _send.
+            pass
 
     def _send(
         self,
@@ -511,20 +530,29 @@ class DashboardHandler(BaseHTTPRequestHandler):
         body: bytes,
         extra_headers: Optional[Dict[str, str]] = None,
     ) -> None:
-        self.send_response(status)
-        self.send_header("Content-Type", content_type)
-        for name, value in self._common_headers().items():
-            self.send_header(name, value)
-        for name, value in (extra_headers or {}).items():
-            self.send_header(name, value)
-        if getattr(self, "_head_only", False):
-            # HEAD advertises the real length but sends no body.
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            for name, value in self._common_headers().items():
+                self.send_header(name, value)
+            for name, value in (extra_headers or {}).items():
+                self.send_header(name, value)
+            if getattr(self, "_head_only", False):
+                # HEAD advertises the real length but sends no body.
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                return
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            return
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+            self.wfile.write(body)
+        except CLIENT_DISCONNECT_ERRORS:
+            # A client that navigates away or aborts a fetch closes the socket
+            # while the response is still going out. The request was already
+            # served, so the only correct action is to abandon the response.
+            # Nothing is retried and no status is invented: the peer is gone, so
+            # there is nobody left to receive one. Any other exception still
+            # propagates and is reported as the server fault that it is.
+            pass
 
     def log_message(self, fmt: str, *args) -> None:
         sys.stderr.write(

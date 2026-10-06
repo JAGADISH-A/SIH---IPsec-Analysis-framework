@@ -174,6 +174,10 @@ export type ObservedState = {
   endpoints?: { a?: string; b?: string } | null
   active?: boolean
   tunnel_seen?: boolean
+  /** Authoritative encapsulation mode ("tunnel" / "transport") as reported by
+   *  the real SA state. `null` means no authoritative source supplied it, which
+   *  is reported as unknown and never as a match or a mismatch. */
+  mode?: string | null
   packets_seen?: number
   bytes_seen?: number
   packets_a_to_b?: number
@@ -1102,8 +1106,13 @@ export type AiAnalysisResult = {
    * that would render as an explanation of nothing.
    */
   analysis?: AiExplainResponse
-  /** The service's own capability statement, for the "why not" affordance. */
-  health?: AiHealthResponse
+  /**
+   * The service's own capability statement, for the "why not" affordance.
+   *
+   * `null` means the probe ran and the service could not be reached, which is a
+   * different fact from `undefined`: undefined means no probe was made.
+   */
+  health?: AiHealthResponse | null
 }
 
 export type ReportKind = 'assessment' | 'incident' | 'evidence-log'

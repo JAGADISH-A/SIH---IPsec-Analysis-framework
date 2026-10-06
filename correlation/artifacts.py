@@ -25,6 +25,10 @@ refuses rather than substitutes:
   The trained model has no anomaly capability, so the mapped results carry
   ``anomaly=None``. A misclassification is a real thing the committed replay
   contains, and it is reported as one -- never as an anomaly.
+* :func:`load_sequence_journal` reads a recorded packet journal into per-SPI
+  ``(sequence, timestamp)`` pairs, the evidence level that lets the replay
+  analysis count duplicate sequence numbers exactly. A capture without a
+  journal is reported as aggregate-only evidence, never backfilled.
 
 Nothing here writes, repairs or synthesizes. A missing, truncated or internally
 inconsistent artifact raises :class:`ArtifactUnavailable` with the reason, so a
@@ -208,10 +212,86 @@ def load_observed_state(relative_path: str) -> Tuple[ObservedState, ArtifactReco
             "ike_seen": observed.ike_seen,
             "ike_nat_t_seen": observed.ike_nat_t_seen,
             "spi_count": len(observed.spis),
-            # Read from the snapshot itself: these two are recorded by the state
-            # builder but are not fields of the correlation ObservedState model.
-            "observation_start_ns": payload.get("observation_start_ns"),
-            "last_packet_timestamp_ns": payload.get("last_packet_timestamp_ns"),
+            "observation_start_ns": observed.observation_start_ns,
+            "last_packet_timestamp_ns": observed.last_packet_timestamp_ns,
+        },
+    )
+
+
+def canonical_spi(value: Any) -> str:
+    """Canonical ``0x%08x`` SPI token.
+
+    The state builder keys SPIs with ``ebpf.ipsec_state_builder._hexspi``, and
+    recorded snapshots carry that string form while recorded packet journals
+    carry the integer. One canonical form lets a journal join to the snapshot
+    it belongs to without either side being rewritten.
+    """
+    if isinstance(value, str):
+        text = value.strip().lower()
+        base = 16 if text.startswith("0x") else 0
+        return "0x%08x" % (int(text, base) & 0xFFFFFFFF)
+    return "0x%08x" % (int(value) & 0xFFFFFFFF)
+
+
+def load_sequence_journal(
+    relative_path: str,
+) -> Tuple[Dict[str, Tuple[Tuple[int, int], ...]], ArtifactRecord]:
+    """Load a recorded packet journal as per-SPI ``(sequence, timestamp_ns)``.
+
+    This is the only evidence level that can count a duplicate ESP sequence
+    exactly. Only records that carry ``spi``, ``seq`` and ``ts`` contribute;
+    everything else in the journal (IKE, non-IP traffic) is ignored rather than
+    coerced.
+
+    A path that is not JSONL -- a pcap, for instance -- raises
+    :class:`ArtifactUnavailable`: this repository parses pcaps outside the
+    assessment pipeline, and a capture with no journal is an evidence gap the
+    replay analysis reports as aggregate-only, never a reason to invent
+    packets.
+    """
+    if not relative_path.endswith(".jsonl"):
+        raise ArtifactUnavailable(
+            f"artifact {relative_path!r} is not a packet journal: a journal is "
+            "a JSONL file whose records carry per-packet spi, seq and ts. "
+            "Captures in other formats are not parsed here, so no per-packet "
+            "sequence evidence is available from them."
+        )
+    digest, size = _fingerprint(relative_path)
+    records = _read_jsonl(relative_path)
+    collected: Dict[str, List[Tuple[int, int]]] = {}
+    esp_records = 0
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        if record.get("type") not in (None, "ESP"):
+            continue
+        spi = record.get("spi")
+        sequence = record.get("seq")
+        timestamp = record.get("ts")
+        if spi is None or sequence is None or timestamp is None:
+            continue
+        esp_records += 1
+        collected.setdefault(canonical_spi(spi), []).append(
+            (int(sequence), int(timestamp))
+        )
+    if esp_records == 0:
+        raise ArtifactUnavailable(
+            f"artifact {relative_path!r} carries no ESP sequence records, so "
+            "there is nothing to analyse for replay protection"
+        )
+    sequences = {
+        key: tuple(values) for key, values in sorted(collected.items())
+    }
+    return sequences, ArtifactRecord(
+        path=relative_path,
+        artifact_sha256=digest,
+        byte_size=size,
+        record_count=len(records),
+        detail={
+            "kind": "packet_journal",
+            "esp_records": esp_records,
+            "spi_count": len(sequences),
+            "spis": sorted(sequences),
         },
     )
 

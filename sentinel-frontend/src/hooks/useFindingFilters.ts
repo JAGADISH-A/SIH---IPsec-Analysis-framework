@@ -189,8 +189,6 @@ export function anchorRowFor(f: FilteredFinding): CaptureRow {
     length: 0,
     spi: null,
     classification: 'ESP',
-    direction: null,
-    directionLabel: 'UNKNOWN',
     severity: assessmentSeverity,
     riskLabel: packetRiskLabel(assessmentSeverity, true),
     riskScore: score,
@@ -345,24 +343,4 @@ export function useFindingFilters(filters: FindingFilters): FindingFilterStore {
 }
 
 /** A short, human label for a traffic tag (voip -> VoIP, icmp -> ICMP). */
-const ACRONYM_TRAFFIC: Record<string, string> = {
-  icmp: 'ICMP',
-  esp: 'ESP',
-  ah: 'AH',
-  ike: 'IKE',
-  dns: 'DNS',
-  tcp: 'TCP',
-  udp: 'UDP',
-  sip: 'SIP',
-  rtp: 'RTP',
-  voip: 'VoIP',
-  dtls: 'DTLS',
-  sctp: 'SCTP',
-  bgp: 'BGP',
-  ipsec: 'IPsec',
-}
-
-export function trafficLabel(tag: string): string {
-  const lowered = tag.toLowerCase()
-  return ACRONYM_TRAFFIC[lowered] ?? humanize(tag)
-}
+export { trafficLabel } from '@/lib/labels'

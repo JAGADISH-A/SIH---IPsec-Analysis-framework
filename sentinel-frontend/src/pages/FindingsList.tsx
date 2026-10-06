@@ -2,7 +2,8 @@ import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { Panel, SeverityBadge, Tag } from '@/components/ui'
 import { EmptyState } from '@/components/states'
-import { humanize, truncate } from '@/lib/format'
+import { humanize, formatValue, truncate } from '@/lib/format'
+import { configTermLabel } from '@/lib/labels'
 import type { AssessmentBundle, Finding, Severity } from '@/types'
 
 /**
@@ -48,10 +49,10 @@ function FindingRow({
           </span>
           {mismatch && (
             <span className="text-ink-faint">
-              <span className="mono text-ink-dim">{finding.related_variable}</span>:{' '}
-              <span className="mono text-sentinel">{String(finding.expected_value)}</span>{' '}
+              <span>{configTermLabel(finding.related_variable)}</span>:{' '}
+              <span className="mono">{formatValue(finding.expected_value)}</span>{' '}
               →{' '}
-              <span className="mono text-critical">{String(finding.observed_value)}</span>
+              <span className="mono text-critical">{formatValue(finding.observed_value)}</span>
             </span>
           )}
           {finding.evidence_refs && finding.evidence_refs.length > 0 && (

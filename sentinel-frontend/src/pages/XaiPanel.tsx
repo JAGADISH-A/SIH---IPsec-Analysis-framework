@@ -1,4 +1,6 @@
 import { Panel, Tag, Prose, StatusPill, SeverityBadge } from '@/components/ui'
+import { IdRow, ProvenanceDetails } from '@/components/kit'
+import { acronymLabel } from '@/lib/labels'
 import { EmptyState } from '@/components/states'
 import { formatNumber, humanize } from '@/lib/format'
 import type { AssessmentBundle, Severity } from '@/types'
@@ -77,7 +79,7 @@ export function XaiPanel({ bundle }: { bundle: AssessmentBundle }) {
       {score && (
         <Panel
           title="Score Explanation"
-          subtitle={`${score.provenance} · ${score.risk_policy_version} · raw sum ${score.raw_sum}`}
+          subtitle={`how the risk engine arrived at ${score.score}`}
         >
           <div className="space-y-3 p-4">
             <div className="flex flex-wrap items-center gap-3">
@@ -91,6 +93,15 @@ export function XaiPanel({ bundle }: { bundle: AssessmentBundle }) {
               )}
             </div>
             <Prose>{score.explanation}</Prose>
+            <ProvenanceDetails title="Score provenance">
+              <IdRow label="Producer" value={score.provenance} title={score.provenance} />
+              <IdRow
+                label="Risk policy"
+                value={score.risk_policy_version}
+                title={score.risk_policy_version}
+              />
+              <IdRow label="Raw sum" value={String(score.raw_sum)} title={String(score.raw_sum)} />
+            </ProvenanceDetails>
             {score.contributions?.length > 0 && (
               <div className="overflow-x-auto border-t border-edge pt-3">
                 <table className="data-table min-w-[520px]">
@@ -244,10 +255,16 @@ export function XaiPanel({ bundle }: { bundle: AssessmentBundle }) {
           {mlExplanations.map((explanation, index) => (
             <article key={`${explanation.model_version}-${index}`} className="p-4">
               <div className="flex flex-wrap items-center gap-2">
-                <Tag className="border-low/30 bg-low/5 text-low">{explanation.explanation_kind}</Tag>
-                <span className="mono text-xs text-ink-faint">
-                  {explanation.model_version ?? 'unknown model'}
-                </span>
+                <Tag className="border-low/30 bg-low/5 text-low">
+                  {acronymLabel(explanation.explanation_kind)}
+                </Tag>
+                <ProvenanceDetails title="Model provenance">
+                  <IdRow
+                    label="Model version"
+                    value={explanation.model_version ?? 'unknown model'}
+                    title={explanation.model_version ?? undefined}
+                  />
+                </ProvenanceDetails>
               </div>
               <p className="mt-2 text-sm leading-relaxed text-ink-dim">
                 {explanation.explanation}

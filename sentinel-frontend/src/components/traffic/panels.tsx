@@ -14,8 +14,10 @@ import { generateReport } from '@/api/reports'
 import { useResource } from '@/hooks/useResource'
 import { EmptyState, ErrorState, LoadingPanel, Spinner } from '@/components/states'
 import { Panel, StatusPill } from '@/components/ui'
+import { IdRow, ProvenanceDetails } from '@/components/kit'
 import { ProvenanceChip, NotObservable } from '@/components/traffic/parts'
 import { NOT_OBSERVABLE, formatNumber, severityHex } from '@/lib/format'
+import { declaredValueLabel } from '@/lib/labels'
 import type {
   AssessmentHeader,
   CustodyExplanation,
@@ -27,6 +29,15 @@ import type {
 
 const CHART_AXIS = '#5d6d85'
 const CHART_GRID = '#1b2537'
+
+/**
+ * A JSON value as a string, or null when it is absent. Mission-context fields
+ * arrive untyped, so a label helper needs to know whether there is a value to
+ * word-case rather than receiving the literal string "undefined".
+ */
+function asString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() !== '' ? value : null
+}
 
 function TooltipBox({
   active,
@@ -150,11 +161,13 @@ export function DriftPanel() {
   )
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value }: { label: string; value: string | number | null }) {
   return (
-    <div>
+    <div className="min-w-0">
       <dt className="label text-ink-faint">{label}</dt>
-      <dd className="mono tnum text-lg leading-tight text-ink">{value}</dd>
+      <dd className="tnum truncate text-lg leading-tight text-ink" title={String(value ?? '')}>
+        {value === null || value === undefined || value === '' ? NOT_OBSERVABLE : value}
+      </dd>
     </div>
   )
 }
@@ -292,7 +305,7 @@ export function AssetPriorityPanel({ explanations }: { explanations: CustodyExpl
           <table className="data-table min-w-[420px]">
             <thead>
               <tr>
-                {['Asset', 'Priority', 'Criticality', 'Impact', 'Risk', 'Reason', 'Assessment'].map((heading) => (
+                {['Asset', 'Priority', 'Criticality', 'Impact', 'Risk', 'Reason', 'Record'].map((heading) => (
                   <th key={heading} scope="col">
                     {heading}
                   </th>
@@ -304,8 +317,10 @@ export function AssetPriorityPanel({ explanations }: { explanations: CustodyExpl
                 <tr key={row.key}>
                   <td className="text-sm text-ink">{row.asset}</td>
                   <td className="text-sm font-medium text-ink-dim">{row.priority}</td>
-                  <td className="text-sm text-ink-faint">{row.criticality}</td>
-                  <td className="text-sm text-ink-faint">{row.missionImpact ?? NOT_OBSERVABLE}</td>
+                  <td className="text-sm text-ink-faint">{declaredValueLabel(row.criticality)}</td>
+                  <td className="text-sm text-ink-faint">
+                    {row.missionImpact ? declaredValueLabel(row.missionImpact) : NOT_OBSERVABLE}
+                  </td>
                   <td className="mono tnum text-xs text-ink-faint">
                     {row.technicalRisk === null
                       ? NOT_OBSERVABLE
@@ -313,11 +328,18 @@ export function AssetPriorityPanel({ explanations }: { explanations: CustodyExpl
                   </td>
                   <td className="text-sm text-ink-faint">{row.reason ?? NOT_OBSERVABLE}</td>
                   <td className="px-3 py-2">
+                    <ProvenanceDetails title="Record ids">
+                      <IdRow label="Assessment id" value={row.assessmentId} title={row.assessmentId} />
+                      <IdRow label="Criticality" value={row.criticality} title={row.criticality} />
+                      {row.missionImpact && (
+                        <IdRow label="Mission impact" value={row.missionImpact} title={row.missionImpact} />
+                      )}
+                    </ProvenanceDetails>
                     <Link
                       to={`/assessments/${encodeURIComponent(row.assessmentId)}`}
-                      className="mono text-xs text-sentinel hover:underline"
+                      className="mt-0.5 block text-xs text-sentinel hover:underline"
                     >
-                      {row.assessmentId}
+                      open assessment →
                     </Link>
                   </td>
                 </tr>
@@ -389,8 +411,8 @@ export function AssetContextPanel() {
 
   return (
     <Panel
-      title="Asset assessment"
-      subtitle="declared mission context for a selected asset · backend is the authority"
+      title="Asset context"
+      subtitle="what an operator declared about this asset, and what was measured on it"
       action={
         <StatusPill
           status={mission?.status ?? 'not_applied'}
@@ -470,56 +492,114 @@ export function AssetContextPanel() {
               </p>
             </div>
           ) : context.data && profile && risk ? (
-            <div className="asset-context-result space-y-3">
-              <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <Metric label="Asset" value={profile.asset_id} />
-                <Metric label="Criticality" value={profile.criticality} />
-                <Metric label="Mission impact" value={profile.mission_impact} />
-                <Metric label="Role" value={profile.role} />
-              </dl>
-              <div className="overflow-x-auto">
-                <table className="data-table min-w-[420px]">
-                  <thead>
-                    <tr>
-                      {['Risk', 'Value', 'Context', 'Value'].map((heading, index) => (
-                        <th key={index} scope="col">
-                          {heading}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {[
-                      ['Score', risk.technical_risk, 'Contextualized', risk.contextualized_risk],
-                      ['Severity', risk.technical_severity, 'Contextualized', risk.contextualized_severity],
-                      ['Index', risk.context_index, 'Multiplier', risk.multiplier_bp],
-                      ['Criticality weight', risk.criticality_weight, 'Impact weight', risk.mission_impact_weight],
-                      ['Score cap', risk.score_cap, 'Inferred', String(risk.inferred_from_traffic)],
-                    ].map((row) => (
-                      <tr key={row[0] as string}>
-                        <th scope="row" className="text-left text-xs font-normal text-ink-faint">
-                          {row[0] as string}
-                        </th>
-                        <td className="mono tnum text-xs text-ink">{row[1] as string}</td>
-                        <th scope="row" className="text-left text-xs font-normal text-ink-faint">
-                          {row[2] as string}
-                        </th>
-                        <td className="mono tnum text-xs text-ink">{row[3] as string}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            <div className="asset-context-result space-y-4">
+              {/* The asset is the subject of this panel, so it is named rather
+                  than listed as one metric among four. */}
+              <div>
+                <p className="label text-ink-faint">Asset</p>
+                <p className="mt-0.5 font-mono text-lg leading-none text-ink">
+                  {profile.asset_id}
+                </p>
               </div>
-              <p className="text-xs leading-relaxed text-ink-faint">
-                Contextualized against {context.data.technical_risk_source.replace(/_/g, ' ')}{' '}
-                ({context.data.technical_risk} / {context.data.technical_severity})
-                {context.data.assessment_id ? ` from ${context.data.assessment_id}` : ''}. The
-                declared profile came from {mission?.context_source ?? 'no source'}
-                {mission?.context_source_path ? ` (${mission.context_source_path})` : ''}, model{' '}
-                {mission?.model_version}. Selecting an asset is a read: it does not rebind this
-                store, so the custody chain still reports{' '}
-                {assets.data?.store_asset_id ?? 'no bound asset'}.
-              </p>
+
+              {/* Criticality, priority, impact and role are operator
+                  declarations. They are grouped and named as such, because
+                  reading them next to observed findings without that
+                  distinction would imply Sentinel inferred them from traffic,
+                  which it does not do. */}
+              <section
+                aria-label="Operator-declared context"
+                className="rounded border border-edge-soft bg-panel-2/40 p-3"
+              >
+                <p className="label mb-2.5">Operator-declared context</p>
+                <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <Metric label="Criticality" value={declaredValueLabel(asString(profile.criticality))} />
+                  <Metric label="Priority" value={risk.context_index} />
+                  <Metric label="Mission impact" value={declaredValueLabel(asString(profile.mission_impact))} />
+                  <Metric label="Role" value={declaredValueLabel(asString(profile.role))} />
+                </dl>
+                <p className="mt-2.5 text-xs leading-relaxed text-ink-faint">
+                  Declared by an operator in mission configuration, not inferred by Sentinel from
+                  observed traffic. It tells the risk engine how much this asset matters; it is not
+                  a measurement of the asset.
+                </p>
+              </section>
+
+              {/* What was actually observed, kept as a separate claim so the
+                  two are never read as one. */}
+              <section
+                aria-label="Observed evidence"
+                className="rounded border border-edge-soft p-3"
+              >
+                <p className="label mb-2">Observed evidence</p>
+                <p className="text-sm leading-relaxed text-ink-dim">
+                  {context.data.technical_risk_source.replace(/_/g, ' ')} measured{' '}
+                  <span className="tnum font-semibold text-ink">{context.data.technical_risk}</span>{' '}
+                  <span style={{ color: severityHex(context.data.technical_severity) }}>
+                    {context.data.technical_severity}
+                  </span>{' '}
+                  from the captured traffic
+                  {context.data.assessment_id ? (
+                    <>
+                      {' '}in{' '}
+                      <ProvenanceDetails title="Assessment record">
+                        <IdRow
+                          label="Assessment id"
+                          value={context.data.assessment_id}
+                          title={context.data.assessment_id}
+                        />
+                      </ProvenanceDetails>
+                    </>
+                  ) : null}
+                  . This is the measurement; the context above is how much it counts for.
+                </p>
+              </section>
+
+              {/* The contextualisation arithmetic is how the two combine. It is
+                  real and it is load-bearing, but it is arithmetic rather than
+                  a finding, so it sits behind the disclosure. */}
+              <ProvenanceDetails title="How the context was applied">
+                <div className="overflow-x-auto">
+                  <table className="data-table min-w-[420px]">
+                    <thead>
+                      <tr>
+                        {['Risk', 'Value', 'Context', 'Value'].map((heading, index) => (
+                          <th key={index} scope="col">
+                            {heading}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[
+                        ['Score', risk.technical_risk, 'Contextualized', risk.contextualized_risk],
+                        ['Severity', risk.technical_severity, 'Contextualized', risk.contextualized_severity],
+                        ['Index', risk.context_index, 'Multiplier', risk.multiplier_bp],
+                        ['Criticality weight', risk.criticality_weight, 'Impact weight', risk.mission_impact_weight],
+                        ['Score cap', risk.score_cap, 'Inferred', String(risk.inferred_from_traffic)],
+                      ].map((row) => (
+                        <tr key={row[0] as string}>
+                          <th scope="row" className="text-left text-xs font-normal text-ink-faint">
+                            {row[0] as string}
+                          </th>
+                          <td className="tnum text-xs text-ink">{row[1] as string}</td>
+                          <th scope="row" className="text-left text-xs font-normal text-ink-faint">
+                            {row[2] as string}
+                          </th>
+                          <td className="tnum text-xs text-ink">{row[3] as string}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="mt-2 text-xs leading-relaxed text-ink-faint">
+                  The declared profile came from {mission?.context_source ?? 'no source'}
+                  {mission?.context_source_path ? ` (${mission.context_source_path})` : ''}, model{' '}
+                  {mission?.model_version}. Selecting an asset is a read: it does not rebind this
+                  store, so the custody chain still reports{' '}
+                  {assets.data?.store_asset_id ?? 'no bound asset'}.
+                </p>
+              </ProvenanceDetails>
             </div>
           ) : null}
         </div>

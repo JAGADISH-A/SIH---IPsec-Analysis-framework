@@ -55,6 +55,8 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from .. import artifacts
 from ..adapters import ExpectedStateAdapter
+from ..analysis import crypto_evidence, metadata, reports, sa, threat_matrix
+from ..analysis.replay import ReplayAnalysis, analyze_replay
 from ..artifacts import ArtifactUnavailable
 from ..comparison import ComparisonEngine, ComparisonEngineOptions
 from ..custody import ChainOfCustody, build_chain_of_custody
@@ -80,6 +82,8 @@ from .adapters import (
     assessment_bundle,
     evidence_to_view,
     header_view,
+    ml_to_view,
+    with_analytical_contract,
 )
 from .redact import public_path
 
@@ -515,6 +519,143 @@ def _current_source_is_capture(drift: DriftAssessment) -> bool:
     return bool(getattr(source, "is_capture", True))
 
 
+#: The bundle ``sources`` role for a packet journal, so a reader can tell the
+#: per-packet sequence evidence apart from the state snapshot it summarises.
+JOURNAL_SOURCE_ROLE = "packet journal (per-packet ESP sequence evidence)"
+
+#: Where the sequence evidence came from when no journal exists at all.
+SNAPSHOT_SOURCE_LABEL = "observed-state snapshot"
+
+
+@dataclass(frozen=True)
+class ObservationEvidence:
+    """The recorded sequence evidence for one observation.
+
+    ``state_path`` names the snapshot the counters and aggregates came from;
+    ``journal_path`` names the per-packet journal when the capture is one, and
+    is ``None`` when it is not (a pcap, for instance, is not parsed here).
+    ``sequences`` is the journal's per-SPI ``(sequence, timestamp_ns)`` pairs
+    or ``None`` when there is nothing per-packet to analyse.
+    """
+
+    sequences: Optional[Dict[str, Tuple[Tuple[int, int], ...]]] = None
+    journal_path: Optional[str] = None
+    state_path: str = SNAPSHOT_SOURCE_LABEL
+    record: Optional[artifacts.ArtifactRecord] = None
+
+    @property
+    def replay_source(self) -> str:
+        """Where the replay analysis's sequence evidence came from."""
+        return self.journal_path or self.state_path
+
+    def has_journal(self) -> bool:
+        return self.journal_path is not None and self.sequences is not None
+
+
+def sequence_journal_for(
+    observation: Optional[RecordedObservation],
+) -> ObservationEvidence:
+    """Per-packet sequence evidence for one recorded observation, if any.
+
+    The capture is read as a journal only when it *is* one (a ``.jsonl`` whose
+    records carry ``spi``/``seq``/``ts``); a pcap is not parsed here, so a
+    capture with no journal yields ``sequences=None`` and a replay source
+    naming the state snapshot the aggregates came from. Nothing is
+    substituted for a missing journal: the replay analysis reports the gap,
+    and this function does not fill it.
+    """
+    if observation is None or observation.case is None:
+        return ObservationEvidence()
+    case = observation.case
+    if not case.capture.endswith(".jsonl"):
+        return ObservationEvidence(state_path=case.state_path)
+    try:
+        sequences, record = artifacts.load_sequence_journal(case.capture)
+    except ArtifactUnavailable:
+        # A journal that exists but carries no ESP sequence records is the
+        # same evidence gap as no journal: aggregate evidence only.
+        return ObservationEvidence(state_path=case.state_path)
+    return ObservationEvidence(
+        sequences=sequences,
+        journal_path=case.capture,
+        state_path=case.state_path,
+        record=record,
+    )
+
+
+def build_analysis_products(
+    *,
+    assessment_id: str,
+    slot: str,
+    scenario: str,
+    expected,
+    observed,
+    correlation,
+    assessment,
+    ml,
+    response_plan,
+    sources: Sequence[Mapping[str, Any]],
+    observation_source: str,
+    replay: Optional[ReplayAnalysis] = None,
+) -> Dict[str, Any]:
+    """The Phase-11 analytical products for one registered assessment.
+
+    Every product is derived from objects the bundle already reports, so the
+    bundle cannot describe one thing and the product another. Nothing here
+    re-runs a comparison, re-scores a finding or re-classifies a window. Each
+    product is stamped with the Phase-1 analytical contract: its ``producer``,
+    plus ``state`` / ``reason`` / ``source`` only where the producer recorded
+    none of its own.
+    """
+    if replay is None:
+        replay = analyze_replay(observed, sequences=None,
+                                source=observation_source)
+    sa_product = sa.analyze_sa(observed, source=observation_source)
+    crypto_product = crypto_evidence.analyze_crypto_evidence(
+        expected, observed,
+        source=f"{observation_source} + expected configuration")
+    metadata_product = metadata.analyze_metadata_exposure(
+        observed, source=observation_source)
+    threat = threat_matrix.build_threat_matrix(
+        assessment.findings, metadata=metadata_product)
+    inputs = reports.ReportInputs(
+        assessment_id=assessment_id,
+        slot=slot,
+        scenario=scenario,
+        expected=expected,
+        observed=observed,
+        correlation=correlation,
+        assessment=assessment,
+        ml=ml_to_view(ml, expected=expected, correlation=correlation),
+        sa=sa_product,
+        crypto=crypto_product,
+        replay=replay,
+        metadata=metadata_product,
+        threat=threat,
+        response_plan=(
+            response_plan.to_dict() if response_plan is not None else None
+        ),
+        sources=tuple(dict(source) for source in sources),
+    )
+    return {
+        "sa": with_analytical_contract(sa_product.to_dict(), product="sa"),
+        "crypto_evidence": with_analytical_contract(
+            crypto_product.to_dict(), product="crypto_evidence"),
+        "replay_assessment": with_analytical_contract(
+            replay.to_dict(), product="replay_assessment"),
+        "metadata_exposure": with_analytical_contract(
+            metadata_product.to_dict(), product="metadata_exposure"),
+        "threat_matrix": with_analytical_contract(
+            threat.to_dict(), product="threat_matrix"),
+        "report": with_analytical_contract(
+            reports.build_technical_report(inputs).to_dict(),
+            product="report"),
+        "executive_report": with_analytical_contract(
+            reports.build_executive_report(inputs).to_dict(),
+            product="executive_report"),
+    }
+
+
 class AssessmentStore:
     """Deterministic in-memory index + bundles (built once, read-only)."""
 
@@ -572,7 +713,8 @@ class AssessmentStore:
     def _run_pipeline(self, sequence: int, slot: str, *,
                       observation: Optional[RecordedObservation] = None,
                       ml_evidence: Optional[RecordedMlEvidence] = None,
-                      evidence_refs=()):
+                      evidence_refs=(),
+                      evidence: Optional[ObservationEvidence] = None):
         """Run the real Phase 3 -> 4 -> 5/6 -> 7 pipeline for one scenario.
 
         Every input is a recorded artifact: the expected state from the real
@@ -580,7 +722,12 @@ class AssessmentStore:
         the ML result from real model output. Nothing is overridden. An
         assessment may carry a state observation, an ML result, or both; a
         result is never attached to a state snapshot from another capture.
+
+        ``evidence`` supplies the packet journal (when the capture is one) so
+        the replay analysis and the risk engine see the same sequence
+        evidence, and so no per-packet evidence is read twice.
         """
+        evidence = evidence or ObservationEvidence()
         adapter = ExpectedStateAdapter(materialized_at=MATERIALIZED_AT)
         materialized = adapter.from_plan(self.plan_path, sequence=sequence)
         expected = materialized.expected
@@ -612,12 +759,21 @@ class AssessmentStore:
             evidence_refs=evidence_refs,
         )
 
+        # One replay analysis, used twice: as the bundle's replay product and
+        # as the evidence the risk engine is handed. It is never recomputed.
+        replay = analyze_replay(
+            observed,
+            sequences=evidence.sequences,
+            source=evidence.replay_source,
+        )
+
         assessment = RiskEngine(RiskPolicy.default()).assess(
             expected=materialized,
             observed=observed,
             correlation=correlation,
             ml_result=ml_result,
             evidence_refs=evidence_refs,
+            replay_evidence=replay.to_dict(),
         )
 
         xai = ExplainabilityEngine().explain(
@@ -626,12 +782,14 @@ class AssessmentStore:
             ml_result=ml_result,
             evidence_refs=evidence_refs,
         )
-        return expected, observed, correlation, assessment, xai, ml_result
+        return expected, observed, correlation, assessment, xai, ml_result, replay
 
     def _register(self, assessment_id: str, *, slot: str, scenario_label: str,
                   expected, observed, correlation, assessment, xai, ml_result,
                   evidence_refs, sources, custody_sources,
-                  observed_present: bool) -> Dict[str, Any]:
+                  observed_present: bool,
+                  observation_source: str = SNAPSHOT_SOURCE_LABEL,
+                  replay: Optional[ReplayAnalysis] = None) -> Dict[str, Any]:
         """Index one completed assessment and keep its authoritative objects.
 
         Shared by the plan-based assessment and by a drift-origin assessment so
@@ -655,12 +813,40 @@ class AssessmentStore:
             evidence=[evidence_to_view(ev) for ev in evidence_refs],
         )
         bundle["sources"] = list(sources)
-        self.bundles[assessment_id] = bundle
-        self.headers.append(header_view(bundle))
         # The custody layer reuses the reused response planner rather than
         # inventing a recommendation. ``clock=None`` keeps the plan free of any
         # wall-clock reading, so it is byte-identical across runs. The plan is
-        # produced once here, at build time, alongside everything else.
+        # produced once here, at build time, alongside everything else, and the
+        # reports below quote the very same plan object.
+        response_plan = plan_response(
+            PlanningContext(
+                assessment=assessment,
+                xai=xai,
+                correlation=correlation,
+                ml_result=ml_result,
+                evidence_refs=tuple(evidence_refs),
+                policy=ResponsePolicy.default(),
+            ),
+            clock=None,
+        )
+        bundle.update(
+            build_analysis_products(
+                assessment_id=assessment_id,
+                slot=slot,
+                scenario=scenario_label,
+                expected=expected,
+                observed=observed,
+                correlation=correlation,
+                assessment=assessment,
+                ml=ml_result,
+                response_plan=response_plan,
+                sources=sources,
+                observation_source=observation_source,
+                replay=replay,
+            )
+        )
+        self.bundles[assessment_id] = bundle
+        self.headers.append(header_view(bundle))
         self.custody_inputs[assessment_id] = CustodyInput(
             assessment_id=assessment_id,
             expected=expected,
@@ -672,17 +858,7 @@ class AssessmentStore:
             evidence_refs=tuple(evidence_refs),
             sources=tuple(disclosed_sources(custody_sources)),
             observed_present=observed_present,
-            response_plan=plan_response(
-                PlanningContext(
-                    assessment=assessment,
-                    xai=xai,
-                    correlation=correlation,
-                    ml_result=ml_result,
-                    evidence_refs=tuple(evidence_refs),
-                    policy=ResponsePolicy.default(),
-                ),
-                clock=None,
-            ),
+            response_plan=response_plan,
         )
         return bundle
 
@@ -690,10 +866,11 @@ class AssessmentStore:
              observation: Optional[RecordedObservation] = None,
              ml_evidence: Optional[RecordedMlEvidence] = None,
              evidence_refs=(), scenario_label=None):
-        expected, observed, correlation, assessment, xai, ml_result = (
+        sequence_evidence = sequence_journal_for(observation)
+        expected, observed, correlation, assessment, xai, ml_result, replay = (
             self._run_pipeline(
                 sequence, slot, observation=observation, ml_evidence=ml_evidence,
-                evidence_refs=evidence_refs,
+                evidence_refs=evidence_refs, evidence=sequence_evidence,
             )
         )
         assessment_id = f"{DATASET_RUN_ID}:{sequence}:{slot}"
@@ -703,6 +880,16 @@ class AssessmentStore:
         if observation is not None:
             sources.extend(observation.provenance())
             custody_sources.extend(observation.custody_provenance())
+        if sequence_evidence.record is not None:
+            # The journal is a separate artifact from the snapshot it was read
+            # alongside, so it is disclosed as its own source (with its own
+            # digest) rather than folded into the observation's provenance --
+            # the observation's provenance describes what was observed, and
+            # this file is the per-packet evidence the replay analysis read.
+            sources.append({
+                **artifacts.provenance(sequence_evidence.record)[0],
+                "role": JOURNAL_SOURCE_ROLE,
+            })
         if ml_evidence is not None:
             sources.extend(artifacts.provenance(ml_evidence.record))
             custody_sources.extend(
@@ -725,6 +912,8 @@ class AssessmentStore:
             sources=sources,
             custody_sources=custody_sources,
             observed_present=observation is not None,
+            observation_source=sequence_evidence.state_path,
+            replay=replay,
         )
         # Longitudinal comparison, performed once here against the current
         # observation when -- and only when -- a baseline was explicitly
@@ -737,6 +926,7 @@ class AssessmentStore:
                 observed=observed, correlation=correlation, ml_result=ml_result,
                 observation=observation, evidence_refs=evidence_refs,
                 sources=sources, custody_sources=custody_sources,
+                sequence_evidence=sequence_evidence, replay=replay,
             )
         return bundle
 
@@ -744,6 +934,8 @@ class AssessmentStore:
                       expected, observed, correlation, ml_result,
                       observation: Optional[RecordedObservation],
                       evidence_refs, sources, custody_sources,
+                      sequence_evidence: Optional[ObservationEvidence] = None,
+                      replay: Optional[ReplayAnalysis] = None,
                       run_id: str = DATASET_RUN_ID) -> None:
         """Compare the current observation with the validated baseline, once.
 
@@ -797,6 +989,15 @@ class AssessmentStore:
             custody_for_drift.extend(declared.custody_provenance())
             sources_for_drift.extend(
                 artifacts.provenance(declared.state_record))
+            # The journal belongs to the recorded observation, not to a
+            # declared fixture. The child's replay product below is built from
+            # the fixture without per-packet sequences, so listing the journal
+            # would claim an input that was not read.
+            if sequence_evidence is not None and sequence_evidence.journal_path:
+                sources_for_drift = [
+                    item for item in sources_for_drift
+                    if item.get("path") != sequence_evidence.journal_path
+                ]
 
         drift = assess_drift(
             self.baselines.get(self.baseline_id),
@@ -832,6 +1033,21 @@ class AssessmentStore:
         )
         self.drift_inputs[drift_id] = drift
         self.drift_parent[drift_id] = assessment_id
+        # The longitudinal products describe THIS comparison. When the current
+        # state is the recorded observation, the snapshot and journal that
+        # described it describe it again; when it is a declared fixture, the
+        # products are built from the fixture's own artifact and no packet
+        # journal is claimed for a file that is not a capture.
+        child_source = (
+            declared.state_record.path if declared is not None
+            else (sequence_evidence.state_path if sequence_evidence is not None
+                  else SNAPSHOT_SOURCE_LABEL)
+        )
+        child_replay = (
+            replay
+            if declared is None and replay is not None
+            else analyze_replay(current, sequences=None, source=child_source)
+        )
         bundle = self._register(
             drift_id,
             slot=drift_slot,
@@ -850,6 +1066,8 @@ class AssessmentStore:
             sources=sources_for_drift,
             custody_sources=custody_for_drift,
             observed_present=True,
+            observation_source=child_source,
+            replay=child_replay,
         )
         bundle["drift"] = drift.to_dict()
 

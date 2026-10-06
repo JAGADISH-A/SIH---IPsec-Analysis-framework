@@ -4,7 +4,7 @@ import { getAssessments } from '@/api/analytics'
 import { useResource } from '@/hooks/useResource'
 import { EmptyState, ErrorState, LoadingPanel } from '@/components/states'
 import { Button, Panel, SeverityBadge, Tag } from '@/components/ui'
-import { MetricStrip, severityCounts } from '@/components/kit'
+import { IdRow, MetricStrip, ProvenanceDetails, severityCounts } from '@/components/kit'
 import { PageHeader } from '@/layouts/AppLayout'
 import {
   compareValues,
@@ -13,6 +13,7 @@ import {
   severityRank,
   severityStyle,
 } from '@/lib/format'
+import { acronymLabel, declaredValueLabel, statusLabel, trafficLabel } from '@/lib/labels'
 import type { AssessmentHeader, Severity } from '@/types'
 
 type SortKey =
@@ -126,9 +127,7 @@ export function Assessments() {
         description={
           resource.loading
             ? 'Loading assessments…'
-            : resource.data?.overview.dataset_run_id
-              ? `${filtered.length} of ${headers.length} assessments in run ${resource.data.overview.dataset_run_id}`
-              : `${filtered.length} of ${headers.length} assessments`
+            : `${filtered.length} of ${headers.length} assessments`
         }
         actions={
           <Button variant="secondary" onClick={resource.reload} disabled={resource.loading}>
@@ -299,13 +298,16 @@ export function Assessments() {
                     className="cursor-pointer"
                   >
                     <td>
-                      <span className="block truncate text-base text-ink">{header.slot}</span>
-                      <span
-                        className="mono block max-w-[260px] truncate text-xs text-ink-faint"
-                        title={header.assessment_id}
-                      >
-                        {header.assessment_id}
+                      <span className="block truncate text-base text-ink">
+                        {acronymLabel(header.scenario)}
+                        <span className="text-ink-faint"> · {header.slot}</span>
                       </span>
+                      <ProvenanceDetails title="Assessment record" className="mt-0.5">
+                        <IdRow label="Assessment id" value={header.assessment_id} title={header.assessment_id} />
+                        {header.dataset_run_id && (
+                          <IdRow label="Dataset run id" value={header.dataset_run_id} title={header.dataset_run_id} />
+                        )}
+                      </ProvenanceDetails>
                     </td>
                     <td className="whitespace-nowrap">
                       <span className="block text-sm text-ink-dim">
@@ -317,16 +319,23 @@ export function Assessments() {
                       </span>
                     </td>
                     <td>
-                      <span
-                        className="mono block max-w-[280px] truncate text-sm text-ink-dim"
-                        title={header.configuration_id}
-                      >
-                        {header.configuration_id}
-                      </span>
-                      <span className="text-xs text-ink-faint">
+                      <span className="block text-sm text-ink-dim">
                         ESP {header.esp_encryption} · IKEv{header.ike_version} ·{' '}
-                        {header.traffic_profile}
+                        {trafficLabel(header.traffic_profile)}
                       </span>
+                      <span className="block text-xs text-ink-faint">
+                        {statusLabel(header.security_posture)} · {declaredValueLabel(header.mode)} ·{' '}
+                        {acronymLabel(header.address_family)}
+                      </span>
+                      {header.configuration_id && (
+                        <ProvenanceDetails title="Configuration record" className="mt-0.5">
+                          <IdRow
+                            label="Configuration id"
+                            value={header.configuration_id}
+                            title={header.configuration_id}
+                          />
+                        </ProvenanceDetails>
+                      )}
                     </td>
                     <td>
                       <span className={`tnum text-base font-semibold ${style.text}`}>

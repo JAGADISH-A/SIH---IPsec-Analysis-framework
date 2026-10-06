@@ -4,6 +4,8 @@ import { useResource } from '@/hooks/useResource'
 import { ErrorState, LoadingPanel } from '@/components/states'
 import { LinkButton } from '@/components/ui'
 import { Breadcrumbs } from '@/layouts/AppLayout'
+import { IdRow, ProvenanceDetails } from '@/components/kit'
+import { compoundLabel } from '@/lib/labels'
 import { AssessmentDetailBody, DETAIL_TABS, type DetailTab } from './AssessmentDetail'
 import { ApiRequestError } from '@/api/client'
 
@@ -58,7 +60,7 @@ export function AssessmentDetailRoute() {
       <Breadcrumbs
         trail={[
           { to: '/assessments', label: 'Assessments' },
-          { label: id },
+          { label: resource.data ? compoundLabel(resource.data.slot) : 'Assessment' },
         ]}
       />
 
@@ -98,6 +100,37 @@ export function AssessmentDetailRoute() {
               )
             })}
           </nav>
+
+          <div className="mb-4 flex justify-end">
+            <ProvenanceDetails title="Record ids">
+              <IdRow
+                label="Assessment id"
+                value={resource.data.assessment_id}
+                title={resource.data.assessment_id}
+              />
+              {resource.data.identity.experiment_id && (
+                <IdRow
+                  label="Experiment id"
+                  value={resource.data.identity.experiment_id}
+                  title={resource.data.identity.experiment_id}
+                />
+              )}
+              {resource.data.identity.dataset_run_id && (
+                <IdRow
+                  label="Dataset run id"
+                  value={resource.data.identity.dataset_run_id}
+                  title={resource.data.identity.dataset_run_id}
+                />
+              )}
+              {resource.data.expected.configuration_id && (
+                <IdRow
+                  label="Configuration id"
+                  value={resource.data.expected.configuration_id}
+                  title={resource.data.expected.configuration_id}
+                />
+              )}
+            </ProvenanceDetails>
+          </div>
 
           <AssessmentDetailBody bundle={resource.data} tab={tab} />
         </>

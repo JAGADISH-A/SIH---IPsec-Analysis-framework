@@ -1,6 +1,8 @@
 import { Panel, Tag, Prose } from '@/components/ui'
 import { EmptyState } from '@/components/states'
 import { formatPercent } from '@/lib/format'
+import { trafficLabel } from '@/lib/labels'
+import { IdRow, ProvenanceDetails } from '@/components/kit'
 import type { AssessmentBundle } from '@/types'
 
 /**
@@ -36,13 +38,13 @@ export function MlPanel({ bundle }: { bundle: AssessmentBundle }) {
         <>
           <Panel
             title="Traffic Classification"
-            subtitle={`model ${ml.model_version ?? 'not reported'}`}
+            subtitle="what the model inferred about this traffic"
           >
-            <div className="grid grid-cols-2 gap-x-5 gap-y-5 p-4 md:grid-cols-4">
+            <div className="grid grid-cols-2 gap-x-5 gap-y-5 p-4 md:grid-cols-3">
               <div>
                 <p className="label text-ink-faint">Prediction</p>
-                <p className="mono mt-1 text-2xl leading-none text-low">
-                  {ml.traffic_class ?? '—'}
+                <p className="mt-1 text-2xl leading-none text-low">
+                  {ml.traffic_class ? trafficLabel(ml.traffic_class) : '—'}
                 </p>
               </div>
               <div>
@@ -83,14 +85,6 @@ export function MlPanel({ bundle }: { bundle: AssessmentBundle }) {
                     : 'not reported'}
                 </p>
               </div>
-              <div>
-                <p className="label text-ink-faint">
-                  Model version
-                </p>
-                <p className="mono mt-1 break-all text-sm text-ink">
-                  {ml.model_version ?? '—'}
-                </p>
-              </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-2 border-t border-edge px-4 py-3">
@@ -98,6 +92,11 @@ export function MlPanel({ bundle }: { bundle: AssessmentBundle }) {
               <span className="text-xs text-ink-faint">
                 A classification is inference about traffic, not a measured protocol fact.
               </span>
+              {ml.model_version && (
+                <ProvenanceDetails title="Model provenance">
+                  <IdRow label="Model version" value={ml.model_version} title={ml.model_version} />
+                </ProvenanceDetails>
+              )}
             </div>
           </Panel>
 
@@ -110,8 +109,10 @@ export function MlPanel({ bundle }: { bundle: AssessmentBundle }) {
                 <p className="label text-ink-faint">
                   Planned profile
                 </p>
-                <p className="mono mt-0.5 text-base text-sentinel">
-                  {bundle.expected?.traffic?.profile ?? '—'}
+                <p className="mt-0.5 text-base text-ink">
+                  {bundle.expected?.traffic?.profile
+                    ? trafficLabel(bundle.expected.traffic.profile)
+                    : '—'}
                 </p>
               </div>
               <div>
@@ -119,7 +120,7 @@ export function MlPanel({ bundle }: { bundle: AssessmentBundle }) {
                   Classified as
                 </p>
                 <p className="mono mt-0.5 text-base text-low">
-                  {ml.traffic_class ?? '—'}
+                  {ml.traffic_class ? trafficLabel(ml.traffic_class) : '—'}
                 </p>
               </div>
             </div>
@@ -147,12 +148,17 @@ export function MlPanel({ bundle }: { bundle: AssessmentBundle }) {
                     </p>
                     <ul className="space-y-1">
                       {explanation.evidence_refs.map((ref, index) => (
-                        <li
-                          key={ref.evidence_id ?? index}
-                          className="mono text-xs text-ink-dim"
-                        >
-                          <span className="text-sentinel">{ref.evidence_id ?? '—'}</span>
-                          <span className="ml-2 text-ink-faint">{ref.pcap_path}</span>
+                        <li key={ref.evidence_id ?? index} className="text-xs text-ink-dim">
+                          <ProvenanceDetails title="Evidence record">
+                            <IdRow
+                              label="Evidence id"
+                              value={ref.evidence_id ?? '—'}
+                              title={ref.evidence_id ?? undefined}
+                            />
+                            {ref.pcap_path && (
+                              <IdRow label="Capture path" value={ref.pcap_path} title={ref.pcap_path} />
+                            )}
+                          </ProvenanceDetails>
                         </li>
                       ))}
                     </ul>

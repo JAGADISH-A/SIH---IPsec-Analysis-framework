@@ -3,9 +3,11 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { getAssessments } from '@/api/analytics'
 import { useResource } from '@/hooks/useResource'
 import { EmptyState, ErrorState, LoadingPanel } from '@/components/states'
+import { IdRow, ProvenanceDetails } from '@/components/kit'
 import { Panel, Prose, SeverityBadge, StatusPill, Tag } from '@/components/ui'
 import { PageHeader } from '@/layouts/AppLayout'
 import { formatNumber, humanize, severityRank } from '@/lib/format'
+import { acronymLabel } from '@/lib/labels'
 import type { Severity } from '@/types'
 
 /**
@@ -137,7 +139,7 @@ export function XaiPage() {
             <option value="ALL">All postures</option>
             {postures.map((option) => (
               <option key={option} value={option}>
-                {option}
+                {acronymLabel(option)}
               </option>
             ))}
           </select>
@@ -168,10 +170,19 @@ export function XaiPage() {
                   <Fragment key={row.assessment_id}>
                     <tr className="row-hover border-b border-edge-soft last:border-0">
                       <td className="px-4 py-2.5">
-                        <span className="mono block text-sm text-ink">{row.slot}</span>
-                        <span className="mono block max-w-[260px] truncate text-xs text-ink-faint">
-                          {row.assessment_id}
+                        {/* The scenario names the run; the slot and the id are
+                            how the experiment keys it, so they trail it. */}
+                        <span className="block text-sm text-ink">
+                          {acronymLabel(row.scenario)}
+                          <span className="pw-dim"> · {row.slot}</span>
                         </span>
+                        <ProvenanceDetails title="Assessment record" className="mt-0.5">
+                          <IdRow
+                            label="Assessment id"
+                            value={row.assessment_id}
+                            title={row.assessment_id}
+                          />
+                        </ProvenanceDetails>
                       </td>
                       <td className="px-4 py-2.5">
                         <SeverityBadge severity={row.severity as Severity} size="sm" />
@@ -246,15 +257,16 @@ export function XaiPage() {
                 )}
               </div>
               <div className="flex shrink-0 gap-2">
-                {source.artifact_sha256 && (
-                  <span className="mono text-xs text-sentinel" title={source.artifact_sha256}>
-                    {source.artifact_sha256.slice(0, 10)}…
-                  </span>
-                )}
                 {source.byte_size !== undefined && (
                   <span className="mono text-xs text-ink-faint">
                     {formatNumber(source.byte_size)} B
                   </span>
+                )}
+                {source.artifact_sha256 && (
+                  <ProvenanceDetails title="Artifact record">
+                    <IdRow label="Path" value={source.path} title={source.path} />
+                    <IdRow label="sha256" value={source.artifact_sha256} title={source.artifact_sha256} />
+                  </ProvenanceDetails>
                 )}
               </div>
             </div>

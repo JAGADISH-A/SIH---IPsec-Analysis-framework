@@ -24,6 +24,8 @@ from typing import Any, Dict, List
 
 OPENAPI_VERSION = "3.1.0"
 
+from ..analysis.reports import EXECUTIVE_QUESTIONS
+
 _JSON = "application/json"
 _PCAP = "application/vnd.tcpdump.pcap"
 _PROM = "text/plain"
@@ -111,8 +113,136 @@ def _paged(ok: str = "ok") -> Dict[str, Any]:
     }
 
 
-def _json_ok(ok: str = "ok") -> Dict[str, Any]:
-    return {"200": {"description": ok, "content": {_JSON: {"schema": {"type": "object"}}}}}
+_STATE_ENUM = [
+    "OBSERVED",
+    "CONFIGURED",
+    "INFERRED",
+    "ASSESSED",
+    "UNKNOWN",
+    "NOT_AVAILABLE",
+    "NOT_APPLICABLE",
+]
+
+_STATE_FIELD = {
+    "type": "string",
+    "enum": list(_STATE_ENUM),
+    "description": (
+        "Explicit state of this value (Phase-1 contract). The seven states "
+        "are exhaustive: unavailable runtime evidence is reported as "
+        "NOT_AVAILABLE or UNKNOWN, never as a negative finding."
+    ),
+}
+
+#: The four keys every analytical product carries under the Phase-1 contract.
+_CONTRACT = {
+    "producer": {
+        "type": "string",
+        "description": (
+            "The module-level call that produced this product (Phase-1 "
+            "analytical contract): `producer`, `source`/`evidence`, explicit "
+            "`state`, API representation and `reason`."
+        ),
+    },
+    "state": dict(_STATE_FIELD),
+    "reason": {
+        "type": "string",
+        "description": "Why this product reports what it reports, in the producer's own words.",
+    },
+    "source": {
+        "type": "string",
+        "description": (
+            "Where the product's evidence came from: an artifact path, an "
+            "engine or a policy version -- never a claim the product did not "
+            "make."
+        ),
+    },
+}
+
+#: Any JSON value, typed as such rather than left as an untyped object.
+_ANY_TYPE = ["null", "boolean", "integer", "number", "string", "array", "object"]
+
+
+def _ANY(description: str) -> Dict[str, Any]:
+    return {"description": description, "type": list(_ANY_TYPE)}
+
+
+def _list(description: str, items: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "type": "array",
+        "description": description,
+        "items": items,
+    }
+
+
+def _free(description: str) -> Dict[str, Any]:
+    """A JSON object whose internals are documented where they are produced.
+
+    Used for engine metadata blocks that are passed through verbatim: typing
+    them here would restate a contract that already lives with its producer.
+    """
+    return {
+        "type": "object",
+        "description": description,
+        "additionalProperties": True,
+    }
+
+
+def _product(
+    description: str,
+    properties: Dict[str, Any],
+    required: List[str] = None,
+) -> Dict[str, Any]:
+    """A component schema for one analytical product.
+
+    The Phase-1 contract keys are always present and always required; the
+    product's own keys are merged in after them, so a generator emits the
+    contract before the payload.
+    """
+    contract_required = sorted(_CONTRACT)
+    return {
+        "type": "object",
+        "description": description,
+        "required": contract_required if required is None else required,
+        "properties": {**_CONTRACT, **properties},
+    }
+
+
+def _json_ok(ok: str = "ok", schema: str = None) -> Dict[str, Any]:
+    """The standard 200 for a route whose payload has a component schema.
+
+    ``schema`` names a component under ``#/components/schemas``. Leaving it
+    out keeps the untyped legacy shape, which every Phase-8 route now avoids:
+    a response with no schema is one a client generator cannot use.
+    """
+    return {
+        "200": {
+            "description": ok,
+            "content": {_JSON: {"schema": _ref(schema) if schema else {"type": "object"}}},
+        }
+    }
+
+
+def _sub_resource_response(resource: str, product: str) -> Dict[str, Any]:
+    """The typed 200 for one ``/api/assessments/{id}/{sub-resource}`` route.
+
+    The envelope (``assessment_id`` / ``resource`` / ``data``) is shared by all
+    fifteen sub-resources, so it is documented once as
+    ``AssessmentSubResourceResponse`` and narrowed here: this route's
+    ``resource`` is a constant and its ``data`` is the named product document
+    rather than an untyped object.
+    """
+    return {
+        "allOf": [
+            _ref("AssessmentSubResourceResponse"),
+            {
+                "type": "object",
+                "properties": {
+                    "resource": {"type": "string", "const": resource},
+                    "data": _ref(product),
+                },
+            },
+        ]
+    }
 
 
 def openapi_document(base_url: str = "") -> Dict[str, Any]:
@@ -128,7 +258,7 @@ def openapi_document(base_url: str = "") -> Dict[str, Any]:
     # -- phase 8 (always available) -----------------------------------------
     paths["/api/health"] = _get(
         "/api/health", "getApiHealth", "Liveness of the analytics API itself.",
-        tags=["phase8"], responses=_json_ok())
+        tags=["phase8"], responses=_json_ok(schema="ApiHealth"))
     paths["/api/assessments"] = _get(
         "/api/assessments", "listAssessments",
         "Deterministic assessment table (one row per assessment).",
@@ -141,20 +271,68 @@ def openapi_document(base_url: str = "") -> Dict[str, Any]:
             "before."
         ),
         responses=_paged())
-    for suffix, oid, summary in (
-        ("", "getAssessment", "One full assessment bundle."),
-        ("/correlation", "getAssessmentCorrelation", "Per-SA correlation evidence."),
-        ("/risk", "getAssessmentRisk", "Risk assessment and findings."),
-        ("/xai", "getAssessmentXai", "Explainability output."),
-        ("/ml", "getAssessmentMl", "ML classification and its inputs."),
-        ("/evidence", "getAssessmentEvidence", "Evidence references for the assessment."),
-        ("/ipsec-state", "getAssessmentIpsecState", "Expected vs observed IPsec state."),
+    # Each entry names the component schema its 200 answers with: the bundle
+    # route references its document directly, and each sub-resource narrows the
+    # shared envelope so `data` is the product document and not a bare object.
+    for suffix, oid, summary, resource, product in (
+        ("", "getAssessment", "One full assessment bundle.",
+         None, "AssessmentBundle"),
+        ("/expected", "getAssessmentExpected",
+         "The configured (expected) IPsec state this assessment compared against.",
+         "expected", "ExpectedConfiguration"),
+        ("/observed", "getAssessmentObserved",
+         "The observed IPsec state, exactly as it was recorded.",
+         "observed", "ObservedStateDocument"),
+        ("/correlation", "getAssessmentCorrelation", "Per-SA correlation evidence.",
+         "correlation", "CorrelationProduct"),
+        ("/risk", "getAssessmentRisk", "Risk assessment and findings.",
+         "risk", "RiskProduct"),
+        ("/xai", "getAssessmentXai", "Explainability output.",
+         "xai", "XaiProduct"),
+        ("/ml", "getAssessmentMl", "ML classification and its inputs.",
+         "ml", "MlProduct"),
+        ("/evidence", "getAssessmentEvidence", "Evidence references for the assessment.",
+         "evidence", "EvidenceProduct"),
+        ("/ipsec-state", "getAssessmentIpsecState", "Expected vs observed IPsec state.",
+         "ipsec-state", "ObservedStateDocument"),
+        ("/sa", "getAssessmentSa",
+         "Security associations: establishment, direction, packet counts, sequence "
+         "and first/last packet, with unavailable lifetime facts stated as such.",
+         "sa", "SaProduct"),
+        ("/crypto-evidence", "getAssessmentCryptoEvidence",
+         "Per-property runtime evidence for the configured cryptography: what is "
+         "observable at runtime, what is configuration only, and why.",
+         "crypto-evidence", "CryptoEvidenceProduct"),
+        ("/replay", "getAssessmentReplay",
+         "Replay-window assessment: duplicates, backward steps, gaps and the "
+         "evidence level behind each, with gaps never reported as replays.",
+         "replay", "ReplayProduct"),
+        ("/metadata-exposure", "getAssessmentMetadataExposure",
+         "Metadata an on-path observer can read from this capture, with "
+         "limitations.",
+         "metadata-exposure", "MetadataExposureProduct"),
+        ("/threat-matrix", "getAssessmentThreatMatrix",
+         "Findings mapped to threats, evidence, impact and recommendation.",
+         "threat-matrix", "ThreatMatrixProduct"),
+        ("/report", "getAssessmentReport",
+         "Technical report: fourteen sections over the same evidence as the "
+         "bundle, from the executive summary to evidence and provenance.",
+         "report", "TechnicalReport"),
+        ("/executive-report", "getAssessmentExecutiveReport",
+         "Executive report answering what was assessed, the security posture, "
+         "the major risks, the evidence behind them and what should be fixed.",
+         "executive-report", "ExecutiveReport"),
     ):
+        response_schema = (
+            _ref(product) if resource is None
+            else _sub_resource_response(resource, product)
+        )
         paths[f"/api/assessments/{{id}}{suffix}"] = _get(
             f"/api/assessments/{{id}}{suffix}", oid, summary,
             tags=["phase8"],
             params=[_param("id", "path", _STR, "Assessment id.", required=True)],
-            responses={**{"200": {"description": "ok", "content": {_JSON: {"schema": {"type": "object"}}}}},
+            responses={**{"200": {"description": "ok",
+                                  "content": {_JSON: {"schema": response_schema}}}},
                        **_ERROR_RESPONSES})
 
     # -- phase 10 ------------------------------------------------------------
@@ -1730,7 +1908,886 @@ def openapi_document(base_url: str = "") -> Dict[str, Any]:
                             },
                         },
                     },
-            }
+            },
+                "ApiHealth": {
+                    "type": "object",
+                    "description": (
+                        "Liveness of the analytics API itself. It reports the "
+                        "store it serves and states, as data, that the surface "
+                        "is adapter-only: it consumes Phase 4-7 outputs and "
+                        "never recomputes a score, severity, comparison or "
+                        "explanation."
+                    ),
+                    "required": ["status", "service", "read_only"],
+                    "properties": {
+                        "status": {"type": "string", "const": "ok"},
+                        "service": _STR,
+                        "api_schema_version": _STR,
+                        "store_version": _STR,
+                        "total_assessments": {"type": "integer", "minimum": 0},
+                        "read_only": {"type": "boolean", "const": True},
+                        "note": {
+                            "type": "string",
+                            "description": "The adapter-only contract, in the producer's words.",
+                        },
+                    },
+                },
+                "AssessmentSubResourceResponse": {
+                    "type": "object",
+                    "description": (
+                        "Envelope shared by every "
+                        "`/api/assessments/{id}/{sub-resource}` route: which "
+                        "assessment, which resource, and the product document "
+                        "under `data`. Each route narrows `resource` to a "
+                        "constant and `data` to its product schema with "
+                        "`allOf`."
+                    ),
+                    "required": ["assessment_id", "resource", "data"],
+                    "properties": {
+                        "assessment_id": _STR,
+                        "resource": {
+                            "type": "string",
+                            "description": "The sub-resource name exactly as it appears in the path.",
+                        },
+                        "data": {
+                            "type": "object",
+                            "description": (
+                                "The product document. Its schema is named by "
+                                "the route that returns it."
+                            ),
+                        },
+                    },
+                },
+                "AssessmentBundle": {
+                    "type": "object",
+                    "description": (
+                        "One full assessment. `expected`, `observed` and "
+                        "`ipsec_state` are the inputs the analysis ran on; "
+                        "every analytical product (`correlation`, `ml`, `risk`, "
+                        "`xai`, `evidence`, `sa`, `crypto_evidence`, "
+                        "`replay_assessment`, `metadata_exposure`, "
+                        "`threat_matrix`, `report`, `executive_report`) carries "
+                        "the Phase-1 contract: `producer`, `state`, `reason` "
+                        "and `source`."
+                    ),
+                    "required": [
+                        "assessment_id", "slot", "scenario", "dataset_run_id",
+                        "identity", "expected", "observed", "correlation",
+                        "risk", "report", "executive_report",
+                    ],
+                    "properties": {
+                        "assessment_id": _STR,
+                        "slot": _STR,
+                        "scenario": {
+                            "type": "string",
+                            "description": "The scenario text this assessment was registered for.",
+                        },
+                        "dataset_run_id": _STR,
+                        "identity": _free(
+                            "Assessment identity: run id, sequence, experiment, "
+                            "attempt and window index."
+                        ),
+                        "expected": _ref("ExpectedConfiguration"),
+                        "observed": _ref("ObservedStateDocument"),
+                        "ipsec_state": _ref("ObservedStateDocument"),
+                        "correlation": _ref("CorrelationProduct"),
+                        "ml": _ref("MlProduct"),
+                        "risk": _ref("RiskProduct"),
+                        "xai": _ref("XaiProduct"),
+                        "evidence": _ref("EvidenceProduct"),
+                        "sa": _ref("SaProduct"),
+                        "crypto_evidence": _ref("CryptoEvidenceProduct"),
+                        "replay_assessment": _ref("ReplayProduct"),
+                        "metadata_exposure": _ref("MetadataExposureProduct"),
+                        "threat_matrix": _ref("ThreatMatrixProduct"),
+                        "report": _ref("TechnicalReport"),
+                        "executive_report": _ref("ExecutiveReport"),
+                        "sources": {
+                            "type": "array",
+                            "description": (
+                                "Artifacts this bundle was built from, with "
+                                "their digests and roles."
+                            ),
+                            "items": {"type": "object"},
+                        },
+                    },
+                },
+                "ExpectedConfiguration": {
+                    "type": "object",
+                    "description": (
+                        "The configured side: what the materialized plan asks "
+                        "for. It is an input to the analysis, so it carries no "
+                        "Phase-1 contract keys and no runtime claim."
+                    ),
+                    "required": ["mode", "address_family", "ike", "esp",
+                                 "traffic", "configuration_id"],
+                    "properties": {
+                        "mode": {"type": "string", "description": "Encapsulation mode as configured."},
+                        "address_family": {"type": "string"},
+                        "ike": _free("Configured IKE proposal (version, integrity, DH group)."),
+                        "esp": _free(
+                            "Configured ESP proposal: encryption, integrity, "
+                            "DH group, PFS."
+                        ),
+                        "traffic": _free("Configured traffic profile and related traffic expectations."),
+                        "capture_filter": _STR,
+                        "configuration_id": _STR,
+                        "security_posture": {
+                            "type": "string",
+                            "description": "Band the plan configures (STRONG/GOOD/MEDIUM/WEAK/WORST as recorded).",
+                        },
+                    },
+                },
+                "ObservedStateDocument": {
+                    "type": "object",
+                    "description": (
+                        "The observed IPsec state exactly as the state builder "
+                        "recorded it. Returned by `/observed` and by "
+                        "`/ipsec-state`, which is the same document: the "
+                        "configured side of that comparison is `/expected`. An "
+                        "input to the analysis, never a product of it."
+                    ),
+                    "required": ["present", "timestamp_ns"],
+                    "properties": {
+                        "present": {
+                            "type": "boolean",
+                            "description": "False when no state snapshot was attached to this assessment.",
+                        },
+                        "timestamp_ns": {"type": "integer", "minimum": 0},
+                        "endpoints": _free("Outer source/destination pair, when the snapshot recorded one."),
+                        "active": {"type": "boolean"},
+                        "tunnel_seen": {
+                            "type": "boolean",
+                            "description": (
+                                "Any traffic was observed. It does NOT "
+                                "establish tunnel mode and is never used to."
+                            ),
+                        },
+                        "packets_seen": {"type": "integer", "minimum": 0},
+                        "bytes_seen": {"type": "integer", "minimum": 0},
+                        "packets_a_to_b": {"type": "integer", "minimum": 0},
+                        "packets_b_to_a": {"type": "integer", "minimum": 0},
+                        "bytes_a_to_b": {"type": "integer", "minimum": 0},
+                        "bytes_b_to_a": {"type": "integer", "minimum": 0},
+                        "ike_seen": {"type": "boolean"},
+                        "ike_nat_t_seen": {"type": "boolean"},
+                        "esp_seen": {"type": "boolean"},
+                        "ah_seen": {"type": "boolean"},
+                        "observed_ike_activity": {"type": "boolean"},
+                        "last_ike_timestamp_ns": {"type": ["integer", "null"]},
+                        "last_ike_nat_t_timestamp_ns": {"type": ["integer", "null"]},
+                        "last_esp_timestamp_ns": {"type": ["integer", "null"]},
+                        "last_ah_timestamp_ns": {"type": ["integer", "null"]},
+                        "spis": _list(
+                            "Per-SPI observation: spi, direction (A_TO_B or "
+                            "B_TO_A), packet counts and sequence progression.",
+                            {"type": "object"},
+                        ),
+                        "transitions": _list(
+                            "Recorded observation transitions, each naming the "
+                            "event it came from.",
+                            {"type": "object"},
+                        ),
+                        "observation_start_ns": {"type": ["integer", "null"]},
+                        "last_packet_timestamp_ns": {"type": ["integer", "null"]},
+                        "active_timeout_ms": {"type": ["integer", "null"]},
+                        "outer_endpoint_pairs": _ANY("Recorded outer endpoint pairs, or null when none was recorded."),
+                        "spi_less_esp_packets": _ANY("Count of ESP packets with no SPI, or null when not recorded."),
+                        "sa_snapshots": _ANY("Recorded SA snapshots, or null when the snapshot carries none."),
+                        "sa_groups": _ANY("Recorded bidirectional SA groups, or null when none was resolved."),
+                    },
+                },
+                "CorrelationProduct": _product(
+                    "Phase 4 comparison of the configured plan against the "
+                    "observed snapshot. `status` is the Phase-4 vocabulary; "
+                    "`state` is the Phase-1 state of the product itself, and "
+                    "each row carries its own `state` and `verdict`.",
+                    {
+                        "status": {
+                            "type": "string",
+                            "enum": ["MATCH", "MISMATCH", "UNKNOWN",
+                                     "NOT_APPLICABLE"],
+                            "description": "Overall comparison status reported by the engine.",
+                        },
+                        "rows": _list(
+                            "One row per compared variable, sorted by variable.",
+                            _ref("CorrelationRow"),
+                        ),
+                        "status_counts": _free(
+                            "Counts keyed by the four comparison statuses."
+                        ),
+                        "metadata": _free(
+                            "Engine metadata passed through verbatim: "
+                            "comparison engine version, rules executed, "
+                            "observation completeness, ml_evaluated."
+                        ),
+                    },
+                    required=sorted(_CONTRACT) + ["status", "rows"],
+                ),
+                "CorrelationRow": {
+                    "type": "object",
+                    "description": (
+                        "One compared variable. `verdict` is the brief's name "
+                        "for this row's `status`: the same canonical value "
+                        "carried twice, never a second decision."
+                    ),
+                    "required": ["variable", "status", "verdict", "state"],
+                    "properties": {
+                        "variable": _STR,
+                        "status": {
+                            "type": "string",
+                            "enum": ["MATCH", "MISMATCH", "UNKNOWN",
+                                     "NOT_APPLICABLE"],
+                        },
+                        "verdict": {
+                            "type": "string",
+                            "enum": ["MATCH", "MISMATCH", "UNKNOWN",
+                                     "NOT_APPLICABLE"],
+                            "description": "Alias of `status`, under the brief's name for it.",
+                        },
+                        "expected_value": _ANY("Configured side of this comparison."),
+                        "observed_value": _ANY("Observed side of this comparison; null means no runtime value was recorded."),
+                        "configured_value": _ANY(
+                            "The expected side under the brief's name; equal to "
+                            "`expected_value`."
+                        ),
+                        "comparison_rule": {"type": ["string", "null"]},
+                        "reason": {"type": ["string", "null"]},
+                        "state": dict(_STATE_FIELD),
+                        "runtime_observable": {
+                            "type": "boolean",
+                            "description": (
+                                "True when this observation actually produced "
+                                "a value for the variable."
+                            ),
+                        },
+                        "evidence_source": {"type": ["string", "null"]},
+                        "evidence_refs": _list(
+                            "Evidence references the comparison cited.",
+                            {"type": "object"},
+                        ),
+                    },
+                },
+                "MlProduct": _product(
+                    "ML-derived evidence with its transparency block. It is "
+                    "model-derived inference (state INFERRED when present): it "
+                    "never overrides an observation and is never a protocol "
+                    "observation itself.",
+                    {
+                        "present": {"type": "boolean"},
+                        "model": {"type": ["string", "null"]},
+                        "model_version": {"type": ["string", "null"]},
+                        "traffic_class": {"type": ["string", "null"]},
+                        "predicted_class": {
+                            "type": ["string", "null"],
+                            "description": "The canonical class the model predicted, or null.",
+                        },
+                        "classification_confidence": {"type": ["number", "null"]},
+                        "probabilities": {
+                            "type": ["object", "null"],
+                            "description": (
+                                "The full probability vector keyed by class "
+                                "when the producer supplied one; null is never "
+                                "a guessed distribution."
+                            ),
+                        },
+                        "classes": {
+                            "type": ["array", "null"],
+                            "items": _STR,
+                            "description": (
+                                "The class names the probability vector is "
+                                "indexed by, only when a full vector exists "
+                                "whose keys are exactly the six canonical "
+                                "traffic profiles; null otherwise."
+                            ),
+                        },
+                        "inference_status": {
+                            "type": "string",
+                            "enum": ["NOT_EXECUTED", "COMPLETED", "INCOMPLETE"],
+                            "description": "What happened to inference, never how good the model is.",
+                        },
+                        "provenance": {
+                            "type": ["object", "null"],
+                            "description": (
+                                "Where the result came from, copied verbatim "
+                                "from the producer's extras: source, bridge, "
+                                "window id, artifact digest and the like."
+                            ),
+                        },
+                        "predicted_vs_policy": _ref("PredictedVsPolicy"),
+                        "anomaly": _ANY("Always null: the model has no anomaly capability."),
+                        "anomaly_score": _ANY("Always null: the model has no anomaly capability."),
+                    },
+                    required=sorted(_CONTRACT) + ["present", "inference_status"],
+                ),
+                "PredictedVsPolicy": {
+                    "type": "object",
+                    "description": (
+                        "Predicted class vs the configured traffic profile, "
+                        "using the Phase-4 status vocabulary because this is a "
+                        "comparison of two recorded values."
+                    ),
+                    "required": ["status", "predicted_class",
+                                 "policy_expected_class", "reason"],
+                    "properties": {
+                        "status": {
+                            "type": "string",
+                            "enum": ["MATCH", "MISMATCH", "UNKNOWN",
+                                     "NOT_APPLICABLE"],
+                        },
+                        "predicted_class": {"type": ["string", "null"]},
+                        "policy_expected_class": {"type": ["string", "null"]},
+                        "compared_against": _STR,
+                        "reason": _STR,
+                    },
+                },
+                "RiskProduct": _product(
+                    "Phase 6 risk assessment. Every score, severity and "
+                    "finding is the risk engine's own; this document copies "
+                    "them and never recomputes any of them.",
+                    {
+                        "schema_version": _STR,
+                        "risk_engine_version": _STR,
+                        "risk_policy_version": _STR,
+                        "overall_score": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 100,
+                        },
+                        "severity": {
+                            "type": "string",
+                            "enum": ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"],
+                        },
+                        "identity": _free("Assessment identity as the risk engine recorded it."),
+                        "findings": _list(
+                            "Risk findings in engine order, each with its own "
+                            "state, evidence and score contribution.",
+                            _ref("RiskFinding"),
+                        ),
+                        "evidence_refs": _list(
+                            "Evidence references the assessment consumed.",
+                            _ref("EvidenceReference"),
+                        ),
+                        "score_detail": _free(
+                            "Per-category score contributions under the "
+                            "per-category cap, as the engine recorded them."
+                        ),
+                        "metadata": _free(
+                            "Risk engine metadata: evidence policy, unknown "
+                            "handling, rules executed, expected configuration "
+                            "and replay evidence."
+                        ),
+                    },
+                    required=sorted(_CONTRACT) + [
+                        "overall_score", "severity", "findings",
+                    ],
+                ),
+                "RiskFinding": {
+                    "type": "object",
+                    "description": (
+                        "One risk finding. `state` says why the finding's "
+                        "value holds; `evidence` is the structured block of "
+                        "what backs it; severity and score belong to the risk "
+                        "engine alone."
+                    ),
+                    "required": ["finding_id", "rule_id", "severity", "score",
+                                 "state", "evidence"],
+                    "properties": {
+                        "finding_id": _STR,
+                        "rule_id": _STR,
+                        "category": _STR,
+                        "severity": {
+                            "type": "string",
+                            "enum": ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"],
+                        },
+                        "score": {"type": "number"},
+                        "score_added": {
+                            "type": "number",
+                            "description": "What this finding added after the per-category cap.",
+                        },
+                        "related_variable": {"type": ["string", "null"]},
+                        "condition": {"type": ["string", "null"]},
+                        "title": _STR,
+                        "description": {"type": ["string", "null"]},
+                        "reason": _STR,
+                        "configured_value": _ANY("The expected side of this finding."),
+                        "expected_value": _ANY("What Phase 4 compared against."),
+                        "observed_value": _ANY("The observed counterpart, when one exists."),
+                        "source": _STR,
+                        "state": dict(_STATE_FIELD),
+                        "evidence_type": _STR,
+                        "runtime_applicable": {
+                            "type": "boolean",
+                            "description": (
+                                "False for configuration-only findings: no "
+                                "runtime evidence could confirm or refute "
+                                "them, so none is claimed."
+                            ),
+                        },
+                        "confidence": {"type": ["number", "null"]},
+                        "model_version": {"type": ["string", "null"]},
+                        "evidence": {
+                            "type": "object",
+                            "description": (
+                                "What backs this finding, structured: type, "
+                                "source, state, reference count, the "
+                                "references themselves and any limitation."
+                            ),
+                            "properties": {
+                                "evidence_type": _STR,
+                                "source": _STR,
+                                "state": dict(_STATE_FIELD),
+                                "ref_count": {"type": "integer", "minimum": 0},
+                                "refs": _list(
+                                    "Evidence references this finding cites.",
+                                    _ref("EvidenceReference"),
+                                ),
+                                "limitations": _list(
+                                    "What this evidence does not establish.",
+                                    _STR,
+                                ),
+                            },
+                        },
+                        "evidence_refs": _list(
+                            "The same references, at the finding's top level.",
+                            _ref("EvidenceReference"),
+                        ),
+                    },
+                },
+                "EvidenceReference": {
+                    "type": "object",
+                    "description": (
+                        "An evidence reference as its producer recorded it. "
+                        "Artifacts are described by repository-relative source "
+                        "path and content digest; a host path never appears."
+                    ),
+                    "required": ["evidence_id"],
+                    "properties": {
+                        "evidence_id": _STR,
+                        "artifact_type": {"type": ["string", "null"]},
+                        "artifact_sha256": {"type": ["string", "null"]},
+                        "byte_size": {"type": ["integer", "null"]},
+                        "pcap_path": {"type": ["string", "null"]},
+                        "source": {"type": ["string", "null"]},
+                        "timestamp": {"type": ["integer", "null"]},
+                        "sequence": {"type": ["integer", "null"]},
+                        "run_id": {"type": ["string", "null"]},
+                        "experiment_id": {"type": ["string", "null"]},
+                        "window_index": {"type": ["integer", "null"]},
+                        "capture_sequence": {"type": ["integer", "null"]},
+                        "capture_start_ns": {"type": ["integer", "null"]},
+                        "capture_end_ns": {"type": ["integer", "null"]},
+                        "packet_start": _ANY("Packet range start, as recorded."),
+                        "packet_end": _ANY("Packet range end, as recorded."),
+                        "audit_event_reference": {"type": ["string", "null"]},
+                    },
+                },
+                "XaiProduct": _product(
+                    "Phase 7 explainability: why the score is what it is, "
+                    "per finding and per unknown, in the engine's own words.",
+                    {
+                        "schema_version": _STR,
+                        "identity": _free("Assessment identity as the engine recorded it."),
+                        "summary": _free(
+                            "Compact summary: score, severity, counts and the "
+                            "overall explanation text."
+                        ),
+                        "finding_explanations": _list(
+                            "One explanation per finding, quoting the rule and "
+                            "its contribution.",
+                            {"type": "object"},
+                        ),
+                        "ml_explanations": _list(
+                            "ML explanations; empty because this backend "
+                            "records no ML contribution to score.",
+                            {"type": "object"},
+                        ),
+                        "unknown_explanations": _list(
+                            "Why each unknown stayed unknown instead of "
+                            "becoming a finding.",
+                            {"type": "object"},
+                        ),
+                        "not_applicable_explanations": _list(
+                            "Why each not-applicable variable was not scored.",
+                            {"type": "object"},
+                        ),
+                        "evidence_summary": _free("Evidence the explanations cited."),
+                        "score_explanation": _free(
+                            "Score decomposition: raw sum, per-category "
+                            "totals, contributions and the severity band."
+                        ),
+                        "metadata": _free(
+                            "Engine version, authority, determinism and "
+                            "evidence policy."
+                        ),
+                    },
+                    required=sorted(_CONTRACT) + ["summary"],
+                ),
+                "EvidenceProduct": _product(
+                    "The evidence references this assessment's products "
+                    "cited, with their sources and the limitation that none "
+                    "was invented.",
+                    {
+                        "total_refs": {"type": "integer", "minimum": 0},
+                        "refs": _list(
+                            "One entry per reference, as the API projects it "
+                            "(path is repository-relative; no host path).",
+                            _ref("EvidenceRefView"),
+                        ),
+                        "sources": _list(
+                            "Distinct source names across the references.",
+                            _STR,
+                        ),
+                        "limitation": {
+                            "type": ["string", "null"],
+                            "description": (
+                                "Stated when no reference was recorded; the "
+                                "gap is reported, never filled."
+                            ),
+                        },
+                    },
+                    required=sorted(_CONTRACT) + ["total_refs", "refs"],
+                ),
+                "EvidenceRefView": {
+                    "type": "object",
+                    "description": (
+                        "The API projection of one evidence reference: the "
+                        "fields a dashboard needs, with no host filesystem "
+                        "path."
+                    ),
+                    "properties": {
+                        "pcap_path": {"type": ["string", "null"]},
+                        "capture_sequence": {"type": ["integer", "null"]},
+                        "audit_event_reference": {"type": ["string", "null"]},
+                        "source": {"type": ["string", "null"]},
+                        "timestamp": {"type": ["integer", "null"]},
+                    },
+                },
+                "SaProduct": _product(
+                    "Security associations from the recorded SPI state: "
+                    "establishment, direction, packet counts, sequence "
+                    "progression and first/last observed packet, with "
+                    "lifetime and rekey reported NOT_AVAILABLE where the "
+                    "observation path records none.",
+                    {
+                        "associations": _list(
+                            "One entry per security association, each with "
+                            "spi, direction, sequence, lifetime and rekey "
+                            "blocks carrying their own state.",
+                            {"type": "object"},
+                        ),
+                        "summary": _free(
+                            "Counts and observation window derived from the "
+                            "same snapshot."
+                        ),
+                        "limitations": _list(
+                            "What this product does not establish.",
+                            _STR,
+                        ),
+                    },
+                    required=sorted(_CONTRACT) + ["associations"],
+                ),
+                "CryptoEvidenceProduct": _product(
+                    "Per-property runtime evidence for the configured "
+                    "cryptography: what a capture can establish at runtime, "
+                    "what is configuration only, and why. A property that is "
+                    "not observable reports its configured value beside a "
+                    "NOT_AVAILABLE state, never as if it had been seen.",
+                    {
+                        "properties": _list(
+                            "One entry per property: configured value, "
+                            "runtime value, runtime_observable, evidence "
+                            "source, state and reason.",
+                            {"type": "object"},
+                        ),
+                        "by_property": _free(
+                            "The same entries keyed by property name."
+                        ),
+                        "runtime_established": _list(
+                            "Properties this capture actually established.",
+                            _STR,
+                        ),
+                        "limitations": _list(
+                            "What the capture cannot establish about the "
+                            "negotiated cryptography.",
+                            _STR,
+                        ),
+                    },
+                    required=sorted(_CONTRACT) + ["properties"],
+                ),
+                "ReplayProduct": _product(
+                    "Replay-window assessment over the recorded sequence "
+                    "journal: duplicates, backward steps, gaps and the "
+                    "evidence level behind each. A gap is never reported as "
+                    "a replay.",
+                    {
+                        "status": {
+                            "type": "string",
+                            "enum": ["OBSERVED", "NO_EVIDENCE",
+                                     "INSUFFICIENT_DATA"],
+                        },
+                        "duplicate_sequences": {"type": "integer", "minimum": 0},
+                        "backward_sequences": {"type": "integer", "minimum": 0},
+                        "sequence_gaps": {"type": "integer", "minimum": 0},
+                        "highest_sequence": {"type": ["integer", "null"]},
+                        "per_spi": _list(
+                            "Per-SPI sequence assessment with its own state, "
+                            "status and reason.",
+                            {"type": "object"},
+                        ),
+                        "evidence": _list(
+                            "The sequence aggregates the assessment read.",
+                            {"type": "object"},
+                        ),
+                        "limitations": _list(
+                            "What the sequence evidence cannot establish.",
+                            _STR,
+                        ),
+                    },
+                    required=sorted(_CONTRACT) + ["status"],
+                ),
+                "MetadataExposureProduct": _product(
+                    "What an on-path observer can actually read from this "
+                    "capture, dimension by dimension. These are "
+                    "observation-level statements: they carry no severity and "
+                    "no score, because the risk engine is the only scorer.",
+                    {
+                        "risk_level": {
+                            "type": "string",
+                            "enum": ["HIGH", "MEDIUM", "LOW", "NONE"],
+                            "description": "Chosen by the documented ladder, which is published beside it.",
+                        },
+                        "risk_ladder": _list(
+                            "The ladder that produced `risk_level`, in "
+                            "evaluation order.",
+                            {"type": "object"},
+                        ),
+                        "observable_metadata": _list(
+                            "Every dimension this product classifies, each "
+                            "with its own state, exposure and reason.",
+                            _ref("MetadataDimension"),
+                        ),
+                        "findings": _list(
+                            "Observation-level exposure findings (EXPOSED / "
+                            "NOT_EXPOSED / NOT_OBSERVABLE), unscored.",
+                            {"type": "object"},
+                        ),
+                        "evidence": _list(
+                            "The observation each finding rests on.",
+                            {"type": "object"},
+                        ),
+                        "limitations": _list(
+                            "What an observable dimension does and does not "
+                            "claim.",
+                            _STR,
+                        ),
+                    },
+                    required=sorted(_CONTRACT) + [
+                        "risk_level", "observable_metadata",
+                    ],
+                ),
+                "MetadataDimension": {
+                    "type": "object",
+                    "description": (
+                        "One metadata dimension: whether this sensor can see "
+                        "it, the value it recorded, and why the state is what "
+                        "it is. Not observable is never the same as safe."
+                    ),
+                    "required": ["dimension", "observable", "state",
+                                 "exposure", "reason"],
+                    "properties": {
+                        "dimension": _STR,
+                        "observable": {"type": "boolean"},
+                        "value": _ANY("The value this sensor recorded, or null when it recorded none."),
+                        "state": dict(_STATE_FIELD),
+                        "source": _STR,
+                        "reason": _STR,
+                        "exposure": {
+                            "type": "string",
+                            "enum": ["EXPOSED", "NOT_EXPOSED", "NOT_OBSERVABLE"],
+                        },
+                    },
+                },
+                "ThreatMatrixProduct": _product(
+                    "Every finding mapped onto exactly one threat row, with "
+                    "evidence, impact and the recommendation cell quoted from "
+                    "the response rule registry. No threat appears here that "
+                    "no finding produced.",
+                    {
+                        "entries": _list(
+                            "One row per finding, in finding order.",
+                            _ref("ThreatMatrixEntry"),
+                        ),
+                        "categories": _list(
+                            "Every threat category with its entry count, so "
+                            "an absent category is visible rather than "
+                            "missing.",
+                            {"type": "object"},
+                        ),
+                        "entry_count": {"type": "integer", "minimum": 0},
+                        "limitations": _list(
+                            "What the matrix does not establish, including "
+                            "that an empty matrix means 'no finding'.",
+                            _STR,
+                        ),
+                    },
+                    required=sorted(_CONTRACT) + ["entries", "entry_count"],
+                ),
+                "ThreatMatrixEntry": {
+                    "type": "object",
+                    "description": (
+                        "One threat row. Severity is copied from the finding "
+                        "and never recomputed; the recommendation is quoted "
+                        "from the registry, and says so when no rule is "
+                        "registered."
+                    ),
+                    "required": ["finding", "threat", "rule_id", "recommendation"],
+                    "properties": {
+                        "finding": {
+                            "type": "string",
+                            "description": "Finding id, or the dimension name for a metadata exposure row.",
+                        },
+                        "threat": {
+                            "type": "string",
+                            "enum": [
+                                "Cryptographic weakness",
+                                "Configuration weakness",
+                                "Protocol weakness",
+                                "Traffic anomaly",
+                                "Replay anomaly",
+                                "Metadata exposure",
+                                "Evidence gap",
+                                "Unclassified threat",
+                            ],
+                        },
+                        "severity": {"type": ["string", "null"]},
+                        "title": {"type": ["string", "null"]},
+                        "category": _STR,
+                        "rule_id": _STR,
+                        "impact": {"type": ["string", "null"]},
+                        "evidence": _free("Evidence quoted from the finding or the metadata product."),
+                        "finding_source": {"type": ["string", "null"]},
+                        "severity_source": {"type": ["string", "null"]},
+                        "recommendation": {
+                            "type": "object",
+                            "description": (
+                                "The remediation cell: response rule id, "
+                                "action, priority, approval and "
+                                "authorization requirements, and the "
+                                "prescribed text."
+                            ),
+                            "properties": {
+                                "text": {"type": ["string", "null"]},
+                                "source": {"type": ["string", "null"]},
+                                "response_rule_id": {"type": ["string", "null"]},
+                                "action": {"type": ["string", "null"]},
+                                "priority": {"type": ["string", "null"]},
+                                "authorization_requirement": {"type": ["string", "null"]},
+                                "approval_requirement": {"type": ["string", "null"]},
+                                "policy_dependency": {"type": ["string", "null"]},
+                                "limitations": _list(
+                                    "What this recommendation does not authorise.",
+                                    _STR,
+                                ),
+                            },
+                        },
+                    },
+                },
+                "TechnicalReport": _product(
+                    "The analyst document: fourteen numbered sections over the "
+                    "same evidence as the bundle, from the executive summary "
+                    "through risk evidence and limitations to evidence and "
+                    "provenance. Sections are assembled, never re-derived.",
+                    {
+                        "assessment_id": _STR,
+                        "sections": _list(
+                            "Sections in document order; each heading starts "
+                            "with its 1-based number and names the product the "
+                            "paragraphs came from.",
+                            _ref("ReportSection"),
+                        ),
+                        "limitations": _list(
+                            "What the report does not establish.",
+                            _STR,
+                        ),
+                    },
+                    required=sorted(_CONTRACT) + ["assessment_id", "sections"],
+                ),
+                "ReportSection": {
+                    "type": "object",
+                    "required": ["heading", "paragraphs", "product"],
+                    "properties": {
+                        "heading": {
+                            "type": "string",
+                            "description": "Numbered heading, e.g. `1. Executive summary`.",
+                        },
+                        "paragraphs": _list(
+                            "Quoted text. A value unknown in its source "
+                            "product is unknown here.",
+                            _STR,
+                        ),
+                        "product": {
+                            "type": "string",
+                            "description": "The product this section was taken from.",
+                        },
+                    },
+                },
+                "ExecutiveReport": _product(
+                    "The brief's five executive questions, answered from the "
+                    "same products as the technical report, keyed by the "
+                    "question names the brief uses.",
+                    {
+                        "assessment_id": _STR,
+                        "answers": {
+                            "type": "object",
+                            "description": "One entry per executive question, keyed by question name.",
+                            "properties": {
+                                question: _ref("ExecutiveAnswer")
+                                for question in EXECUTIVE_QUESTIONS
+                            },
+                            "required": list(EXECUTIVE_QUESTIONS),
+                            "additionalProperties": False,
+                        },
+                        "limitations": _list(
+                            "What an executive answer does not establish.",
+                            _STR,
+                        ),
+                    },
+                    required=sorted(_CONTRACT) + ["assessment_id", "answers"],
+                ),
+                "ExecutiveAnswer": {
+                    "type": "object",
+                    "description": (
+                        "One answer: the question, the state it was answered "
+                        "in, its statements and the evidence behind them. An "
+                        "absent answer is reported, never guessed."
+                    ),
+                    "required": ["question", "state", "statements",
+                                 "evidence", "answered"],
+                    "properties": {
+                        "question": {
+                            "type": "string",
+                            "enum": list(EXECUTIVE_QUESTIONS),
+                        },
+                        "state": dict(_STATE_FIELD),
+                        "statements": _list(
+                            "The answer itself, one sentence per line.",
+                            _STR,
+                        ),
+                        "evidence": _list(
+                            "Where the answer came from, named per statement "
+                            "group.",
+                            _STR,
+                        ),
+                        "answered": {
+                            "type": "boolean",
+                            "description": (
+                                "False only when no statement could be made "
+                                "from the evidence available."
+                            ),
+                        },
+                    },
+                },
         },
     }
     }

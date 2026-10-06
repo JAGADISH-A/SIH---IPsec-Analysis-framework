@@ -1,11 +1,13 @@
-import { Panel, HashChip, Metric, Tag } from '@/components/ui'
+import { Panel, Metric, Tag } from '@/components/ui'
 import { EmptyState } from '@/components/states'
+import { IdRow, ProvenanceDetails } from '@/components/kit'
 import {
   formatDateTime,
   formatNumber,
   formatUtc,
   artifactName,
 } from '@/lib/format'
+import { acronymLabel, statusLabel } from '@/lib/labels'
 import type { AssessmentBundle } from '@/types'
 
 function Flag({ on, label }: { on: boolean | undefined; label: string }) {
@@ -161,8 +163,8 @@ export function ObservedPanel({ bundle }: { bundle: AssessmentBundle }) {
                         key={`${spi.spi}-${spi.direction}`}
                         className="border-t border-edge-soft"
                       >
-                        <td className="mono text-sm text-sentinel">{spi.spi}</td>
-                        <td className="text-sm text-ink-dim">{spi.direction}</td>
+                        <td className="mono text-sm text-ink">{spi.spi}</td>
+                        <td className="text-sm text-ink-dim">{statusLabel(spi.direction)}</td>
                         <td className="mono tnum text-sm text-ink-dim">
                           {formatNumber(spi.packet_count)}
                         </td>
@@ -251,7 +253,7 @@ export function EvidenceRefTable({
       <table className="data-table min-w-[820px]">
         <thead>
           <tr className="border-b border-edge text-left">
-            {['Evidence ID', 'Artifact', 'Source', 'Type', 'Size', 'Digest'].map((heading) => (
+            {['Type', 'Source', 'Size', 'Artifact', 'Record ids'].map((heading) => (
               <th
                 key={heading}
                 className="px-4 py-2.5 label text-ink-faint"
@@ -268,35 +270,22 @@ export function EvidenceRefTable({
               className="border-b border-edge-soft last:border-0"
             >
               <td className="px-4 py-2.5">
-                <span className="mono block text-xs text-sentinel" title={ref.evidence_id}>
-                  {ref.evidence_id ?? '—'}
-                </span>
-                {ref.run_id && (
-                  <span className="mono block text-xs text-ink-faint">run {ref.run_id}</span>
-                )}
+                <span className="block text-sm text-ink">{acronymLabel(ref.artifact_type)}</span>
+                <span className="block text-xs text-ink-faint">{artifactName(ref.pcap_path)}</span>
               </td>
               <td className="px-4 py-2.5">
-                <span
-                  className="mono block max-w-[280px] truncate text-xs text-ink-dim"
-                  title={ref.pcap_path}
-                >
-                  {ref.pcap_path}
-                </span>
-                <span className="block text-xs text-ink-faint">
-                  {artifactName(ref.pcap_path)}
-                </span>
-              </td>
-              <td className="px-4 py-2.5">
-                <Tag>{ref.source ?? '—'}</Tag>
-              </td>
-              <td className="text-sm text-ink-dim">
-                {ref.artifact_type ?? '—'}
+                <Tag>{ref.source ? acronymLabel(ref.source) : '—'}</Tag>
               </td>
               <td className="mono tnum text-sm text-ink-dim">
                 {ref.byte_size !== undefined ? `${formatNumber(ref.byte_size)} B` : '—'}
               </td>
               <td className="px-4 py-2.5">
-                <HashChip hash={ref.artifact_sha256} />
+                <ProvenanceDetails title="Artifact record">
+                  <IdRow label="Path" value={ref.pcap_path} title={ref.pcap_path} />
+                  <IdRow label="Evidence id" value={ref.evidence_id ?? '—'} title={ref.evidence_id ?? undefined} />
+                  {ref.run_id && <IdRow label="Run id" value={ref.run_id} title={ref.run_id} />}
+                  <IdRow label="sha256" value={ref.artifact_sha256 ?? '—'} title={ref.artifact_sha256 ?? undefined} />
+                </ProvenanceDetails>
               </td>
             </tr>
           ))}

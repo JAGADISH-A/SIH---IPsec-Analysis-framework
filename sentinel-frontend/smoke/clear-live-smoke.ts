@@ -3,7 +3,7 @@
  * capture feed, on a journal that already holds thousands of recorded rows and
  * is still being appended to.
  *
- * Mounts the real PacketWorkspace in jsdom against the running analytics API
+ * Mounts the real LiveScreening page in jsdom against the running analytics API
  * (its ANALYTICS_API_CAPTURE_FEED must point at a journal that is actively being
  * written) and drives the page as an analyst would, with no browser refresh.
  *
@@ -75,7 +75,7 @@ console.error = (...args: unknown[]) => {
 const { createRoot } = await import('react-dom/client')
 const { act, createElement } = await import('react')
 const { MemoryRouter } = await import('react-router-dom')
-const { PacketWorkspace } = await import('@/pages/PacketWorkspace')
+const { LiveScreening } = await import('@/pages/LiveScreening')
 const { formatLocalClock } = await import('@/lib/timeZone')
 
 let failures = 0
@@ -165,7 +165,7 @@ check(
 const bytesAtOpen = journalBytes()
 const linesAtOpen = journalLines()
 await act(async () => {
-  root.render(createElement(MemoryRouter, { initialEntries: ['/'] }, createElement(PacketWorkspace)))
+  root.render(createElement(MemoryRouter, { initialEntries: ['/'] }, createElement(LiveScreening)))
 })
 await settle(3_600)
 
@@ -191,7 +191,7 @@ check(
   rows() <= journalLines() - linesAtOpen,
   `rows=${rows()} appended=${journalLines() - linesAtOpen}`,
 )
-check('workspace renders risk from the store', /CRITICAL|HIGH|MEDIUM|LOW|INFO|—/.test(text()))
+check('the page renders risk from the store', /CRITICAL|HIGH|MEDIUM|LOW|INFO|—/.test(text()))
 
 // ---------------------------------------------------------------------------
 // 2. Clear empties the view, keeps the journal count, and never touches the file.

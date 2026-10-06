@@ -11,6 +11,7 @@ import { AssessmentDriftBlock } from '@/components/packet/AssessmentDriftBlock'
 import { getAssessmentDrift } from '@/api/analytics'
 import { useResource } from '@/hooks/useResource'
 import { ErrorState, LoadingPanel } from '@/components/states'
+import { IdRow, ProvenanceDetails } from '@/components/kit'
 import {
   formatBytes,
   formatDateTime,
@@ -19,6 +20,7 @@ import {
   humanize,
   severityStyle,
 } from '@/lib/format'
+import { acronymLabel, statusLabel } from '@/lib/labels'
 import type { AssessmentBundle, Severity } from '@/types'
 
 export type DetailTab = 'overview' | 'findings' | 'evidence' | 'xai' | 'ml'
@@ -58,91 +60,74 @@ function RiskGauge({ score, severity }: { score: number; severity: string }) {
   )
 }
 
+/**
+ * What this assessment was and what it was run against.
+ *
+ * The scenario, slot, sequence and observation window are what an analyst
+ * actually compares; the assessment, experiment, dataset-run and configuration
+ * ids are store keys with no meaning outside the database, so they are one
+ * disclosure away rather than the largest type on the page.
+ */
 export function AssessmentIdentity({ bundle }: { bundle: AssessmentBundle }) {
   const { expected, identity } = bundle
   return (
-    <Panel title="Assessment Identity" subtitle="plan identity recorded by the dataset runner">
+    <Panel title="This assessment" subtitle="the run this result came from">
       <dl className="grid grid-cols-2 gap-x-5 gap-y-4 p-4 md:grid-cols-3 xl:grid-cols-4">
-        <div className="col-span-2">
+        <div className="col-span-2 md:col-span-3 xl:col-span-4">
           <dt className="label text-ink-faint">
-            Assessment ID
+            Scenario
           </dt>
-          <dd className="mono mt-0.5 break-all text-sm text-sentinel">{bundle.assessment_id}</dd>
+          <dd className="mt-0.5 text-base leading-relaxed text-ink">{bundle.scenario}</dd>
         </div>
         <div>
           <dt className="label text-ink-faint">
             Slot
           </dt>
-          <dd className="mono mt-0.5 text-sm text-ink">{bundle.slot}</dd>
+          <dd className="mt-0.5 text-sm text-ink">{bundle.slot}</dd>
         </div>
         <div>
           <dt className="label text-ink-faint">
             Sequence
           </dt>
-          <dd className="mono tnum mt-0.5 text-sm text-ink">{identity.sequence}</dd>
-        </div>
-        <div>
-          <dt className="label text-ink-faint">
-            Experiment
-          </dt>
-          <dd className="mono mt-0.5 break-all text-xs text-ink-dim">
-            {identity.experiment_id}
-          </dd>
+          <dd className="tnum mt-0.5 text-sm text-ink">{identity.sequence}</dd>
         </div>
         <div>
           <dt className="label text-ink-faint">
             Attempt
           </dt>
-          <dd className="mono tnum mt-0.5 text-sm text-ink">{identity.attempt_number}</dd>
-        </div>
-        <div>
-          <dt className="label text-ink-faint">
-            Dataset run
-          </dt>
-          <dd className="mono mt-0.5 break-all text-xs text-ink-dim">
-            {identity.dataset_run_id}
-          </dd>
+          <dd className="tnum mt-0.5 text-sm text-ink">{identity.attempt_number}</dd>
         </div>
         <div>
           <dt className="label text-ink-faint">
             Window
           </dt>
-          <dd className="mono tnum mt-0.5 text-sm text-ink-dim">
+          <dd className="tnum mt-0.5 text-sm text-ink-dim">
             {identity.window_index ?? '—'}
           </dd>
         </div>
-        <div>
+        <div className="col-span-2">
           <dt className="label text-ink-faint">
             Window span
           </dt>
-          <dd className="mono mt-0.5 text-xs text-ink-dim">
+          <dd className="mt-0.5 text-sm text-ink-dim">
             {formatDateTime(identity.window_start_ns)}
             {identity.window_end_ns !== null && (
               <span className="block text-ink-faint">→ {formatDateTime(identity.window_end_ns)}</span>
             )}
           </dd>
         </div>
-        <div className="col-span-2 md:col-span-3 xl:col-span-4">
-          <dt className="label text-ink-faint">
-            Scenario
-          </dt>
-          <dd className="mt-0.5 text-sm leading-relaxed text-ink-dim">{bundle.scenario}</dd>
-        </div>
       </dl>
 
       <div className="flex flex-wrap items-center gap-2 border-t border-edge px-4 py-3">
-        <Tag className="border-sentinel/30 bg-sentinel/5 text-sentinel">
-          {expected.configuration_id}
-        </Tag>
         {expected.mode && <Tag>{expected.mode} mode</Tag>}
         {expected.address_family && <Tag>{expected.address_family}</Tag>}
         {expected.security_posture && (
           <Tag className="border-medium/30 bg-medium/5 text-medium">
-            posture {expected.security_posture}
+            posture {acronymLabel(expected.security_posture)}
           </Tag>
         )}
         <StatusPill
-          status={bundle.correlation?.status ?? 'UNKNOWN'}
+          status={statusLabel(bundle.correlation?.status ?? 'UNKNOWN')}
           tone={
             bundle.correlation?.status === 'MISMATCH'
               ? 'bad'
@@ -151,6 +136,7 @@ export function AssessmentIdentity({ bundle }: { bundle: AssessmentBundle }) {
                 : 'neutral'
           }
         />
+        <span className="ml-auto" />
       </div>
     </Panel>
   )
@@ -159,6 +145,14 @@ export function AssessmentIdentity({ bundle }: { bundle: AssessmentBundle }) {
 export function RiskSummary({ bundle }: { bundle: AssessmentBundle }) {
   const risk = bundle.risk
   const detail = risk.score_detail
+
+  /* The score breakdown records ids, not titles. The findings the same
+     response carries do have titles, so the breakdown is labelled with them
+     rather than with keys. */
+  const findingTitleById = useMemo(
+    () => new Map((risk.findings ?? []).map((finding) => [finding.finding_id, finding.title])),
+    [risk.findings],
+  )
 
   const categoryTotals = useMemo(() => {
     const counts = new Map<string, number>()
@@ -224,13 +218,25 @@ export function RiskSummary({ bundle }: { bundle: AssessmentBundle }) {
                   : 0
                 return (
                   <li key={contribution.finding_id} className="text-sm">
-                    <div className="flex items-center justify-between gap-2">
-                      <Link
-                        to={`/findings/${encodeURIComponent(bundle.assessment_id)}/${encodeURIComponent(contribution.finding_id)}`}
-                        className="truncate text-ink-dim transition-colors hover:text-sentinel"
-                      >
-                        {contribution.finding_id}
-                      </Link>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <Link
+                          to={`/findings/${encodeURIComponent(bundle.assessment_id)}/${encodeURIComponent(contribution.finding_id)}`}
+                          className="block truncate text-ink transition-colors hover:text-sentinel"
+                        >
+                          {findingTitleById.get(contribution.finding_id) ?? contribution.finding_id}
+                        </Link>
+                        <ProvenanceDetails title="Finding record">
+                          <IdRow
+                            label="Finding id"
+                            value={contribution.finding_id}
+                            title={contribution.finding_id}
+                          />
+                          {contribution.rule_id && (
+                            <IdRow label="Rule id" value={contribution.rule_id} title={contribution.rule_id} />
+                          )}
+                        </ProvenanceDetails>
+                      </div>
                       <span className={`mono tnum shrink-0 text-sm ${style.text}`}>
                         +{contribution.added}
                       </span>

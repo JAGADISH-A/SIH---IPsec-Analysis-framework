@@ -15,6 +15,7 @@ import {
   ThreatMatrix,
   Kpi,
 } from '@/components/traffic/panels'
+import { IdRow, ProvenanceDetails } from '@/components/kit'
 import { formatNumber, severityHex } from '@/lib/format'
 import { PageHeader } from '@/layouts/AppLayout'
 import { selectionForRow, type TrafficRow } from '@/lib/traffic'
@@ -114,7 +115,15 @@ export function Activity() {
         <Kpi
           label="Assessments"
           value={formatNumber(overview?.total_assessments ?? headers.length)}
-          sub={<span className="mono">{overview?.dataset_run_id ?? '—'}</span>}
+          sub={
+            <ProvenanceDetails title="Store identity">
+              <IdRow
+                label="Dataset run"
+                value={overview?.dataset_run_id ?? '—'}
+                title={overview?.dataset_run_id ?? undefined}
+              />
+            </ProvenanceDetails>
+          }
           accent="var(--color-ink)"
         />
         <Kpi
